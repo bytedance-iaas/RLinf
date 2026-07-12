@@ -829,10 +829,10 @@ install_uv() {
 setup_mirror() {
     if [ "$USE_MIRRORS" -eq 1 ]; then
         export USE_MIRRORS
-        export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
+        export UV_PYTHON_INSTALL_MIRROR=https://gh-proxy.org/https://github.com/astral-sh/python-build-standalone/releases/download
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
-        export GITHUB_PREFIX="https://ghfast.top/"
+        export GITHUB_PREFIX="https://gh-proxy.org/"
         git config --global url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/"
         trap 'unset_mirror' EXIT INT TERM HUP
     fi
@@ -1039,6 +1039,29 @@ EOF
     uv pip install "${base_url}/${wheel_name}" || (echo "Apex installation via wheel failed. Attempting to install from source..."; APEX_CPP_EXT=1 APEX_CUDA_EXT=1 uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/apex.git --no-build-isolation)
 }
 
+git_clone_shallow() {
+    # Shallow git clone. Args: [GIT_CLONE_ARGS...] GIT_URL TARGET_DIR
+    #
+    # Defaults to --depth 1 unless the caller already set a depth or passed
+    # --full-clone. The git object stream is a single non-resumable packfile,
+    # so shrinking it is the most effective way to avoid mid-transfer drops on
+    # large repos (e.g. LIBERO, whose notebook-heavy history is huge). Callers
+    # that check out an arbitrary commit afterwards (which a shallow clone would
+    # not contain) must pass --full-clone.
+    local args=() full_clone=0 a
+    for a in "$@"; do
+        if [ "$a" = "--full-clone" ]; then
+            full_clone=1
+        else
+            args+=("$a")
+        fi
+    done
+    if [ "$full_clone" -eq 0 ] && [[ " ${args[*]} " != *" --depth "* ]]; then
+        args=(--depth 1 "${args[@]}")
+    fi
+    git clone "${args[@]}" >&2
+}
+
 clone_or_reuse_repo() {
     # Usage: clone_or_reuse_repo ENV_VAR_NAME DEFAULT_DIR GIT_URL [GIT_CLONE_ARGS...]
     # - If ENV_VAR_NAME is set, use it as the checkout location: reuse it when it
@@ -1062,14 +1085,14 @@ clone_or_reuse_repo() {
         target_dir="$env_value"
         if [ ! -d "$target_dir" ]; then
             echo "$env_var_name=$target_dir does not exist yet; cloning $git_url into it..." >&2
-            git clone "$@" "$git_url" "$target_dir" >&2
+            git_clone_shallow "$@" "$git_url" "$target_dir"
         else
             echo "Reusing existing checkout at $env_var_name=$target_dir." >&2
         fi
     else
         target_dir="$default_dir"
         if [ ! -d "$target_dir" ]; then
-            git clone "$@" "$git_url" "$target_dir" >&2
+            git_clone_shallow "$@" "$git_url" "$target_dir"
         elif [ -d "$target_dir/.git" ]; then
             echo "Checking git repo $target_dir..." >&2
             local git_intact=1
@@ -1079,7 +1102,7 @@ clone_or_reuse_repo() {
             else
                 echo "Git repo $target_dir is corrupted. Re-cloning..." >&2
                 rm -rf "$target_dir"
-                git clone "$@" "$git_url" "$target_dir" >&2
+                git_clone_shallow "$@" "$git_url" "$target_dir"
             fi
         fi
     fi
@@ -1564,7 +1587,9 @@ install_abot_m0_model() {
 
 install_dreamzero_deps() {
     local dreamzero_path
-    dreamzero_path=$(clone_or_reuse_repo DREAMZERO_PATH "$VENV_DIR/dreamzero" https://github.com/dreamzero0/dreamzero.git)
+    # --full-clone: this env checks out an arbitrary commit below, which a
+    # shallow clone would not contain.
+    dreamzero_path=$(clone_or_reuse_repo DREAMZERO_PATH "$VENV_DIR/dreamzero" https://github.com/dreamzero0/dreamzero.git --full-clone)
     if [ -z "${DREAMZERO_PATH:-}" ]; then
         git -C "$dreamzero_path" checkout "${DREAMZERO_GIT_REF:-ab790c198fbce33503358efbbd4187ce9a89adf3}" >&2
     fi
