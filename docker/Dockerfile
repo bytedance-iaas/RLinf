@@ -495,8 +495,8 @@ WORKDIR /workspace
 ARG SCM_COMMIT_ID
 RUN if [ -n "$SCM_COMMIT_ID" ]; then \
         GITHUB_PREFIX=$([ "$NO_MIRROR" != "1" ] && echo "https://gh-proxy.org/" || echo "") && \
-        git clone "${GITHUB_PREFIX}https://github.com/bytedance-iaas/RLinf.git" /workspace/RLinf && \
-        git -C /workspace/RLinf checkout "$SCM_COMMIT_ID"; \
+        git clone "${GITHUB_PREFIX}https://github.com/bytedance-iaas/RLinf.git" /root/RLinf && \
+        git -C /root/RLinf checkout "$SCM_COMMIT_ID"; \
     fi
 
 CMD ["/bin/bash"]
