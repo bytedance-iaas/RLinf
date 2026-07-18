@@ -92,7 +92,7 @@ RUN if [ "$NO_MIRROR" != "1" ]; then \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git vim libibverbs-dev openssh-server sudo runit runit-systemd tmux \
     build-essential python3-dev cmake pkg-config iproute2 pciutils python3 python3-pip \
-    wget unzip curl gnupg ca-certificates
+    wget unzip curl gnupg ca-certificates tini
 
 # Install oniond (onion-ai-data) from the Volcengine internal extra-tools repo.
 # Only available on the Volcengine network, so it is gated on mirror mode
@@ -499,4 +499,14 @@ RUN if [ -n "$SCM_COMMIT_ID" ]; then \
         git -C /root/RLinf checkout "$SCM_COMMIT_ID"; \
     fi
 
+# Run everything under tini as PID 1 so orphaned children (e.g. Ray workers
+# killed by `ray stop`) are reaped instead of piling up as <defunct> zombies.
+# tini forwards signals and calls wait() on re-parented processes, which a bare
+# `sleep infinity` / bash PID 1 never does.
+#
+# NOTE for Kubernetes: a pod-level `command:` overrides this ENTRYPOINT and
+# would drop tini. To keep the pod resident, leave `command:` unset and put the
+# long-running command in `args:` (e.g. args: ["sleep", "infinity"]) so the
+# container runs `tini -- sleep infinity`.
+ENTRYPOINT ["tini", "--"]
 CMD ["/bin/bash"]
