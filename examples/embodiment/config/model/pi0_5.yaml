@@ -26,6 +26,7 @@ openpi:
   action_chunk: ${..num_action_chunks}
   num_steps: ${..num_steps}
   train_expert_only: True
+  enable_fused_prefix: False
   action_env_dim: ${..action_dim}
   noise_method: "flow_sde"
   add_value_head: ${..add_value_head}
