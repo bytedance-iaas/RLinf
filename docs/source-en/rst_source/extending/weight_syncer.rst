@@ -477,6 +477,20 @@ In this async path, version propagation matters more. ``WeightSyncer.apply(...)`
 returns the version that was actually applied on rollout, and rollout updates
 its internal version state from that result.
 
+``AsyncPPOEmbodiedRunner`` also honors this switch. When it is enabled, the
+runner starts actor-to-rollout transfer without waiting in the training loop,
+keeps at most one synchronization in flight, and coalesces the next request if
+the previous transfer is still running. It drains the final transfer before
+worker teardown. Keep the default ``false`` value when you need the original
+blocking behavior.
+
+A collocated async-PPO measurement on 8 NVIDIA H20 GPUs reduced the runner's
+blocking ``update_rollout_weights`` interval from about 3.1 seconds to 0.0018
+seconds per step. Actor training remained near 46 seconds. Rollout availability
+varied by 0–20 seconds in that run, so treat this result as removal of a
+deterministic serial interval rather than a precise end-to-end speedup. Expect
+the overlap to matter more for disaggregated or cross-node transfers.
+
 
 Performance Suggestions
 ------------------------------
