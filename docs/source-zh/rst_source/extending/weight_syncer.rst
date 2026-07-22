@@ -424,6 +424,17 @@ rollout 侧的权重接收与应用会放到后台 ``asyncio`` task 中执行。
 当前 ``WeightSyncer.apply(...)`` 会返回本次真正应用到 rollout 上的版本号，
 rollout 再据此更新自身版本状态。
 
+``AsyncPPOEmbodiedRunner`` 也会读取这个开关。启用后，runner 在 training loop 中
+发起 actor-to-rollout 传输但不阻塞等待；系统最多保留一个进行中的同步，如果上一次传输
+尚未结束，则合并下一次请求。worker 退出前，runner 会等待最后一次传输完成。需要保持
+原有阻塞行为时，请保留默认值 ``false``。
+
+在单机 8 张 NVIDIA H20 GPU 的 collocated async-PPO 测试中，runner 的阻塞
+``update_rollout_weights`` 区间从每 step 约 3.1 秒降至 0.0018 秒，actor training
+保持在约 46 秒。该测试中的 rollout 可用性有 0–20 秒波动，因此这个结果表示确定性的
+串行区间被消除，不能作为精确的端到端加速比例。对于 disaggregated 或跨机传输，预期
+重叠收益会更明显。
+
 
 性能建议
 ------------------------------

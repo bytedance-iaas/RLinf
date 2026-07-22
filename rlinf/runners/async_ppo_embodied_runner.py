@@ -52,6 +52,13 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             self.cfg.rollout.get("recompute_logprobs", False)
         )
 
+        # Overlap actor->rollout weight sync with the next step's training/rollout
+        # instead of blocking on it. Requires the rollout worker's background sync
+        # (also gated on actor.sync_weight_no_wait). Default False keeps the
+        # original blocking behavior, so results are unchanged when disabled.
+        self.sync_weight_no_wait = self.cfg.actor.get("sync_weight_no_wait", False)
+        self._pending_rollout_weight_sync: tuple[Handle, Handle] | None = None
+
         if self.cfg.runner.val_check_interval > 0:
             self.logger.warning(
                 "Validation check interval is set to a positive value, but validation is not implemented for AsyncPPOEmbodiedRunner, so validation will be skipped."
@@ -101,10 +108,43 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             ranked_env_metrics_list,
         )
 
-    def update_rollout_weights(self) -> None:
-        rollout_handle = self.rollout.sync_model_from_actor()
-        self.actor.sync_model_to_rollout().wait()
+    def _finish_pending_rollout_weight_sync(self, block: bool) -> bool:
+        """Finish the previous background weight sync when it is ready.
+
+        Args:
+            block: Wait for an unfinished sync when ``True``. Return immediately
+                when ``False``.
+
+        Returns:
+            Whether no weight sync remains in flight.
+        """
+        if self._pending_rollout_weight_sync is None:
+            return True
+
+        rollout_handle, actor_handle = self._pending_rollout_weight_sync
+        if not block and (not rollout_handle.done() or not actor_handle.done()):
+            return False
+
         rollout_handle.wait()
+        actor_handle.wait()
+        self._pending_rollout_weight_sync = None
+        return True
+
+    def update_rollout_weights(self, no_wait: bool = False) -> None:
+        """Synchronize actor weights, optionally without blocking the runner."""
+        if not no_wait:
+            self._finish_pending_rollout_weight_sync(block=True)
+            super().update_rollout_weights()
+            return
+
+        # Non-blocking path: finish the previous pending sync first. If it is not
+        # done yet, coalesce (skip issuing a new one) so we never queue two syncs.
+        if not self._finish_pending_rollout_weight_sync(block=False):
+            return
+
+        rollout_handle: Handle = self.rollout.request_actor_sync_model()
+        actor_handle: Handle = self.actor.sync_model_to_rollout()
+        self._pending_rollout_weight_sync = (rollout_handle, actor_handle)
 
     def run(self) -> None:
         start_step = self.global_step
@@ -159,7 +199,7 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
                 self.global_step += 1
                 self.actor.set_global_step(self.global_step).wait()
                 with self.timer("update_rollout_weights"):
-                    self.update_rollout_weights()
+                    self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
                 self.rollout.set_global_step(self.global_step).wait()
 
             time_metrics = self.timer.consume_durations()
@@ -268,6 +308,9 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
 
             if profiled_step is not None:
                 self._close_profiling_window(profiled_step)
+
+        # Drain any in-flight non-blocking weight sync before tearing workers down.
+        self._finish_pending_rollout_weight_sync(block=True)
 
         self.metric_logger.finish()
 
