@@ -22,6 +22,8 @@ training efficiency becomes the bottleneck.
      - Dynamically schedule resources during training.
    * - :doc:`Profiling <../profile>`
      - System-level profiling of Ray worker processes.
+   * - :doc:`Pi0.5 Fused Prefix Kernels <pi05_fused_prefix>`
+     - Enable and validate the fused PaliGemma prefix decoder.
    * - :doc:`5D Parallelism <../5D>`
      - Configure 5D parallelism for large models.
 
@@ -34,4 +36,5 @@ training efficiency becomes the bottleneck.
    Auto Placement <../auto_placement>
    Dynamic Scheduling <../dynamic_scheduling>
    Profiling <../profile>
+   Pi0.5 Fused Prefix Kernels <pi05_fused_prefix>
    5D Parallelism <../5D>
