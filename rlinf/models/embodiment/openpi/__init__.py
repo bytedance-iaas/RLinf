@@ -255,6 +255,14 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     _freeze_after_load(model, task)
     _apply_openpi_param_dtypes(model, target_dtype)
 
+    from rlinf.models.embodiment.openpi.fused_prefix_layer import (
+        apply_fused_prefix_layers,
+    )
+
+    apply_fused_prefix_layers(
+        model, enabled=bool(OmegaConf.select(model_cfg, "enable_fused_prefix", default=False))
+    )
+
     n_params = sum(param.numel() for param in model.parameters())
     source = full_weights_path if full_weights_path is not None else safetensors_path
     logger.info(
