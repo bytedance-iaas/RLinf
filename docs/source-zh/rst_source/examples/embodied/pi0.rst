@@ -388,6 +388,8 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
    ``examples/embodiment/config/libero_10_ppo_openpi_pi05.yaml``
 - π\ :sub:`0.5`\ + GRPO:
    ``examples/embodiment/config/libero_10_grpo_openpi_pi05.yaml``
+- π\ :sub:`0.5`\ + Async PPO + rollout compilation:
+   ``examples/embodiment/config/libero_spatial_async_ppo_openpi_pi05_rollout_compile.yaml``
 
 **4. 启动命令**
 
@@ -402,6 +404,50 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 ::
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_quickstart
+
+Rollout 编译
+~~~~~~~~~~~~
+
+使用专用 async-PPO 配置，只编译 Pi0.5 rollout inference：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_async.sh \
+     libero_spatial_async_ppo_openpi_pi05_rollout_compile
+
+这条命令保持 actor training eager，并设置
+``rollout.enable_torch_compile=true`` 和
+``rollout.torch_compile_mode="default"``。首次 rollout 会编译 shape-stable 热点路径，
+因此请比较稳态 step，不要比较启动耗时。
+
+.. warning::
+
+   shape 或 control flow 变化可能触发重新编译。即使稳态 step 更快，短任务的总墙钟时间
+   仍可能变差。
+
+在单机 4 张 NVIDIA H20 GPU 上，每组运行 9 个 step；第 4–9 step 的均值如下：
+
+.. list-table:: Pi0.5 rollout compilation
+   :header-rows: 1
+   :widths: 35 25 40
+
+   * - 范围
+     - Baseline → compiled
+     - 提升
+   * - 独立 rollout model
+     - 750.90 → 656.81 ms
+     - 12.53%
+   * - LIBERO async-PPO step
+     - 76.99 → 72.69 s
+     - 5.59%
+   * - 工作量对齐的同步 LIBERO step
+     - —
+     - 2.99%
+   * - ManiSkill 2+2 disaggregated step
+     - —
+     - 6.51%
+
+请把这些数字视为特定 workload 的结果。环境计算和 async queue 时序会稀释模型局部收益。
 
 可视化与结果
 ----------------------------------------
