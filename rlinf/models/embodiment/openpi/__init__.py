@@ -133,4 +133,15 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         ],
     )
 
+    # Optionally swap the prefix-side (PaliGemma VLM) GemmaDecoderLayers for a
+    # fused Triton implementation. Both rollout and actor use this factory.
+    from rlinf.models.embodiment.openpi.fused_prefix_layer import (
+        apply_fused_prefix_layers,
+    )
+
+    apply_fused_prefix_layers(
+        model,
+        enabled=bool(cfg.openpi.get("enable_fused_prefix", False)),
+    )
+
     return model
