@@ -401,6 +401,8 @@ Using libero-10 as an example, the configuration files for π\ :sub:`0`\  and π
    ``examples/embodiment/config/libero_10_ppo_openpi_pi05.yaml``
 - π\ :sub:`0.5`\ + GRPO:
    ``examples/embodiment/config/libero_10_grpo_openpi_pi05.yaml``
+- π\ :sub:`0.5`\ + Async PPO + rollout compilation:
+   ``examples/embodiment/config/libero_spatial_async_ppo_openpi_pi05_rollout_compile.yaml``
 
 --------------
 
@@ -421,6 +423,53 @@ the LIBERO environment, run:
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi_quickstart
 
 --------------
+
+Rollout Compilation
+~~~~~~~~~~~~~~~~~~~
+
+Use the dedicated async-PPO configuration to compile only Pi0.5 rollout
+inference:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_async.sh \
+     libero_spatial_async_ppo_openpi_pi05_rollout_compile
+
+What this does: it keeps actor training eager and sets
+``rollout.enable_torch_compile=true`` with
+``rollout.torch_compile_mode="default"``. The first rollout compiles the
+shape-stable hot path, so compare steady-state steps instead of startup time.
+
+.. warning::
+
+   Shape or control-flow changes can trigger recompilation. Short runs can have
+   worse total wall time even when steady-state steps improve.
+
+On one machine with 4 NVIDIA H20 GPUs, nine-step A/B runs measured the following
+means over steps 4–9:
+
+.. list-table:: Pi0.5 rollout compilation
+   :header-rows: 1
+   :widths: 35 25 40
+
+   * - Scope
+     - Baseline → compiled
+     - Improvement
+   * - Isolated rollout model
+     - 750.90 → 656.81 ms
+     - 12.53%
+   * - LIBERO async-PPO step
+     - 76.99 → 72.69 s
+     - 5.59%
+   * - Matched synchronous LIBERO step
+     - —
+     - 2.99%
+   * - ManiSkill 2+2 disaggregated step
+     - —
+     - 6.51%
+
+Treat these numbers as workload-specific. Environment work and async queue
+timing dilute the model-only gain.
 
 Visualization and Results
 -------------------------
