@@ -325,6 +325,7 @@ Async PPO 里的关键量之一是 ``proximal_logprobs``。它有两种来源：
 - ``libero_object_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
 - ``libero_spatial_async_ppo_openpi.yaml``: https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 - ``libero_spatial_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
+- ``libero_spatial_async_ppo_openpi_pi05_perf.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
 - ``maniskill_async_ppo_openpi.yaml``: https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT
 - ``maniskill_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
 - ``maniskill_async_ppo_openvla.yaml``: https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup

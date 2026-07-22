@@ -16,6 +16,9 @@ efficiency becomes the bottleneck.
      - Dynamically schedule resources during training.
    * - :doc:`Profiling <../profile>`
      - System-level profiling of Ray worker processes.
+   * - :doc:`Pi0.5 PPO Optimizations <pi05_ppo>`
+     - Enable and interpret weight-sync overlap, rollout compilation, and fused
+       prefix VLM kernels.
    * - :doc:`5D Parallelism <../5D>`
      - Configure 5D parallelism for large models.
    * - :doc:`LoRA <../lora>`
@@ -29,6 +32,7 @@ efficiency becomes the bottleneck.
    Auto Placement <../auto_placement>
    Dynamic Scheduling <../dynamic_scheduling>
    Profiling <../profile>
+   Pi0.5 PPO Optimizations <pi05_ppo>
    5D Parallelism <../5D>
    LoRA <../lora>
    Env Decoupled Mode <../env_decoupled_mode>
