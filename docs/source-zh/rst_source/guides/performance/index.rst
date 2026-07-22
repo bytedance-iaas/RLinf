@@ -15,6 +15,8 @@
      - 训练过程中动态调度资源。
    * - :doc:`Profiling <../profile>`
      - 对 Ray worker 进程进行系统级 profiling。
+   * - :doc:`Pi0.5 Fused Prefix Kernel <pi05_fused_prefix>`
+     - 启用并验证融合的 PaliGemma prefix decoder。
    * - :doc:`5D 并行 <../5D>`
      - 为大模型配置 5D 并行。
    * - :doc:`LoRA <../lora>`
@@ -28,6 +30,7 @@
    自动 Placement <../auto_placement>
    动态调度 <../dynamic_scheduling>
    Profiling <../profile>
+   Pi0.5 Fused Prefix Kernel <pi05_fused_prefix>
    5D 并行 <../5D>
    LoRA <../lora>
    Env Decoupled Mode <../env_decoupled_mode>
