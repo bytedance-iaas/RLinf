@@ -34,8 +34,88 @@ EOF
 # mirror env vars that install.sh's setup_mirror exports. Values mirror install.sh.
 setup_mirror() {
 	if [ "$USE_MIRRORS" -eq 1 ]; then
+		export UV_DEFAULT_INDEX=https://mirrors.ivolces.com/pypi/simple/
+		export PIP_INDEX_URL=https://mirrors.ivolces.com/pypi/simple/
 		export HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
 		export GITHUB_PREFIX=${GITHUB_PREFIX:-https://ghfast.top/}
+	fi
+}
+
+download_bridge_v2_real2sim() (
+	local target_parent="$MS_ASSET_DIR/data/tasks"
+	local target_dir="$target_parent/bridge_v2_real2sim_dataset"
+	local sentinel="$target_dir/stages/bridge_table_1_v1.glb"
+
+	if [ -f "$sentinel" ]; then
+		echo "[download_assets] Bridge v2 Real2Sim assets already exist at $target_dir, skipping download."
+		return
+	fi
+	if ! command -v oniond &> /dev/null; then
+		echo "oniond is required to download bridge_v2_real2sim with --use-mirror." >&2
+		return 1
+	fi
+
+	local staging_dir archive
+	staging_dir=$(mktemp -d)
+	trap 'rm -rf -- "$staging_dir"' EXIT
+
+	(
+		cd "$staging_dir"
+		BUCKET=ai-infra oniond download dataset ManiSkill_bridge_v2_real2sim \
+			--include bridge_v2_real2sim_dataset.zip \
+			--dir "$staging_dir"
+	)
+	archive="$staging_dir/ManiSkill_bridge_v2_real2sim/bridge_v2_real2sim_dataset.zip"
+	if [ ! -f "$archive" ]; then
+		echo "oniond did not produce the expected archive: $archive" >&2
+		return 1
+	fi
+	if ! echo "618512a205b4528cafecdad14b1788ed1130879f3064deb406516ed5b9c5ba92  $archive" \
+		| sha256sum --check --status; then
+		echo "Bridge v2 Real2Sim archive checksum verification failed." >&2
+		return 1
+	fi
+
+	mkdir -p "$target_parent"
+	rm -rf -- "$target_dir"
+	unzip -q "$archive" -d "$target_parent"
+	if [ ! -f "$sentinel" ]; then
+		echo "Bridge v2 Real2Sim assets were not extracted to $target_dir." >&2
+		return 1
+	fi
+	echo "[download_assets] Bridge v2 Real2Sim assets installed at $target_dir."
+)
+
+download_widowx250s() {
+	local target_dir="$MS_ASSET_DIR/data/robots/widowx"
+	local sentinel="$target_dir/wx250s.urdf"
+
+	if [ -f "$sentinel" ]; then
+		echo "[download_assets] WidowX250S assets already exist at $target_dir, skipping download."
+		return
+	fi
+	if [ "$USE_MIRRORS" -eq 1 ]; then
+		# ManiSkill downloads this GitHub archive with urllib, which ignores
+		# git's insteadOf config. Rewrite the URL in memory for this asset.
+		python - widowx250s <<'PYEOF'
+import os
+import sys
+
+from mani_skill.utils.assets import data as ds
+from mani_skill.utils.download_asset import main, parse_args
+
+source = ds.DATA_SOURCES[sys.argv[1]]
+github_prefix = os.environ.get("GITHUB_PREFIX", "")
+if github_prefix and source.url.startswith("https://github.com"):
+    source.url = github_prefix + source.url
+main(parse_args([sys.argv[1], "-y"]))
+PYEOF
+	else
+		python -m mani_skill.utils.download_asset widowx250s -y
+	fi
+	if [ ! -f "$sentinel" ]; then
+		echo "WidowX250S assets were not installed at $target_dir." >&2
+		return 1
 	fi
 }
 
@@ -44,44 +124,22 @@ download_maniskill_assets() {
 
 	# ManiSkill assets
 	export MS_ASSET_DIR="${root_dir}/.maniskill"
-	if [ -d "$MS_ASSET_DIR" ]; then
-		echo "[download_assets] ManiSkill assets already exist at $MS_ASSET_DIR, skipping download."
+	mkdir -p "$MS_ASSET_DIR"
+	# Ensure mani_skill is installed
+	if ! python -c "import mani_skill" &> /dev/null; then
+		echo "mani_skill is not installed. Please install it first." >&2
+		exit 1
+	fi
+	if [ "$USE_MIRRORS" -eq 1 ]; then
+		download_bridge_v2_real2sim
 	else
-		mkdir -p "$MS_ASSET_DIR"
-        # Ensure mani_skill is installed
-        if ! python -c "import mani_skill" &> /dev/null; then
-            echo "mani_skill is not installed. Please install it first." >&2
-            exit 1
-        fi
-		if [ "$USE_MIRRORS" -eq 1 ]; then
-			# mani_skill.utils.download_asset hardcodes huggingface.co / github.com
-			# URLs in DATA_SOURCES and fetches them with urllib, which ignores
-			# HF_ENDPOINT and git's insteadOf. Rewrite the in-memory URLs to the
-			# mirrors before downloading instead of calling the module directly.
-			for uid in bridge_v2_real2sim widowx250s; do
-				python - "$uid" <<'PYEOF'
-import os, sys
-from mani_skill.utils.download_asset import main, parse_args
-from mani_skill.utils.assets import data as ds
-
-hf = os.environ.get("HF_ENDPOINT", "").rstrip("/")
-gh = os.environ.get("GITHUB_PREFIX", "")
-for src in ds.DATA_SOURCES.values():
-    url = getattr(src, "url", None)
-    if not url:
-        continue
-    if hf and url.startswith("https://huggingface.co"):
-        src.url = hf + url[len("https://huggingface.co"):]
-    elif gh and url.startswith("https://github.com"):
-        src.url = gh + url
-main(parse_args([sys.argv[1], "-y"]))
-PYEOF
-			done
+		if [ -f "$MS_ASSET_DIR/data/tasks/bridge_v2_real2sim_dataset/stages/bridge_table_1_v1.glb" ]; then
+			echo "[download_assets] Bridge v2 Real2Sim assets already exist, skipping download."
 		else
 			python -m mani_skill.utils.download_asset bridge_v2_real2sim -y
-			python -m mani_skill.utils.download_asset widowx250s -y
 		fi
 	fi
+	download_widowx250s
 
 	# SAPIEN assets (PhysX)
 	export PHYSX_VERSION=105.1-physx-5.3.1.patch0
