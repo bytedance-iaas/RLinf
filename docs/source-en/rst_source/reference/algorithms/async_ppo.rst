@@ -322,6 +322,76 @@ The actor training path also enforces strict batch constraints:
 If these conditions are violated, training will fail with assertions.
 
 
+9.1 Tuned Pi0.5 H20 Profiles
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Use these profiles to start Pi0.5 async PPO with the batch sizes and placements
+selected by the H20 profiling sweep.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 12 22 16 16
+
+   * - Configuration
+     - GPUs
+     - Placement
+     - Environments
+     - Global batch
+   * - ``libero_spatial_async_ppo_openpi_pi05_best_4gpu``
+     - 4
+     - Collocated
+     - 64
+     - 128
+   * - ``libero_spatial_async_ppo_openpi_pi05_best_8gpu``
+     - 8
+     - Collocated
+     - 128
+     - 256
+   * - ``maniskill_async_ppo_openpi_pi05_best_4gpu``
+     - 4
+     - Actor 0–1; rollout/env 2–3
+     - 160
+     - 2560
+   * - ``maniskill_async_ppo_openpi_pi05_best_8gpu``
+     - 8
+     - Collocated
+     - 320
+     - 5120
+
+Every profile uses FSDP ``no_shard``, ``micro_batch_size: 32``, rollout
+``torch.compile`` in ``default`` mode, and
+``actor.sync_weight_no_wait: true``. The 4-GPU ManiSkill profile uses a 2+2
+split because its compile-only step time measured 209.42 seconds, compared with
+310.85 seconds for the matched collocated workload. SAPIEN tail latency was
+also substantially lower with the split.
+
+.. warning::
+
+   Treat these as NVIDIA H20 starting points, not portable defaults.
+   ``no_shard`` keeps a full model and optimizer state on every actor GPU.
+   Replace both ``model_path`` placeholders before launching. Background weight
+   synchronization requires runner support for ``sync_weight_no_wait``;
+   otherwise the run remains correct but synchronization blocks.
+
+Launch LIBERO with the selected profile name:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_async.sh \
+     libero_spatial_async_ppo_openpi_pi05_best_4gpu
+
+Launch ManiSkill with the required robot platform:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_async.sh \
+     maniskill_async_ppo_openpi_pi05_best_4gpu BRIDGE
+
+What these commands do: they select the tuned placement and batch sizes, enable
+rollout compilation, and request background actor-to-rollout synchronization.
+Use the ``8gpu`` profile names on an 8-GPU node.
+
+
 10. Launching Async PPO
 --------------------------
 
@@ -345,8 +415,12 @@ Below are the model download links used by each yaml:
 - ``libero_spatial_async_ppo_openpi.yaml``: https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 - ``libero_spatial_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
 - ``libero_spatial_async_ppo_openpi_pi05_rollout_compile.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
+- ``libero_spatial_async_ppo_openpi_pi05_best_4gpu.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
+- ``libero_spatial_async_ppo_openpi_pi05_best_8gpu.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
 - ``maniskill_async_ppo_openpi.yaml``: https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT
 - ``maniskill_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
+- ``maniskill_async_ppo_openpi_pi05_best_4gpu.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
+- ``maniskill_async_ppo_openpi_pi05_best_8gpu.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
 - ``maniskill_async_ppo_openvla.yaml``: https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
 - ``maniskill_async_ppo_openvlaoft.yaml``: https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-trajall
 
