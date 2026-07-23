@@ -830,7 +830,7 @@ setup_mirror() {
     if [ "$USE_MIRRORS" -eq 1 ]; then
         export USE_MIRRORS
         export UV_PYTHON_INSTALL_MIRROR=https://gh-proxy.org/https://github.com/astral-sh/python-build-standalone/releases/download
-        export UV_DEFAULT_INDEX=https://mirrors.ivolces.com/pypi/simple/
+        export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export PIP_INDEX_URL=https://mirrors.ivolces.com/pypi/simple/
         export HF_ENDPOINT=https://hf-mirror.com
         export GITHUB_PREFIX="https://gh-proxy.org/"
