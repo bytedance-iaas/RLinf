@@ -303,6 +303,72 @@ Async PPO 里的关键量之一是 ``proximal_logprobs``。它有两种来源：
 如果这些条件不满足，系统会在训练时直接报错。
 
 
+9.1 Pi0.5 H20 调优配置
+^^^^^^^^^^^^^^^^^^^^^^^
+
+使用下列配置，可以从 H20 profiling sweep 选出的 batch size 和 placement 开始运行
+Pi0.5 async PPO。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 12 22 16 16
+
+   * - 配置
+     - GPU
+     - Placement
+     - 环境数
+     - Global batch
+   * - ``libero_spatial_async_ppo_openpi_pi05_best_4gpu``
+     - 4
+     - Collocated
+     - 64
+     - 128
+   * - ``libero_spatial_async_ppo_openpi_pi05_best_8gpu``
+     - 8
+     - Collocated
+     - 128
+     - 256
+   * - ``maniskill_async_ppo_openpi_pi05_best_4gpu``
+     - 4
+     - Actor 0–1；rollout/env 2–3
+     - 160
+     - 2560
+   * - ``maniskill_async_ppo_openpi_pi05_best_8gpu``
+     - 8
+     - Collocated
+     - 320
+     - 5120
+
+所有配置均使用 FSDP ``no_shard``、``micro_batch_size: 32``、``default`` 模式的
+rollout ``torch.compile``，并设置 ``actor.sync_weight_no_wait: true``。4-GPU
+ManiSkill 配置使用 2+2 placement：compile-only step time 为 209.42 秒，而工作量
+对齐的 collocated 配置为 310.85 秒；2+2 的 SAPIEN 尾延迟也明显更低。
+
+.. warning::
+
+   请把这些配置视为 NVIDIA H20 起点，而不是可直接迁移的默认值。``no_shard`` 会在
+   每张 actor GPU 上保留完整模型和 optimizer state。启动前请替换两处 ``model_path``。
+   后台权重同步要求 runner 支持 ``sync_weight_no_wait``；不支持时训练结果仍然正确，但
+   同步会保持阻塞。
+
+使用配置名称启动 LIBERO：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_async.sh \
+     libero_spatial_async_ppo_openpi_pi05_best_4gpu
+
+启动 ManiSkill 时传入对应 robot platform：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_async.sh \
+     maniskill_async_ppo_openpi_pi05_best_4gpu BRIDGE
+
+这些命令会选择调优后的 placement 和 batch size，启用 rollout compilation，并请求后台
+actor-to-rollout 权重同步。在 8-GPU 节点上，请使用对应的 ``8gpu`` 配置名称。
+
+
 10. 启动方式与模型链接
 -----------------------
 
@@ -326,8 +392,12 @@ Async PPO 里的关键量之一是 ``proximal_logprobs``。它有两种来源：
 - ``libero_spatial_async_ppo_openpi.yaml``: https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 - ``libero_spatial_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
 - ``libero_spatial_async_ppo_openpi_pi05_rollout_compile.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
+- ``libero_spatial_async_ppo_openpi_pi05_best_4gpu.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
+- ``libero_spatial_async_ppo_openpi_pi05_best_8gpu.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
 - ``maniskill_async_ppo_openpi.yaml``: https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT
 - ``maniskill_async_ppo_openpi_pi05.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
+- ``maniskill_async_ppo_openpi_pi05_best_4gpu.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
+- ``maniskill_async_ppo_openpi_pi05_best_8gpu.yaml``: https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
 - ``maniskill_async_ppo_openvla.yaml``: https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
 - ``maniskill_async_ppo_openvlaoft.yaml``: https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-trajall
 
