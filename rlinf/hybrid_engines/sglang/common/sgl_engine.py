@@ -30,6 +30,7 @@ from sglang.srt.utils import (
 )
 
 from rlinf.utils.patcher import Patcher
+from rlinf.utils.torch_compat import should_set_torch_nccl_avoid_record_streams
 
 from .io_struct import (
     AbortGenerationInput,
@@ -75,7 +76,8 @@ def _set_envs_and_config(server_args: ServerArgs):
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
     os.environ["NCCL_CUMEM_ENABLE"] = "0"
     os.environ["NCCL_NVLS_ENABLE"] = str(int(server_args.enable_nccl_nvls))
-    os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
+    if should_set_torch_nccl_avoid_record_streams():
+        os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
     os.environ["CUDA_DEVICE_MAX_CONNECTIONS"] = "4"
     os.environ["CUDA_MODULE_LOADING"] = "AUTO"
 

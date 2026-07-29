@@ -50,6 +50,13 @@ warnings.filterwarnings(
 )
 
 
+def _should_warn_about_actor_precision(
+    model_type: str, torch_dtype: torch.dtype
+) -> bool:
+    """Return whether the generic actor precision recommendation applies."""
+    return model_type != SupportedModel.OPENPI.value and torch_dtype != torch.float32
+
+
 class FSDPModelManager:
     """
     FSDP Model Manager for RL training
@@ -66,7 +73,9 @@ class FSDPModelManager:
         self._cfg = cfg
         self._logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
-        if self.torch_dtype != torch.float32:
+        if _should_warn_about_actor_precision(
+            self._cfg.model.model_type, self.torch_dtype
+        ):
             self._logger.warning(
                 "Provided there is sufficient GPU memory, "
                 "set the actor.model.precision parameter to fp32 "

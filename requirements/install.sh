@@ -1218,6 +1218,7 @@ EOF
 install_common_embodied_deps() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
     uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
+    python "$SCRIPT_DIR/embodied/setup_robosuite_macros.py"
     install_nvcomp
     if [ "$NO_ROOT" -eq 0 ]; then
         bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"

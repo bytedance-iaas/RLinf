@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING, ClassVar, Optional
 from omegaconf import ListConfig
 from ray._private.accelerators.nvidia_gpu import NvidiaGPUAcceleratorManager
 
+from rlinf.utils.torch_compat import should_set_torch_nccl_avoid_record_streams
+
 from .accelerator import AcceleratorManager, AcceleratorType, ProfileConfig
 
 if TYPE_CHECKING:
@@ -262,7 +264,8 @@ class NvidiaGPUManager(AcceleratorManager):
 
         # NCCL env vars
         env_vars["NCCL_CUMEM_ENABLE"] = "0"
-        env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
+        if should_set_torch_nccl_avoid_record_streams():
+            env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
         if os.environ.get("NCCL_CUMEM_ENABLE", "0") != "0":
             warnings.warn(
                 f"NCCL_CUMEM_ENABLE is set to {os.environ['NCCL_CUMEM_ENABLE']}. However, "
