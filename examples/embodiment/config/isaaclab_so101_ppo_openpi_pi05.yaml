@@ -1,6 +1,9 @@
 defaults:
-  - env/isaaclab_so101_lift_cube@env.train
-  - env/isaaclab_so101_lift_cube@env.eval
+  # The two-camera task id, to match the front+wrist SFT checkpoint. Swap both lines
+  # to `env/isaaclab_so101_lift_cube` for the single-camera variant (and then set
+  # actor.model.openpi.num_images_in_input back to 1).
+  - env/isaaclab_so101_lift_cube_wrist@env.train
+  - env/isaaclab_so101_lift_cube_wrist@env.eval
   - model/pi0_5@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
@@ -72,18 +75,19 @@ env:
     rollout_epoch: 2
     total_num_envs: 64
     # LiftCube runs at 60 Hz control (sim.dt=1/60, decimation=1) with
-    # episode_length_s=25.0, i.e. 1500 sim-side steps. Truncating at 300 keeps
-    # rollouts a manageable length while still leaving ~5 s of task time.
-    max_episode_steps: 300 # for truncation
-    max_steps_per_rollout_epoch: 300
+    # episode_length_s=25.0, i.e. 1500 sim-side steps. Truncating at 250 keeps
+    # rollouts a manageable length while still leaving ~4 s of task time, and 250 is
+    # divisible by num_action_chunks=50 as rlinf/config.py requires.
+    max_episode_steps: 250 # for truncation
+    max_steps_per_rollout_epoch: 250
     use_fixed_reset_state_ids: True
     seed: 42
 
   eval:
     rollout_epoch: 1
     total_num_envs: 16
-    max_episode_steps: 300
-    max_steps_per_rollout_epoch: 300
+    max_episode_steps: 250
+    max_steps_per_rollout_epoch: 250
     auto_reset: True
     ignore_terminations: True
     use_fixed_reset_state_ids: True
@@ -119,14 +123,18 @@ actor:
     # openpi.action_env_dim and selects the joint-space branch in
     # prepare_actions_for_isaaclab, so it must stay 6.
     action_dim: 6
-    num_action_chunks: 10
+    # 50 = the SFT checkpoint's chunk_size / n_action_steps. Must divide
+    # env.*.max_steps_per_rollout_epoch (see the asserts in rlinf/config.py).
+    num_action_chunks: 50
     num_steps: 5
     add_value_head: True
     openpi:
       config_name: "pi05_so101_lift_cube"
-      # LiftCube has only the `front` camera (LeIsaac deletes the wrist one), so the
-      # value head must mask 1 image slot, not 2. See IsaaclabSO101Env._wrap_obs.
-      num_images_in_input: 1
+      # Two cameras: the `-Wrist-v0` task id restores the wrist view that LeIsaac's
+      # LiftCube deletes, matching the checkpoint's front+wrist SFT data. This value
+      # drives the value head's prefix mask, so it must equal the number of image
+      # slots actually filled. See IsaaclabSO101Env._wrap_obs.
+      num_images_in_input: 2
       noise_level: 0.5
       joint_logprob: False
       num_steps: ${actor.model.num_steps}

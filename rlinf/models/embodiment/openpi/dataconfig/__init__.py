@@ -546,13 +546,24 @@ _CONFIGS = [
     ),
     TrainConfig(
         name="pi05_so101_lift_cube",
+        # action_horizon and discrete_state_input both mirror the SFT checkpoint:
+        #   * action_horizon=50 = LeRobot's chunk_size / n_action_steps. No weight
+        #     shape depends on it (it only drives att_masks, slicing and the noise
+        #     shape), so this is a protocol choice, not a checkpoint conversion.
+        #   * discrete_state_input=True is mandatory for pi0.5: it has no state_proj,
+        #     so the discretized state in the prompt is the only way proprioception
+        #     reaches the model. LeRobot's pi0.5 processor always injects it, so with
+        #     False the policy runs effectively blind to its own joint positions.
         model=pi0_config.Pi0Config(
-            pi05=True, action_horizon=10, discrete_state_input=False
+            pi05=True, action_horizon=50, discrete_state_input=True
         ),
         data=LeRobotSO101LiftCubeDataConfig(
             repo_id="RLinf/LeIsaac-SO101-LiftCube-Data",
-            # The prompt is a fixed property of the task ("Lift the red cube up."),
-            # supplied as default_prompt, so it is not read off the dataset.
+            # The prompt is a fixed property of the task, supplied as default_prompt,
+            # so it is not read off the dataset. It must match the SFT text verbatim.
+            default_prompt="Grab the red cube",
+            has_wrist_image=True,
+            pad_state_before_tokenize=True,
             base_config=DataConfig(prompt_from_task=False),
             assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_so101/assets"),
         ),

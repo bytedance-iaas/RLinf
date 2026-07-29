@@ -350,3 +350,167 @@ def test_wrap_obs_truncates_wider_joint_state():
         }
     )
     assert obs["states"].shape == (1, SO101_ACTION_DIM)
+
+
+def test_wrist_variant_registered_alongside_plain_id():
+    """Both LiftCube task ids must map to the same adapter class.
+
+    The wrist variant differs only in the IsaacLab env cfg (it restores the camera
+    LeIsaac deletes); ``IsaaclabSO101Env`` reads cameras by name out of the obs dict,
+    so no adapter change is needed. If the id were missing from the registry,
+    ``get_env_cls`` would raise only at rollout start, after the sim has booted.
+    """
+    pytest.importorskip("openpi", reason="rlinf.envs.isaaclab imports the so101 policy")
+    from rlinf.envs.isaaclab import REGISTER_ISAACLAB_ENVS
+    from rlinf.envs.isaaclab.tasks.so101 import IsaaclabSO101Env
+
+    plain = "LeIsaac-SO101-LiftCube-Rewarded-v0"
+    wrist = "LeIsaac-SO101-LiftCube-Rewarded-Wrist-v0"
+    assert REGISTER_ISAACLAB_ENVS[plain] is IsaaclabSO101Env
+    assert REGISTER_ISAACLAB_ENVS[wrist] is IsaaclabSO101Env
+
+
+class _Named:
+    """Stand-in for an openpi transform, identified only by its class name.
+
+    ``_pad_state_before_tokenize`` dispatches on ``type(t).__name__``, so the reorder
+    can be tested without constructing real transforms (``TokenizePrompt`` would want
+    a tokenizer, and thus the PaliGemma vocab file).
+    """
+
+    def __init__(self, name):
+        self.__class__ = type(name, (_Named,), {})
+
+
+def _names(transforms):
+    return [type(t).__name__ for t in transforms]
+
+
+def test_pad_state_before_tokenize_moves_pad_ahead():
+    """The pad must land immediately before the tokenizer, order otherwise intact.
+
+    pi0.5 has no ``state_proj``, so the discretized state inside the prompt is the
+    only route from proprioception into the model. LeRobot's SFT pipeline pads to 32
+    *then* digitizes; openpi does the reverse, giving a different prompt for the same
+    observation. This reorder is what makes the two agree.
+    """
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+        _pad_state_before_tokenize,
+    )
+
+    inputs = [
+        _Named("InjectDefaultPrompt"),
+        _Named("ResizeImages"),
+        _Named("TokenizePrompt"),
+        _Named("PadStatesAndActions"),
+    ]
+    out = _pad_state_before_tokenize(inputs)
+    assert _names(out) == [
+        "InjectDefaultPrompt",
+        "ResizeImages",
+        "PadStatesAndActions",
+        "TokenizePrompt",
+    ]
+    # The caller stores the result on a frozen dataclass; a list would be shared
+    # mutable state across every DataConfig built from the same factory.
+    assert isinstance(out, tuple)
+    # Same objects, just resequenced -- nothing reconstructed or dropped.
+    assert sorted(map(id, out)) == sorted(map(id, inputs))
+
+
+def test_pad_state_before_tokenize_is_idempotent():
+    """Already-correct order must pass through unchanged, not swap back."""
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+        _pad_state_before_tokenize,
+    )
+
+    inputs = [_Named("PadStatesAndActions"), _Named("TokenizePrompt")]
+    assert _names(_pad_state_before_tokenize(inputs)) == [
+        "PadStatesAndActions",
+        "TokenizePrompt",
+    ]
+
+
+@pytest.mark.parametrize("present", [["TokenizePrompt"], ["PadStatesAndActions"], []])
+def test_pad_state_before_tokenize_raises_when_transform_missing(present):
+    """A missing transform must raise, never silently no-op.
+
+    If a future openpi renames or drops either transform, a quiet fallback would
+    produce openpi's 6-numeral prompt against a checkpoint trained on the 32-numeral
+    one. That does not crash -- it just degrades the policy, which is
+    indistinguishable from a bad checkpoint.
+    """
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+        _pad_state_before_tokenize,
+    )
+
+    with pytest.raises(RuntimeError, match="pad_state_before_tokenize needs both"):
+        _pad_state_before_tokenize([_Named(n) for n in present])
+
+
+def test_so101_dataconfig_applies_reorder_only_when_flagged():
+    """End to end on the real factory: the flag drives the transform order.
+
+    Uses ``ModelTransformFactory``'s actual output rather than stubs, so it also
+    guards the assumption that openpi still emits both transforms for pi0.5.
+    """
+    pytest.importorskip("openpi")
+    import openpi.models.pi0_config as pi0_config
+
+    from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+        LeRobotSO101LiftCubeDataConfig,
+    )
+
+    model = pi0_config.Pi0Config(
+        pi05=True, action_horizon=50, discrete_state_input=True
+    )
+    import pathlib
+
+    assets = pathlib.Path("/nonexistent")
+
+    on = LeRobotSO101LiftCubeDataConfig(
+        repo_id="dummy", has_wrist_image=True, pad_state_before_tokenize=True
+    ).create(assets, model)
+    off = LeRobotSO101LiftCubeDataConfig(
+        repo_id="dummy", has_wrist_image=True, pad_state_before_tokenize=False
+    ).create(assets, model)
+
+    on_names, off_names = (
+        _names(on.model_transforms.inputs),
+        _names(off.model_transforms.inputs),
+    )
+    assert on_names.index("PadStatesAndActions") < on_names.index("TokenizePrompt")
+    assert off_names.index("TokenizePrompt") < off_names.index("PadStatesAndActions")
+    # Default must stay openpi-native so other checkpoints are unaffected.
+    assert LeRobotSO101LiftCubeDataConfig.pad_state_before_tokenize is False
+
+
+def test_so101_dataconfig_wrist_key_is_conditional():
+    """``has_wrist_image`` must gate the repack entry.
+
+    LeIsaac's single-camera LiftCube dataset has no ``observation.images.wrist``, and
+    ``RepackTransform`` raises on a missing key at load time.
+    """
+    pytest.importorskip("openpi")
+    import pathlib
+
+    import openpi.models.pi0_config as pi0_config
+
+    from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+        LeRobotSO101LiftCubeDataConfig,
+    )
+
+    model = pi0_config.Pi0Config(pi05=True)
+    assets = pathlib.Path("/nonexistent")
+
+    def repack_keys(has_wrist):
+        dc = LeRobotSO101LiftCubeDataConfig(
+            repo_id="dummy", has_wrist_image=has_wrist
+        ).create(assets, model)
+        return set(dc.repack_transforms.inputs[0].structure)
+
+    assert "observation/wrist_image" in repack_keys(True)
+    assert "observation/wrist_image" not in repack_keys(False)

@@ -18,6 +18,9 @@ from .tasks.stack_cube import IsaaclabStackCubeEnv
 REGISTER_ISAACLAB_ENVS = {
     "Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Rewarded-v0": IsaaclabStackCubeEnv,
     "LeIsaac-SO101-LiftCube-Rewarded-v0": IsaaclabSO101Env,
+    # Same adapter, two-camera task variant: the adapter reads cameras by name from
+    # the env config, so restoring the wrist view needs no code change here.
+    "LeIsaac-SO101-LiftCube-Rewarded-Wrist-v0": IsaaclabSO101Env,
 }
 
 __all__ = [list(REGISTER_ISAACLAB_ENVS.keys())]
