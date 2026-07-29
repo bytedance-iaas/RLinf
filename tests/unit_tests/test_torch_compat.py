@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlinf.utils.torch_compat import should_set_torch_nccl_avoid_record_streams
+import torch
+
+from rlinf.utils.torch_compat import (
+    should_set_torch_nccl_avoid_record_streams,
+    silence_accumulate_grad_stream_mismatch_warning,
+)
 
 
 def test_torch_2_6_retains_avoid_record_streams_override():
@@ -25,3 +30,25 @@ def test_torch_2_11_uses_default_avoid_record_streams_behavior():
 
 def test_torch_2_8_nightly_uses_default_avoid_record_streams_behavior():
     assert not should_set_torch_nccl_avoid_record_streams("2.8.0a0+gitabcdef")
+
+
+_STREAM_MISMATCH_SWITCH = "set_warn_on_accumulate_grad_stream_mismatch"
+
+
+def test_stream_mismatch_warning_is_silenced_when_torch_supports_it():
+    if not hasattr(torch.autograd.graph, _STREAM_MISMATCH_SWITCH):
+        # Older torch does not emit the warning either, so there is nothing to
+        # silence; the degradation path is covered by the test below.
+        return
+    assert silence_accumulate_grad_stream_mismatch_warning()
+
+
+def test_stream_mismatch_warning_degrades_on_torch_without_the_switch():
+    saved = getattr(torch.autograd.graph, _STREAM_MISMATCH_SWITCH, None)
+    if saved is not None:
+        delattr(torch.autograd.graph, _STREAM_MISMATCH_SWITCH)
+    try:
+        assert not silence_accumulate_grad_stream_mismatch_warning()
+    finally:
+        if saved is not None:
+            setattr(torch.autograd.graph, _STREAM_MISMATCH_SWITCH, saved)

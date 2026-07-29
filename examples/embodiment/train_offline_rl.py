@@ -12,21 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-
 import hydra
 from omegaconf import open_dict
-from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
 from rlinf.runners.offline_runner import OfflineRunner
 from rlinf.scheduler import Cluster
+from rlinf.utils.logging import print_config_if_enabled
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
-@hydra.main(version_base="1.1", config_path="config", config_name="d4rl_iql_mujoco")
+@hydra.main(version_base="1.2", config_path="config", config_name="d4rl_iql_mujoco")
 def main(cfg) -> None:
     cfg = validate_cfg(cfg)
     if (
@@ -42,7 +40,7 @@ def main(cfg) -> None:
             with open_dict(cfg):
                 cfg.actor.model.obs_dim = int(obs_dim)
                 cfg.actor.model.action_dim = int(action_dim)
-    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
+    print_config_if_enabled(cfg)
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = HybridComponentPlacement(cfg, cluster)

@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-
 import hydra
 import torch.multiprocessing as mp
-from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
 from rlinf.scheduler import Cluster
+from rlinf.utils.logging import print_config_if_enabled
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.async_env_worker import AsyncEnvWorker
 from rlinf.workers.reward.reward_worker import EmbodiedRewardWorker
@@ -31,11 +29,11 @@ mp.set_start_method("spawn", force=True)
 
 
 @hydra.main(
-    version_base="1.1", config_path="config", config_name="maniskill_sac_mlp_async"
+    version_base="1.2", config_path="config", config_name="maniskill_sac_mlp_async"
 )
 def main(cfg) -> None:
     cfg = validate_cfg(cfg)
-    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
+    print_config_if_enabled(cfg)
 
     cluster = Cluster(
         cluster_cfg=cfg.cluster, distributed_log_dir=cfg.runner.per_worker_log_path

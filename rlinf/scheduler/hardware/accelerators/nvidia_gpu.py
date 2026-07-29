@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, ClassVar, Optional
 from omegaconf import ListConfig
 from ray._private.accelerators.nvidia_gpu import NvidiaGPUAcceleratorManager
 
+from rlinf.utils.log_noise import resolve_noisy_dependency_env_vars
 from rlinf.utils.torch_compat import should_set_torch_nccl_avoid_record_streams
 
 from .accelerator import AcceleratorManager, AcceleratorType, ProfileConfig
@@ -261,6 +262,11 @@ class NvidiaGPUManager(AcceleratorManager):
         # Simulator env vars
         if len(visible_accelerators) > 0:
             env_vars["MUJOCO_EGL_DEVICE_ID"] = str(visible_accelerators[0])
+
+        # Quiet third-party start-up banners in every worker. A worker on a node
+        # whose `ray start` ran outside the launch script does not inherit the
+        # driver's environment, so the values have to be passed explicitly.
+        env_vars.update(resolve_noisy_dependency_env_vars())
 
         # NCCL env vars
         env_vars["NCCL_CUMEM_ENABLE"] = "0"

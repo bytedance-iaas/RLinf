@@ -12,6 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .utils.omega_resolver import omegaconf_register
+from .utils.log_noise import suppress_start_up_noise
+
+# Runs before the heavy third-party imports below so the environment variables
+# and module blocks are in place by the time TensorFlow / gym load. Every
+# process that imports rlinf gets this, including the spawned simulator
+# subprocesses, which each re-import from scratch.
+suppress_start_up_noise()
+
+from .utils.omega_resolver import omegaconf_register  # noqa: E402
 
 omegaconf_register()

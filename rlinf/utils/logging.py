@@ -20,6 +20,33 @@ def get_logger():
     return Worker.logger
 
 
+def print_config_if_enabled(cfg) -> bool:
+    """Print the fully resolved config when ``runner.print_config`` is set.
+
+    A resolved embodied config is ~240 lines of JSON, which is a large share of
+    a run's log and is rarely read. With the ``tensorboard`` backend enabled --
+    as it is in nearly every shipped config -- ``MetricLogger`` writes the same
+    resolved config to ``<log_path>/tensorboard/<run>/config.yaml``, so keeping
+    the dump off by default does not lose it. Note that the embodiment configs
+    set ``hydra.output_subdir: null``, so Hydra itself saves nothing.
+
+    Args:
+        cfg: The resolved config.
+
+    Returns:
+        Whether the config was printed.
+    """
+    import json
+
+    from omegaconf import OmegaConf
+
+    runner_cfg = cfg.get("runner", None)
+    enabled = bool(runner_cfg.get("print_config", False)) if runner_cfg else False
+    if enabled:
+        print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
+    return enabled
+
+
 _LIBAV_LOGS_SILENCED = False
 
 

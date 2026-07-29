@@ -26,6 +26,7 @@ from omegaconf.dictconfig import DictConfig
 
 from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
+from rlinf.utils.log_noise import quiet_noisy_third_party_loggers
 from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
@@ -36,7 +37,14 @@ if TYPE_CHECKING:
     from megatron.core.model_parallel_config import ModelParallelConfig
     from megatron.core.transformer.transformer_config import TransformerConfig
 
+# This repository logs through the root logger in ~100 places, so the root level
+# has to stay at INFO for that output to survive. The side effect is that every
+# third-party library logging at INFO gets through as well, which -- multiplied
+# by one process per rank and per environment -- is what buries the training log.
+# Quieting the known-chatty namespaces explicitly keeps their INFO out without
+# touching RLinf's own output.
 logging.getLogger().setLevel(logging.INFO)
+quiet_noisy_third_party_loggers()
 
 
 @dataclasses.dataclass(frozen=True)

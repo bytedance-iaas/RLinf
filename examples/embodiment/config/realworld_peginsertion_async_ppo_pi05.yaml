@@ -6,6 +6,16 @@ defaults:
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
+hydra:
+  job:
+    # Pinned so the working directory does not depend on Hydra's version default,
+    # which flipped between 1.1 and 1.2. Every other embodiment config gets the
+    # same effect from `hydra.run.dir: .`.
+    chdir: false
+  run:
+    dir: .
+  output_subdir: null
+
 cluster:
   num_nodes: 2
   component_placement:

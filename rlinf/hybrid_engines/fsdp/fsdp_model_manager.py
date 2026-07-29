@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-import warnings
 from typing import ContextManager, Union
 
 import torch
@@ -37,17 +36,17 @@ from rlinf.hybrid_engines.fsdp.utils import (
     get_lr_scheduler,
 )
 from rlinf.scheduler import Worker
+from rlinf.utils.log_noise import suppress_fsdp_no_shard_warnings
 from rlinf.utils.logging import get_logger
+from rlinf.utils.torch_compat import (
+    silence_accumulate_grad_stream_mismatch_warning,
+)
 from rlinf.utils.utils import (
     collect_param_names_need_sync,
     warmup_optimizer_state,
 )
 
-warnings.filterwarnings(
-    "ignore",
-    message=".*NO_SHARD.*full_state_dict.*",
-    category=UserWarning,
-)
+suppress_fsdp_no_shard_warnings()
 
 
 def _should_warn_about_actor_precision(
@@ -298,6 +297,11 @@ class FSDPModelManager:
         self.model = self._strategy.wrap_model(
             model=module, device_mesh=self._device_mesh
         )
+        # FSDP keeps the wrapped module's AccumulateGrad nodes alive across
+        # iterations, which makes torch warn about a stream mismatch on every
+        # rank. Flipped here rather than at import time so only processes that
+        # actually wrap an FSDP model change autograd's global state.
+        silence_accumulate_grad_stream_mismatch_warning()
         self.optimizer = self.build_optimizer(
             model=self.model, enable_critic_warmup=self.critic_warmup_steps > 0
         )

@@ -12,16 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-
 import hydra
 import torch.multiprocessing as mp
 from omegaconf import open_dict
-from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Cluster
+from rlinf.utils.logging import print_config_if_enabled
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.reward import EmbodiedAPIRewardWorker, EmbodiedRewardWorker
@@ -33,11 +31,11 @@ _REWARD_SERVER_COMPONENT_NAME = "reward_server"
 
 
 @hydra.main(
-    version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
+    version_base="1.2", config_path="config", config_name="maniskill_ppo_openvlaoft"
 )
 def main(cfg) -> None:
     cfg = validate_cfg(cfg)
-    print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
+    print_config_if_enabled(cfg)
 
     cluster = Cluster(
         cluster_cfg=cfg.cluster, distributed_log_dir=cfg.runner.per_worker_log_path

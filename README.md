@@ -331,6 +331,28 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
 
 **SOTA RL Training Reproduction:** RLinf provides end-to-end recipes that reproduce or match **state-of-the-art (SOTA) RL results** out of the box—users can directly run our configs and scripts to obtain SOTA performance without custom engineering. Check out our [example gallery](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) for more details.
 
+**Log verbosity:** Third-party start-up banners are suppressed by default so the
+training log stays readable. To restore any of them for debugging, set the
+corresponding variable before launching:
+
+```bash
+# Bring back TensorFlow's C++ logs (banners plus its own errors).
+TF_CPP_MIN_LOG_LEVEL=0 bash examples/embodiment/run_async.sh <config_name>
+
+# Print the fully resolved config at start-up (~240 lines). It is also always
+# written to <log_path>/tensorboard/<run>/config.yaml when tensorboard is on.
+python examples/embodiment/train_async.py --config-name <config_name> \
+    runner.print_config=true
+```
+
+To verify the suppression manually, launch any embodiment example and check that
+the log no longer contains the legacy-`gym` notice, the TensorFlow banners, or
+the `NO_SHARD` deprecation:
+
+```bash
+bash examples/embodiment/run_async.sh <config_name> 2>&1 | tee /tmp/run.log
+grep -cE 'Gym has been unmaintained|oneDNN custom|NO_SHARD|AccumulateGrad' /tmp/run.log  # expect 0
+```
 
 ## Awesome Community Projects with RLinf
 We are excited to see a growing ecosystem of projects building on top of or integrate with RLinf, spanning embodied AI, robotics, and long-horizon agentic systems. Here are some awesome community projects:

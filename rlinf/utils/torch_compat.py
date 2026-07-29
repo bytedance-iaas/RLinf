@@ -38,3 +38,29 @@ def should_set_torch_nccl_avoid_record_streams(
 
     release = Version(torch_version).release
     return release[:2] < (2, 8)
+
+
+def silence_accumulate_grad_stream_mismatch_warning() -> bool:
+    """Turn off PyTorch's AccumulateGrad stream-mismatch warning.
+
+    Under FSDP with gradient accumulation, torch warns once per rank that an
+    ``AccumulateGrad`` node from a previous iteration is still alive and sits on
+    a different stream. The nodes are retained by FSDP itself rather than by
+    RLinf, so there is nothing to release on our side; the mismatch is expected
+    here and torch offers this switch for exactly that case.
+
+    Returns:
+        Whether the warning was turned off. ``False`` on PyTorch versions
+        without the switch, which are also the versions that do not warn.
+    """
+    import torch
+
+    setter = getattr(
+        torch.autograd.graph,
+        "set_warn_on_accumulate_grad_stream_mismatch",
+        None,
+    )
+    if setter is None:
+        return False
+    setter(False)
+    return True

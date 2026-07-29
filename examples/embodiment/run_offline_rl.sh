@@ -6,6 +6,12 @@ export SRC_FILE="${EMBODIED_PATH}/train_offline_rl.py"
 
 export MUJOCO_GL="egl"
 export PYOPENGL_PLATFORM="egl"
+
+# Quiet TensorFlow's start-up banners. TensorFlow is an indirect dependency and
+# prints them from C++ during import, before any Python-level filter can be
+# installed, so only the environment can suppress them. `:-` keeps an explicit
+# setting intact. Workers get the same value via get_accelerator_env_var().
+export TF_CPP_MIN_LOG_LEVEL=${TF_CPP_MIN_LOG_LEVEL:-3}
 export PYTHONPATH="${REPO_PATH}:${PYTHONPATH:-}"
 
 if [ -z "$1" ]; then
