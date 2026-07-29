@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .tasks.so101 import IsaaclabSO101Env
 from .tasks.stack_cube import IsaaclabStackCubeEnv
 
 REGISTER_ISAACLAB_ENVS = {
     "Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Rewarded-v0": IsaaclabStackCubeEnv,
+    "LeIsaac-SO101-LiftCube-Rewarded-v0": IsaaclabSO101Env,
 }
 
 __all__ = [list(REGISTER_ISAACLAB_ENVS.keys())]

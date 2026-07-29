@@ -73,6 +73,9 @@ from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.robotwin_aloha_dataconfig import (
     LeRobotAlohaDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+    LeRobotSO101LiftCubeDataConfig,
+)
 
 _CONFIGS = [
     TrainConfig(
@@ -535,6 +538,23 @@ _CONFIGS = [
             repo_id="RLinf/IsaacLab-Stack-Cube-Data",
             base_config=DataConfig(prompt_from_task=False),
             assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_isaaclab/assets"),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        name="pi05_so101_lift_cube",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=False
+        ),
+        data=LeRobotSO101LiftCubeDataConfig(
+            repo_id="RLinf/LeIsaac-SO101-LiftCube-Data",
+            # The prompt is a fixed property of the task ("Lift the red cube up."),
+            # supplied as default_prompt, so it is not read off the dataset.
+            base_config=DataConfig(prompt_from_task=False),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_so101/assets"),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
             "checkpoints/jax/pi05_base/params"

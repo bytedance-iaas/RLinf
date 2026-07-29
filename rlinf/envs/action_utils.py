@@ -82,22 +82,39 @@ def prepare_actions_for_libero(
 def prepare_actions_for_isaaclab(
     raw_chunk_actions,
     model_type,
+    action_dim: int | None = None,
 ) -> torch.Tensor:
     """
     Here reture a general 7 dof action. If the action is modified, please change the output of the model
     For example, in `RLinf/rlinf/models/embodiment/gr00t/simulation_io.py`
+
+    ``action_dim`` selects the robot's convention. The 7-DoF default is the Franka
+    end-effector one (6 pose dims + a binary gripper). SO101 is 6-DoF absolute
+    joint position, where the last dim is the gripper *joint angle*, not an
+    open/close flag -- so the gripper rescaling below must not run for it. Passing
+    ``action_dim=6`` (from ``env.action_dim``) is what keeps the two apart.
     """
+    # Imported here, not at module scope: ``so101_utils`` lives inside the isaaclab
+    # env package, so a top-level import would execute that package's __init__ (and
+    # with it every IsaacLab env adapter) for callers of any other env type. Same
+    # pattern as prepare_actions_for_robocasa below.
+    from rlinf.envs.isaaclab.so101_utils import SO101_ACTION_DIM
+
     chunk_actions = (
         torch.from_numpy(raw_chunk_actions)
         if isinstance(raw_chunk_actions, np.ndarray)
         else raw_chunk_actions
     )
-    if SupportedModel(model_type) in [
+    is_joint_space_6dof = action_dim == SO101_ACTION_DIM
+    if not is_joint_space_6dof and SupportedModel(model_type) in [
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
     ]:
         chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
         chunk_actions[..., -1] = torch.sign(chunk_actions[..., -1]) * -1.0
+    # OPENPI needs no adjustment in either case: SO101Outputs (for 6-DoF SO101) has
+    # already mapped the chunk to IsaacLab radians, and the Franka path is
+    # intentionally pass-through.
     return chunk_actions
 
 
@@ -379,6 +396,7 @@ def prepare_actions(
         chunk_actions = prepare_actions_for_isaaclab(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
+            action_dim=action_dim,
         )
     elif env_type == SupportedEnvType.ROBOCASA365:
         chunk_actions = prepare_actions_for_robocasa(
