@@ -33,6 +33,30 @@ def _reset_profiling_flag():
     nv_module._nv_profiling_active = False
 
 
+class TestNCCLEnvironment:
+    """NCCL compatibility variables follow the installed PyTorch behavior."""
+
+    def test_legacy_pytorch_sets_avoid_record_streams(self):
+        with patch.object(
+            nv_module,
+            "should_set_torch_nccl_avoid_record_streams",
+            return_value=True,
+        ):
+            env_vars = NvidiaGPUManager.get_accelerator_env_var(["0"])
+
+        assert env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == "1"
+
+    def test_modern_pytorch_uses_default_avoid_record_streams(self):
+        with patch.object(
+            nv_module,
+            "should_set_torch_nccl_avoid_record_streams",
+            return_value=False,
+        ):
+            env_vars = NvidiaGPUManager.get_accelerator_env_var(["0"])
+
+        assert "TORCH_NCCL_AVOID_RECORD_STREAMS" not in env_vars
+
+
 class TestStartStop:
     """NvidiaGPUManager.start_profiling / stop_profiling drive torch.cuda.profiler."""
 

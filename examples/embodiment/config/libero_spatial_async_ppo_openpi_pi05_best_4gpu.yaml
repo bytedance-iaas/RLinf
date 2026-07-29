@@ -23,6 +23,10 @@ defaults:
   - override hydra/job_logging: stdout
 
 hydra:
+  job:
+    chdir: false
+    env_set:
+      TF_CPP_MIN_LOG_LEVEL: "2"
   run:
     dir: .
   output_subdir: null
