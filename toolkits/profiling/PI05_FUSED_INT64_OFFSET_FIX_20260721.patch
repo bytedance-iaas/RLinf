@@ -1,0 +1,65 @@
+--- a/rlinf/models/embodiment/openpi/fused_kernels/kernel.py
++++ b/rlinf/models/embodiment/openpi/fused_kernels/kernel.py
+@@ -130,7 +130,10 @@
+     offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+     offs_k = tl.arange(0, BLOCK_K)
+ 
+-    a_ptrs = a_ptr + offs_m[:, None] * stride_am + offs_k[None, :] * stride_ak
++    # M * stride_am can exceed INT32_MAX for large rollout batches (for
++    # example, B=160 and the Gemma MLP width). Keep linear offsets in int64.
++    offs_m_i64 = offs_m.to(tl.int64)
++    a_ptrs = a_ptr + offs_m_i64[:, None] * stride_am + offs_k[None, :] * stride_ak
+     w_ptrs = w_ptr + offs_n[:, None] * stride_wn + offs_k[None, :] * stride_wk
+ 
+     acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+@@ -145,7 +148,7 @@
+     m_mask = offs_m[:, None] < M
+     n_mask = offs_n[None, :] < N
+     full_mask = m_mask & n_mask
+-    ep_off = offs_m[:, None] * stride_cm + offs_n[None, :] * stride_cn
++    ep_off = offs_m_i64[:, None] * stride_cm + offs_n[None, :] * stride_cn
+ 
+     if ACT == 1:
+         acc = _gelu_tanh(acc)
+--- a/rlinf/models/embodiment/openpi/fused_kernels/layer_train.py
++++ b/rlinf/models/embodiment/openpi/fused_kernels/layer_train.py
+@@ -76,7 +76,8 @@
+     offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+     offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+     offs_k = tl.arange(0, BLOCK_K)
+-    a_ptrs = a_ptr + offs_m[:, None] * stride_am + offs_k[None, :] * stride_ak
++    offs_m_i64 = offs_m.to(tl.int64)
++    a_ptrs = a_ptr + offs_m_i64[:, None] * stride_am + offs_k[None, :] * stride_ak
+     w_ptrs = w_ptr + offs_n[:, None] * stride_wn + offs_k[None, :] * stride_wk
+ 
+     acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+@@ -89,7 +90,7 @@
+         w_ptrs += BLOCK_K * stride_wk
+ 
+     full = (offs_m[:, None] < M) & (offs_n[None, :] < N)
+-    off = offs_m[:, None] * N + offs_n[None, :]
++    off = offs_m_i64[:, None] * N + offs_n[None, :]
+     gl = tl.load(gl_ptr + off, mask=full, other=0.0).to(tl.float32)
+     u = tl.load(u_ptr + off, mask=full, other=0.0).to(tl.float32)
+     g = tl.load(g_ptr + off, mask=full, other=0.0).to(tl.float32)
+@@ -129,7 +130,10 @@
+     offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+     offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+     offs_k = tl.arange(0, BLOCK_K)
+-    a_ptrs = a_ptr + offs_m[:, None] * stride_am + offs_k[None, :] * stride_ak
++    # The flattened [M, N] MLP output can exceed 2**31 elements for a
++    # single-rank rollout batch. Use 64-bit pointer offsets to avoid wraparound.
++    offs_m_i64 = offs_m.to(tl.int64)
++    a_ptrs = a_ptr + offs_m_i64[:, None] * stride_am + offs_k[None, :] * stride_ak
+     w_ptrs = w_ptr + offs_n[:, None] * stride_wn + offs_k[None, :] * stride_wk
+     acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+     for k0 in range(0, tl.cdiv(K, BLOCK_K)):
+@@ -140,7 +144,7 @@
+         a_ptrs += BLOCK_K * stride_ak
+         w_ptrs += BLOCK_K * stride_wk
+     full = (offs_m[:, None] < M) & (offs_n[None, :] < N)
+-    off = offs_m[:, None] * N + offs_n[None, :]
++    off = offs_m_i64[:, None] * N + offs_n[None, :]
+     if MODE == 0:   # gate: o1=gl (linear), o2=g=gelu(gl)
+         o2 = _gelu_tanh(acc)
+     else:           # up: o1=u (linear), o2=prod=u*g

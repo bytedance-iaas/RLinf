@@ -390,6 +390,45 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
 
                     compute_values = self.cfg.algorithm.adv_type == "gae"
 
+                    # Only profile in steady state (skip first-step init/compile
+                    # noise): gated by env, and require version >= threshold.
+                    _prof_min_ver = int(os.environ.get("RLINF_PROFILE_ACTOR_MINVER", "2"))
+                    _prof_actor = (
+                        os.environ.get("RLINF_PROFILE_ACTOR", "0") == "1"
+                        and int(self.version) >= _prof_min_ver
+                    )
+                    if _prof_actor and not hasattr(self, "_prof_state"):
+                        # profile a single steady-state micro-batch, then dump
+                        import torch.profiler as _tp
+
+                        self._prof_state = {
+                            "fwd_ev": (
+                                torch.cuda.Event(enable_timing=True),
+                                torch.cuda.Event(enable_timing=True),
+                            ),
+                            "bwd_ev": (
+                                torch.cuda.Event(enable_timing=True),
+                                torch.cuda.Event(enable_timing=True),
+                            ),
+                            "prof": _tp.profile(
+                                activities=[
+                                    _tp.ProfilerActivity.CPU,
+                                    _tp.ProfilerActivity.CUDA,
+                                ],
+                                record_shapes=False,
+                            ),
+                            "done": False,
+                        }
+                        self._prof_state["prof"].__enter__()
+                    _ps = getattr(self, "_prof_state", None)
+                    _do_prof = _prof_actor and _ps is not None and not _ps["done"]
+
+                    if _do_prof:
+                        import torch.profiler as _tp
+
+                        _ps["fwd_ev"][0].record()
+                        _fwd_rf = _tp.record_function("actor_fwd")
+                        _fwd_rf.__enter__()
                     with self.amp_context:
                         out = self.model(
                             forward_inputs=forward_inputs,
@@ -399,6 +438,9 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                             use_cache=False,
                             **model_kwargs,
                         )
+                    if _do_prof:
+                        _fwd_rf.__exit__(None, None, None)
+                        _ps["fwd_ev"][1].record()
 
                     if SupportedModel(self.cfg.actor.model.model_type) in [
                         SupportedModel.GR00T,
@@ -456,8 +498,35 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                         loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
 
                     loss = loss / self.gradient_accumulation
+                    if _do_prof:
+                        import torch.profiler as _tp
+
+                        _ps["bwd_ev"][0].record()
+                        _bwd_rf = _tp.record_function("actor_bwd")
+                        _bwd_rf.__enter__()
                     with backward_ctx:
                         self.grad_scaler.scale(loss).backward()
+                    if _do_prof:
+                        _bwd_rf.__exit__(None, None, None)
+                        _ps["bwd_ev"][1].record()
+                        torch.cuda.synchronize()
+                        fwd_ms = _ps["fwd_ev"][0].elapsed_time(_ps["fwd_ev"][1])
+                        bwd_ms = _ps["bwd_ev"][0].elapsed_time(_ps["bwd_ev"][1])
+                        _ps["prof"].__exit__(None, None, None)
+                        _ps["done"] = True
+                        ka = _ps["prof"].key_averages()
+                        self.log_info(
+                            f"[actor-prof] fwd={fwd_ms:.2f}ms bwd={bwd_ms:.2f}ms "
+                            f"(bwd/fwd={bwd_ms / max(fwd_ms, 1e-6):.2f})"
+                        )
+                        self.log_info(
+                            "[actor-prof] top ops by CUDA time:\n"
+                            + ka.table(
+                                sort_by="cuda_time_total",
+                                row_limit=30,
+                                max_name_column_width=50,
+                            )
+                        )
 
                     metrics_data["actor/entropy_loss"] = float(
                         entropy_loss.detach().item()

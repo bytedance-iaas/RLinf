@@ -22,14 +22,9 @@ the same forward signature as `GemmaDecoderLayer`, so it drops into
 Only for the standard-RMSNorm prefix side (``use_adarms=False``). The
 action-expert (adaRMS) layers are left untouched. Set
 ``actor.model.openpi.enable_fused_prefix`` to enable the replacement.
-
-Set ``RLINF_FUSED_BACKWARD_COUNTER=1`` to confirm whether a workload sends
-gradients through the prefix VLM.
 """
 
 from __future__ import annotations
-
-import os
 
 import torch
 import torch.nn as nn
@@ -37,14 +32,6 @@ import torch.nn as nn
 from rlinf.utils.logging import get_logger
 
 _logger = get_logger()
-
-
-class _BackwardCounter:
-    """Process-global counter to confirm whether fused backward is ever used."""
-
-    fwd = 0
-    bwd = 0
-    logged = False
 
 
 class FusedGemmaPrefixLayer(nn.Module):
@@ -127,24 +114,7 @@ class FusedGemmaPrefixLayer(nn.Module):
         else:
             out = res
 
-        if os.environ.get("RLINF_FUSED_BACKWARD_COUNTER", "0") == "1":
-            _BackwardCounter.fwd += 1
-            # hook fires only if this output participates in a backward pass
-            if out.requires_grad:
-                out.register_hook(_fused_bwd_hook)
-
         return (out,)
-
-
-def _fused_bwd_hook(grad: torch.Tensor) -> torch.Tensor:
-    _BackwardCounter.bwd += 1
-    if not _BackwardCounter.logged:
-        _logger.info(
-            f"[fused-prefix] backward IS used (fwd_calls={_BackwardCounter.fwd}, "
-            f"first bwd fired). Prefix VLM is NOT no-grad."
-        )
-        _BackwardCounter.logged = True
-    return grad
 
 
 def apply_fused_prefix_layers(model: nn.Module, enabled: bool = False) -> int:
