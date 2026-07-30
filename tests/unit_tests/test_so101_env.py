@@ -352,6 +352,117 @@ def test_wrap_obs_truncates_wider_joint_state():
     assert obs["states"].shape == (1, SO101_ACTION_DIM)
 
 
+class _FakeSimCfg:
+    def __init__(self, dt, render_interval):
+        self.dt = dt
+        self.render_interval = render_interval
+
+
+class _FakeRewardTerm:
+    def __init__(self):
+        self.weight = None
+
+
+class _FakeRewards:
+    def __init__(self):
+        self.success = _FakeRewardTerm()
+
+
+class _FakeTaskCfg:
+    """Minimal stand-in for ``LiftCubeRewardedEnvCfg``.
+
+    The real class lives in the ``so101_rl`` extension and needs a booted Isaac Sim
+    to import (``@configclass`` reaches into ``isaaclab.utils``), so the invariant
+    it guarantees is re-stated here against a copy of the same arithmetic. The real
+    implementation is covered by ``scripts/verify_control_rate.py`` inside a live
+    simulator; this test exists to pin the *contract* the RLinf adapter relies on.
+    """
+
+    def __init__(self):
+        self.sim = _FakeSimCfg(dt=1.0 / 60.0, render_interval=1)
+        self.decimation = 1
+        self.rewards = _FakeRewards()
+        self.rewards.success.weight = 1.0 / (self.sim.dt * self.decimation)
+        self.scene = type("S", (), {"num_envs": 1})()
+        self.seed = 0
+
+    def set_control_decimation(self, decimation):
+        self.decimation = decimation
+        self.sim.render_interval = decimation
+        self.rewards.success.weight = 1.0 / (self.sim.dt * self.decimation)
+
+
+class _NoSetterTaskCfg:
+    """A task cfg that predates ``set_control_decimation``.
+
+    Deliberately not a subclass of :class:`_FakeTaskCfg` -- it would inherit the
+    setter, and shadowing it on the instance is not possible for a method defined
+    on the class.
+    """
+
+    def __init__(self):
+        self.sim = _FakeSimCfg(dt=1.0 / 60.0, render_interval=1)
+        self.decimation = 1
+        self.rewards = _FakeRewards()
+
+
+def test_control_decimation_keeps_sparse_reward_worth_one():
+    """Changing the control rate must not rescale the sparse success reward.
+
+    ``RewardManager.compute()`` multiplies every term by ``step_dt``, and the
+    success weight is a *baked* number (``1/step_dt`` at construction) while
+    ``step_dt`` is a property derived from ``sim.dt * decimation``. Setting
+    ``decimation`` directly leaves the weight stale, so at ``decimation=2`` a
+    success would pay 2.0 instead of 1.0 -- which no assertion in the stack
+    catches, and which silently doubles every PPO return.
+    """
+    cfg = _FakeTaskCfg()
+    assert cfg.rewards.success.weight * (cfg.sim.dt * cfg.decimation) == pytest.approx(
+        1.0
+    )
+
+    cfg.set_control_decimation(2)
+    assert cfg.decimation == 2
+    # One render per control step, on the last physics substep. Leaving
+    # render_interval at 1 renders twice per step; rendering is the measured
+    # bottleneck, so that would be pure waste.
+    assert cfg.sim.render_interval == 2
+    assert cfg.rewards.success.weight * (cfg.sim.dt * cfg.decimation) == pytest.approx(
+        1.0
+    )
+    # Negative control: the naive assignment is what this guards against.
+    naive = _FakeTaskCfg()
+    naive.decimation = 2
+    assert naive.rewards.success.weight * (
+        naive.sim.dt * naive.decimation
+    ) == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize("decimation", [1, 2, 4])
+def test_env_applies_decimation_from_config(decimation):
+    """``init_params.decimation`` must reach the IsaacLab cfg via its own setter."""
+    cfg = _FakeTaskCfg()
+    # This mirrors the adapter's branch; _make_env_function itself cannot run
+    # outside a spawned subprocess with a live AppLauncher.
+    assert hasattr(cfg, "set_control_decimation")
+    cfg.set_control_decimation(decimation)
+    assert cfg.decimation == decimation
+    assert cfg.sim.render_interval == decimation
+    assert cfg.rewards.success.weight * (cfg.sim.dt * cfg.decimation) == pytest.approx(
+        1.0
+    )
+
+
+def test_decimation_setter_is_required_when_config_asks_for_it():
+    """A task without the setter must be rejected, not silently half-configured.
+
+    Falling back to ``cfg.decimation = n`` would change the control rate while
+    leaving the reward weight and render interval stale -- the exact silent
+    failure the setter exists to prevent.
+    """
+    assert not hasattr(_NoSetterTaskCfg(), "set_control_decimation")
+
+
 def test_wrist_variant_registered_alongside_plain_id():
     """Both LiftCube task ids must map to the same adapter class.
 

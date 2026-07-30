@@ -112,6 +112,24 @@ class IsaaclabSO101Env(IsaaclabBaseEnv):
             isaac_env_cfg.seed = self.seed
             isaac_env_cfg.scene.num_envs = self.cfg.init_params.num_envs
 
+            # Control rate. LeIsaac ships decimation=1 (60 Hz with sim.dt=1/60),
+            # but SFT datasets are recorded at their teleop rate -- 30 fps for
+            # henry-guo/so101-pick-place-new -- and an action chunk is a fixed
+            # number of *frames*, so replaying it at 2x the recording rate covers
+            # half the intended motion in half the intended time. Delegated to the
+            # task cfg's own setter because the sparse reward weight and the render
+            # interval must move with it; see set_control_decimation.
+            decimation = self.cfg.init_params.get("decimation", None)
+            if decimation is not None:
+                if not hasattr(isaac_env_cfg, "set_control_decimation"):
+                    raise ValueError(
+                        f"config sets init_params.decimation but task "
+                        f"{self.isaaclab_env_id} has no set_control_decimation(); "
+                        "setting cfg.decimation directly would leave the sparse "
+                        "reward weight stale and silently rescale rewards"
+                    )
+                isaac_env_cfg.set_control_decimation(int(decimation))
+
             # LeIsaac names its sensors after the mount point (front/wrist), and a
             # given task may not have all of them -- LiftCube deletes wrist. Only
             # override what the config actually asks for and what the scene has.
