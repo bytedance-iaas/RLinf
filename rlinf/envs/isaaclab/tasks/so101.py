@@ -112,6 +112,31 @@ class IsaaclabSO101Env(IsaaclabBaseEnv):
             isaac_env_cfg.seed = self.seed
             isaac_env_cfg.scene.num_envs = self.cfg.init_params.num_envs
 
+            # Never let the teleop dataset recorder run under RL rollout. LeIsaac's
+            # SingleArmTaskEnvCfg sets recorders=ActionStateRecorderManagerCfg(),
+            # whose base defaults are a *fixed* path shared by every process
+            # (dataset_export_dir_path="/tmp/isaaclab/logs",
+            # dataset_filename="dataset", dataset_export_mode=EXPORT_ALL). HDF5
+            # takes an exclusive file lock, so with more than one env rank the
+            # second and later ranks die inside RecorderManager.__init__ with
+            # "BlockingIOError: [Errno 11] ... unable to lock file" -- before
+            # gym.make even returns. Nothing in RLinf reads that dataset.
+            #
+            # RecorderManagerBaseCfg is IsaacLab's own default for
+            # ManagerBasedEnvCfg.recorders and carries no terms, which makes
+            # RecorderManager fully inert: __init__ returns before opening any file
+            # and every other entry point starts with
+            # `if len(self.active_terms) == 0: return`.
+            #
+            # Also set on the task cfg class itself (so101_rl's
+            # LiftCubeRewardedEnvCfg.recorders) so a bare gym.make from the
+            # single-process verification scripts is equally clean; this line is
+            # what keeps the guarantee for any *other* LeIsaac task id registered
+            # against this adapter.
+            from isaaclab.managers import RecorderManagerBaseCfg
+
+            isaac_env_cfg.recorders = RecorderManagerBaseCfg()
+
             # Control rate. LeIsaac ships decimation=1 (60 Hz with sim.dt=1/60),
             # but SFT datasets are recorded at their teleop rate -- 30 fps for
             # henry-guo/so101-pick-place-new -- and an action chunk is a fixed

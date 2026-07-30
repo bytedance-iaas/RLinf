@@ -1,0 +1,107 @@
+# F3.7: standalone `only_eval` run of the SO101 LiftCube checkpoint through RLinf's
+# own worker/channel path (env worker <-> rollout worker over Ray channels), as
+# opposed to scripts/eval_success_rate.py which drives the same model and env
+# in-process. What this proves is protocol consistency between the two paths, so
+# the env-side numbers here must be directly comparable to that script's: hence
+# `total_num_envs: 20`, 250 steps, and the env yaml's own `auto_reset: False` /
+# `ignore_terminations: False` (one episode per env) are left untouched.
+#
+# Launch (bypassing evaluations/run_eval.sh -- its infer_benchmark() has no
+# isaaclab case, it calls bare `python`, and it forces MUJOCO_GL/PYOPENGL_PLATFORM
+# to osmesa plus a placeholder ISAAC_PATH, all wrong for Isaac Sim here):
+#
+#   cd /workspace/rlinf_so101
+#   OMNI_KIT_ACCEPT_EULA=YES \
+#   LEISAAC_ASSETS_ROOT=/workspace/so101/leisaac_assets \
+#   EMBODIED_PATH=/workspace/rlinf_so101/examples/embodiment \
+#   PYTHONPATH=/workspace/rlinf_so101:/workspace/so101 \
+#   /opt/venv/openpi/bin/python evaluations/eval_embodied_agent.py \
+#     --config-path /workspace/rlinf_so101/evaluations/isaaclab \
+#     --config-name isaaclab_so101_openpi_pi05_eval
+defaults:
+  # Only env.eval is composed: task_type embodied_eval means no actor group and no
+  # training rollouts, so an env.train block would be dead config.
+  - env/isaaclab_so101_lift_cube_wrist@env.eval
+  # model/pi0_5's openpi.* fields use relative interpolations (${..action_dim} etc.),
+  # so the same template composes under @rollout.model here and @actor.model in the
+  # training config.
+  - model/pi0_5@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "/workspace/results/isaaclab_so101_openpi_pi05_eval"
+    project_name: rlinf
+    experiment_name: "f37_only_eval"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  max_steps: -1
+
+  only_eval: True
+  val_check_interval: -1
+  # -1 disables checkpoint saving entirely (is_save_enabled = save_interval > 0).
+  # Nothing is trained here, so there is nothing to save.
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    rollout_epoch: 1
+    # 20 episodes, matching scripts/eval_success_rate.py's F153_NUM_ENVS so the two
+    # success rates are comparable episode-for-episode.
+    total_num_envs: 20
+    max_episode_steps: 250
+    # Must be divisible by rollout.model.num_action_chunks (asserted in
+    # validate_embodied_cfg): 250 = 5 chunks of 50.
+    max_steps_per_rollout_epoch: 250
+    # auto_reset / ignore_terminations are deliberately NOT overridden -- the env
+    # yaml already defaults both to False, which is what gives exactly one episode
+    # per env and makes success_once a per-episode number.
+    seed: 42
+    video_cfg:
+      save_video: False
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  # Offload moves the *model* off the accelerator between phases. It is unrelated to
+  # env offload, but there is only one phase here, so it would only add transfers.
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  # Under only_eval both the env worker and the rollout worker read
+  # cfg.rollout.model (not cfg.actor.model), so every field the model needs has to
+  # live here. The values mirror actor.model in
+  # examples/embodiment/config/isaaclab_so101_ppo_openpi_pi05.yaml; see that file
+  # for why action_dim=6 / num_action_chunks=50 / num_images_in_input=2.
+  model:
+    model_path: "/workspace/models/henry-pi05-sft-openpi"
+    model_type: "openpi"
+    action_dim: 6
+    num_action_chunks: 50
+    num_steps: 5
+    # No value head: eval never computes advantages, and the checkpoint has no
+    # value-head weights to load.
+    add_value_head: False
+    openpi:
+      config_name: "pi05_so101_lift_cube"
+      num_images_in_input: 2
+      noise_level: 0.5

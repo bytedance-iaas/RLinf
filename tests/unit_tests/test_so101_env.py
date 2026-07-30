@@ -481,6 +481,110 @@ def test_wrist_variant_registered_alongside_plain_id():
     assert REGISTER_ISAACLAB_ENVS[wrist] is IsaaclabSO101Env
 
 
+class _FakeRecorderManager:
+    """The parts of IsaacLab's ``RecorderManager.__init__`` that decide inertness.
+
+    Reproduces the two early returns and the file-handler creation, so a cfg can be
+    checked for "does this open a dataset file" without booting Omniverse (the real
+    class imports ``omni.timeline`` via ``ManagerBase``).
+    """
+
+    _SETTING_NAMES = (
+        "dataset_file_handler_class_type",
+        "dataset_filename",
+        "dataset_export_dir_path",
+        "dataset_export_mode",
+        "export_in_record_pre_reset",
+    )
+
+    def __init__(self, cfg):
+        self.active_terms = []
+        self.opened_paths = []
+        if not cfg:
+            return
+        for name, term in vars(cfg).items():
+            if name in self._SETTING_NAMES or term is None:
+                continue
+            self.active_terms.append(name)
+        if not self.active_terms:
+            return
+        # EXPORT_NONE == 0, so a truthy export mode means a file gets created.
+        if getattr(cfg, "dataset_export_mode", 1):
+            self.opened_paths.append(
+                f"{cfg.dataset_export_dir_path}/{cfg.dataset_filename}"
+            )
+
+
+class _FakeRecorderBaseCfg:
+    """IsaacLab's ``RecorderManagerBaseCfg``: settings only, no recorder terms."""
+
+    def __init__(self):
+        self.dataset_file_handler_class_type = object
+        self.dataset_export_dir_path = "/tmp/isaaclab/logs"
+        self.dataset_filename = "dataset"
+        self.dataset_export_mode = 1  # EXPORT_ALL
+        self.export_in_record_pre_reset = True
+
+
+class _FakeActionStateRecorderCfg(_FakeRecorderBaseCfg):
+    """LeIsaac's default: the five teleop capture terms, same shared file path."""
+
+    def __init__(self):
+        super().__init__()
+        self.record_initial_state = object()
+        self.record_post_step_states = object()
+        self.record_pre_step_actions = object()
+        self.record_pre_step_flat_policy_observations = object()
+        self.record_post_step_processed_actions = object()
+
+
+def test_empty_recorder_cfg_opens_no_dataset_file():
+    """The recorder must be inert, and the LeIsaac default must not be.
+
+    LeIsaac's ``SingleArmTaskEnvCfg`` sets
+    ``recorders = ActionStateRecorderManagerCfg()`` for teleop dataset capture,
+    and ``RecorderManagerBaseCfg`` points every process at the same
+    ``/tmp/isaaclab/logs/dataset.hdf5``. HDF5 takes an exclusive lock, so with more
+    than one env rank the later ranks die inside ``RecorderManager.__init__``:
+    ``BlockingIOError: [Errno 11] ... unable to lock file``. Measured with a 4-rank
+    ``EnvGroup``; single-process scripts never hit it, which is why it only showed
+    up at F3.7.
+
+    The negative control is the point of this test: if replacing the cfg stopped
+    mattering (upstream switching to per-process paths, say), the second half would
+    fail and the override could be dropped deliberately rather than by accident.
+    """
+    leisaac_default = _FakeRecorderManager(_FakeActionStateRecorderCfg())
+    assert len(leisaac_default.active_terms) == 5
+    assert leisaac_default.opened_paths == ["/tmp/isaaclab/logs/dataset"]
+
+    ours = _FakeRecorderManager(_FakeRecorderBaseCfg())
+    assert ours.active_terms == []
+    assert ours.opened_paths == []
+
+
+def test_so101_adapter_disables_the_dataset_recorder():
+    """The adapter itself must neutralize ``recorders`` before ``gym.make``.
+
+    Asserted against the source rather than by running it: ``_make_env_function``
+    returns a closure that only executes inside a spawned subprocess with a live
+    ``AppLauncher``, so there is nothing importable to call here. What matters is
+    that the assignment exists on the path *between* ``load_cfg_from_registry`` and
+    ``gym.make`` -- the task cfg class in ``so101_rl`` sets the same field, but this
+    line is what protects any other LeIsaac task id pointed at this adapter.
+    """
+    import inspect
+
+    pytest.importorskip("openpi", reason="rlinf.envs.isaaclab imports the so101 policy")
+    from rlinf.envs.isaaclab.tasks.so101 import IsaaclabSO101Env
+
+    src = inspect.getsource(IsaaclabSO101Env._make_env_function)
+    assignment = "isaac_env_cfg.recorders = RecorderManagerBaseCfg()"
+    assert assignment in src
+    # "gym.make" also appears in prose above, so match the call syntax.
+    assert src.index(assignment) < src.index("gym.make(")
+
+
 class _Named:
     """Stand-in for an openpi transform, identified only by its class name.
 
