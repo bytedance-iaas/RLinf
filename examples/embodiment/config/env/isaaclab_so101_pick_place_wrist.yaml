@@ -1,0 +1,47 @@
+env_type: isaaclab
+total_num_envs: null
+auto_reset: False
+ignore_terminations: False
+use_rel_reward: True
+seed: 0
+group_size: 1
+
+reward_coef: 1.0
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 250
+max_episode_steps: 250 # max episode steps for truncation
+
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  fps: 20
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  # The task the SFT checkpoint was actually trained on: put the red cube in the
+  # box, not LiftCube's "raise it 20 cm". Registered by our so101_rl extension,
+  # which also adds the paper box and the blue distractor cube the demonstrations
+  # have in every frame. Two cameras, to match the front+wrist checkpoint.
+  id: "LeIsaac-SO101-PickPlace-Wrist-v0"
+  num_envs: null
+  max_episode_steps: ${..max_episode_steps} # max episode steps for truncation
+  # Verbatim from the SFT dataset (henry-guo/so101-pick-place-new), whose recorded
+  # prompt is "Grab the red cube" -- see PROVENANCE.md next to the checkpoint. It
+  # reads like a grasp-only instruction while the task here is the full place, but
+  # the prompt follows the checkpoint rather than the task name: the policy was
+  # conditioned on these tokens, and substituting a more descriptive sentence
+  # changes the input distribution. PickPlaceEnvCfg.task_description carries the
+  # descriptive wording ("Pick up the red cube and put it into the box.") for
+  # documentation; this override is what the policy is actually fed.
+  task_description: "Grab the red cube"
+  # 480x640, not 256x256 -- same reasoning as the LiftCube variant: resize_with_pad
+  # keeps 4:3 content plus black bars, and IsaacLab derives vertical_aperture from
+  # the aspect ratio, so resolution changes the vertical FOV. Both are part of the
+  # distribution the checkpoint was fine-tuned on.
+  front:
+    height: 480
+    width: 640
+  wrist:
+    height: 480
+    width: 640

@@ -1,0 +1,125 @@
+# Run the SFT checkpoint on the task it was actually trained for -- put the red
+# cube in the box -- and write out MP4s so the behaviour can be watched rather than
+# inferred from a success rate.
+#
+# This is deliberately NOT a copy of isaaclab_so101_openpi_pi05_eval.yaml with the
+# task id swapped. Two things had to change, and both are the point of the run:
+#
+#   * 900 steps, not 250. The SFT demonstrations are 38601 frames over 50 episodes
+#     at 30 fps = 772 steps per episode, so the previous 250-step budget (8.3 s) cut
+#     off before a successful placement could finish. A run that times out mid-
+#     transport is indistinguishable in the metrics from a policy that never tries.
+#     900 steps = 30 s at 30 Hz, which clears the longest demonstration.
+#   * 4 envs, not 20. RecordVideo buffers a whole episode of frames in RAM before
+#     encoding, and it tiles all of a rank's envs into one frame -- so the cost per
+#     rank grows with envs-per-rank, not with total envs. At 4 total envs over the
+#     4 GPU ranks each rank owns exactly one env: no tiling, one clean 480x640
+#     stream per rank, ~830 MB buffered. 20 envs would put 5 per rank, tiled into a
+#     grid too small to read and several GB of buffer each. Four episodes is enough
+#     to see *what the policy does*, which is the question here. It is not enough
+#     for a success-rate estimate, and this config is not trying to produce one --
+#     F1.5.3 owns that number.
+#
+#     Note the videos land in seed_{42,43,44,45}/ because RecordVideo names the
+#     directory by env.seed = cfg.seed + seed_offset, i.e. one directory per rank,
+#     not one per episode within a rank.
+#
+# Launch (same reasons as the F3.7 config for bypassing evaluations/run_eval.sh:
+# infer_benchmark() has no isaaclab case, calls bare `python`, and forces
+# MUJOCO_GL/PYOPENGL_PLATFORM=osmesa plus a placeholder ISAAC_PATH):
+#
+#   cd /workspace/rlinf_so101
+#   OMNI_KIT_ACCEPT_EULA=YES \
+#   LEISAAC_ASSETS_ROOT=/workspace/so101/leisaac_assets \
+#   EMBODIED_PATH=/workspace/rlinf_so101/examples/embodiment \
+#   PYTHONPATH=/workspace/rlinf_so101:/workspace/so101 \
+#   /opt/venv/openpi/bin/python evaluations/eval_embodied_agent.py \
+#     --config-path /workspace/rlinf_so101/evaluations/isaaclab \
+#     --config-name isaaclab_so101_pick_place_eval
+defaults:
+  # Only env.eval: task_type embodied_eval means no actor group, so an env.train
+  # block would be dead config.
+  - env/isaaclab_so101_pick_place_wrist@env.eval
+  # model/pi0_5's openpi.* fields use relative interpolations (${..action_dim}), so
+  # the same template composes under @rollout.model here and @actor.model in the
+  # training config.
+  - model/pi0_5@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "/workspace/results/isaaclab_so101_pick_place_eval"
+    project_name: rlinf
+    experiment_name: "pickplace_sft_eval"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  max_steps: -1
+
+  only_eval: True
+  val_check_interval: -1
+  # -1 disables checkpoint saving entirely (is_save_enabled = save_interval > 0).
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 4
+    max_episode_steps: 900
+    # Must be divisible by rollout.model.num_action_chunks (asserted in
+    # validate_embodied_cfg): 900 = 18 chunks of 50.
+    max_steps_per_rollout_epoch: 900
+    # auto_reset / ignore_terminations stay False (from the env yaml): one episode
+    # per env, so success_once is a per-episode number and a successful placement
+    # ends its episode instead of being reset back into the scene.
+    seed: 42
+    video_cfg:
+      save_video: True
+      # Draws reward / termination / env_id onto each frame, which is what makes the
+      # video diagnostic instead of merely pretty: a frame where the arm looks close
+      # to the box but reward stays 0 is the interesting case.
+      info_on_video: True
+      # The env runs at 30 Hz; play it back at 30 so the motion is real-time.
+      fps: 30
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  # Under only_eval both the env worker and the rollout worker read
+  # cfg.rollout.model (not cfg.actor.model), so every field the model needs lives
+  # here. Mirrors actor.model in
+  # examples/embodiment/config/isaaclab_so101_ppo_openpi_pi05.yaml.
+  model:
+    model_path: "/workspace/models/henry-pi05-sft-openpi"
+    model_type: "openpi"
+    action_dim: 6
+    num_action_chunks: 50
+    num_steps: 5
+    # No value head: eval never computes advantages, and the checkpoint has no
+    # value-head weights to load.
+    add_value_head: False
+    openpi:
+      config_name: "pi05_so101_lift_cube"
+      num_images_in_input: 2
+      noise_level: 0.5

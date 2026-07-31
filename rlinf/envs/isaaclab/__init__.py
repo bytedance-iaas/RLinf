@@ -21,6 +21,17 @@ REGISTER_ISAACLAB_ENVS = {
     # Same adapter, two-camera task variant: the adapter reads cameras by name from
     # the env config, so restoring the wrist view needs no code change here.
     "LeIsaac-SO101-LiftCube-Rewarded-Wrist-v0": IsaaclabSO101Env,
+    # Pick-place: the task the SO101 SFT checkpoint was actually trained on. Same
+    # adapter again -- the observation protocol (front/wrist RGB, 6-dim joint
+    # action, joint_pos state) is identical, and everything that differs is inside
+    # the IsaacLab env config (extra props, a different success predicate).
+    #
+    # Registering both ids here is separate from registering them with gym: our
+    # so101_rl extension does the gym side, but get_env_cls() checks this dict
+    # first, so a gym-registered task missing from here fails at env-worker init
+    # with "has not been registered" rather than anywhere near gym.make.
+    "LeIsaac-SO101-PickPlace-v0": IsaaclabSO101Env,
+    "LeIsaac-SO101-PickPlace-Wrist-v0": IsaaclabSO101Env,
 }
 
 __all__ = [list(REGISTER_ISAACLAB_ENVS.keys())]
