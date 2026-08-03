@@ -605,9 +605,10 @@ def test_pad_state_before_tokenize_moves_pad_ahead():
     """The pad must land immediately before the tokenizer, order otherwise intact.
 
     pi0.5 has no ``state_proj``, so the discretized state inside the prompt is the
-    only route from proprioception into the model. LeRobot's SFT pipeline pads to 32
-    *then* digitizes; openpi does the reverse, giving a different prompt for the same
-    observation. This reorder is what makes the two agree.
+    only route from proprioception into the model. LeRobot pads to 32 *then* digitizes
+    up to version 0.4.4 (0.5.0 removed the pad); openpi does the reverse, giving a
+    different prompt for the same observation. This reorder is what makes the two agree
+    for a 0.4.4-era checkpoint.
     """
     pytest.importorskip("openpi")
     from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
@@ -653,9 +654,9 @@ def test_pad_state_before_tokenize_raises_when_transform_missing(present):
     """A missing transform must raise, never silently no-op.
 
     If a future openpi renames or drops either transform, a quiet fallback would
-    produce openpi's 6-numeral prompt against a checkpoint trained on the 32-numeral
-    one. That does not crash -- it just degrades the policy, which is
-    indistinguishable from a bad checkpoint.
+    produce openpi's 6-numeral prompt for a caller that asked for the 32-numeral one.
+    That does not crash -- it just degrades the policy, which is indistinguishable from
+    a bad checkpoint.
     """
     pytest.importorskip("openpi")
     from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
@@ -701,6 +702,26 @@ def test_so101_dataconfig_applies_reorder_only_when_flagged():
     assert off_names.index("TokenizePrompt") < off_names.index("PadStatesAndActions")
     # Default must stay openpi-native so other checkpoints are unaffected.
     assert LeRobotSO101LiftCubeDataConfig.pad_state_before_tokenize is False
+
+
+def test_pi05_so101_registry_does_not_pad_before_tokenize():
+    """``pi05_so101_lift_cube`` must leave the pad reorder OFF.
+
+    The SO101 pick-place checkpoint was fine-tuned under LeRobot 0.6.x, whose
+    ``Pi05PrepareStateTokenizerProcessorStep`` does *not* call ``pad_vector`` before
+    digitizing -- that call existed only up to 0.4.4. Turning the reorder on makes 108
+    of 200 token ids differ from LeRobot's reference and moves the predicted actions by
+    mean 4.275 / max 31.59 motor units, well outside the policy's own 0.793-unit
+    sampling spread.
+
+    Pinned as a test because the failure is silent: a wrong prompt layout still returns
+    plausible-looking actions, so nothing crashes and nothing logs a warning.
+    """
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.dataconfig import _CONFIGS_DICT
+
+    factory = _CONFIGS_DICT["pi05_so101_lift_cube"].data
+    assert factory.pad_state_before_tokenize is False
 
 
 def test_so101_dataconfig_wrist_key_is_conditional():

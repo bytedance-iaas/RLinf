@@ -33,7 +33,9 @@ def _pad_state_before_tokenize(
     ``ModelTransformFactory`` emits them in the opposite order, so the tokenizer
     sees the unpadded 6-D state. Swapping makes the discretized state span all
     ``max_action_dim`` slots, matching how LeRobot's pi0.5 processor built the
-    prompt during SFT. See ``pad_state_before_tokenize``.
+    prompt in versions up to 0.4.4 -- 0.5.0 dropped that pad, so this reorder is
+    correct only for checkpoints fine-tuned on 0.4.4 or earlier. See
+    ``pad_state_before_tokenize`` for how to tell from a checkpoint's own files.
 
     Raises rather than silently no-op'ing: this reorder is load-bearing for
     checkpoint compatibility, and if a future openpi renames or drops either
@@ -70,8 +72,9 @@ class LeRobotSO101LiftCubeDataConfig(DataConfigFactory):
     * ``observation.state`` and ``action`` are both the 6 joint values in LeRobot
       normalized motor units -- not an end-effector pose. See
       ``rlinf.envs.isaaclab.so101_utils`` for the unit mapping.
-    * ``pad_state_before_tokenize`` reproduces LeRobot's state-token layout; see
-      that field's comment.
+    * ``pad_state_before_tokenize`` reproduces the state-token layout of LeRobot
+      0.4.4 and earlier. It is version-specific, not a LeRobot-vs-openpi switch;
+      see that field's comment.
     """
 
     # Matches LeIsaac's LiftCubeEnvCfg.task_description verbatim, so the prompt the
@@ -87,22 +90,41 @@ class LeRobotSO101LiftCubeDataConfig(DataConfigFactory):
     # pi0.5 has no `state_proj` -- `PI0Pytorch.embed_suffix` reads its `state` argument
     # only under `if not self.pi05:` -- so the *only* path from proprioception into the
     # model is the discretized state embedded in the prompt text. That makes the exact
-    # prompt string part of the observation protocol, and openpi and LeRobot build it
-    # differently:
+    # prompt string part of the observation protocol, and it is NOT a free choice: get
+    # the layout wrong and the policy reads its joint angles off the wrong tokens.
     #
-    #   openpi  ModelTransformFactory: TokenizePrompt -> PadStatesAndActions
-    #           => digitizes the 6-D state, prompt carries 6 numerals
-    #   LeRobot make_pi05_pre_post_processors: pad_vector(state, 32) -> digitize
-    #           => prompt carries 32 numerals, the 26 pad slots all reading 128
-    #             (digitize(0.0) == 128, measured)
+    # The two candidate layouts, for a 6-DoF arm with max_state_dim=32:
     #
-    # Our checkpoint was SFT'd through LeRobot, so it only ever saw the 32-slot form:
-    # 143 tokens vs 39 for the 6-slot form, diverging at token index 3. Setting this
-    # True swaps the two transforms so the pad runs first, which reproduces LeRobot's
-    # layout exactly -- reusing openpi's own transforms rather than reimplementing the
-    # prompt format.
+    #   6 numerals   openpi ModelTransformFactory: TokenizePrompt -> PadStatesAndActions
+    #                digitizes the unpadded 6-D state
+    #                  "Task: ..., State: 137 3 255 117 255 -1;\nAction: "
+    #   32 numerals  pad first, then digitize, so the 26 pad slots each contribute a
+    #                literal "128" (digitize(0.0) == 128, measured)
+    #                  "Task: ..., State: 137 3 255 117 255 -1 128 x26;\nAction: "
     #
-    # Leave it False for checkpoints trained with openpi's native pipeline.
+    # Which one LeRobot produces depends on its VERSION, which is the subtlety here.
+    # `Pi05PrepareStateTokenizerProcessorStep` called `pad_vector(state, max_state_dim)`
+    # before digitizing in 0.4.4, and that call was REMOVED in 0.5.0:
+    #
+    #   lerobot 0.4.4   pads  -> 32 numerals   => this flag must be True
+    #   lerobot >=0.5.0 no pad -> 6 numerals   => this flag must be False
+    #
+    # So set this from the version that produced the checkpoint, not from the fact that
+    # LeRobot was involved at all. A checkpoint's own files identify it: a
+    # `policy_postprocessor.json` step named `absolute_actions_processor` exists only in
+    # 0.6.x, and `config.json` fields `pretrained_revision` / `use_relative_actions` /
+    # `relative_exclude_joints` / `action_feature_names` are 0.6.0 additions that make
+    # 0.4.4's PI05Config raise DecodingError.
+    #
+    # Measured cost of getting it wrong, on the SO101 pick-place checkpoint (0.6.x, so
+    # False): with True, 108 of 200 token ids differ from LeRobot's reference and the
+    # predicted actions diverge by mean 4.275 / max 31.59 motor units; with False the
+    # tokens match id-for-id and the divergence drops to mean 0.594, which is below the
+    # policy's own 0.793-unit noise-driven spread. See scripts/check_state_token_layout.py
+    # and scripts/check_inference_parity.py.
+    #
+    # Setting this True reuses openpi's own transforms by swapping their order, rather
+    # than reimplementing the prompt format.
     pad_state_before_tokenize: bool = False
 
     @override

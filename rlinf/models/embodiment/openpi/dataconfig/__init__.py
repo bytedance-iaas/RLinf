@@ -563,7 +563,11 @@ _CONFIGS = [
             # so it is not read off the dataset. It must match the SFT text verbatim.
             default_prompt="Grab the red cube",
             has_wrist_image=True,
-            pad_state_before_tokenize=True,
+            # False because this checkpoint was fine-tuned under LeRobot 0.6.x, whose
+            # pi0.5 state tokenizer does NOT pad before digitizing. See the field's
+            # comment in so101_dataconfig.py for the version evidence -- the flag is
+            # only correct for 0.4.4-era checkpoints.
+            pad_state_before_tokenize=False,
             base_config=DataConfig(prompt_from_task=False),
             assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_so101/assets"),
         ),
