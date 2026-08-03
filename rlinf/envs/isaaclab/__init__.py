@@ -32,6 +32,11 @@ REGISTER_ISAACLAB_ENVS = {
     # with "has not been registered" rather than anywhere near gym.make.
     "LeIsaac-SO101-PickPlace-v0": IsaaclabSO101Env,
     "LeIsaac-SO101-PickPlace-Wrist-v0": IsaaclabSO101Env,
+    # Same task as -Wrist-v0 with a third-person camera added in a separate `render`
+    # observation group, for video capture. The adapter needs no branch for it: it
+    # forwards any `render` group to last_render_obs and builds the policy observation
+    # from the `policy` group exactly as before.
+    "LeIsaac-SO101-PickPlace-Render-v0": IsaaclabSO101Env,
 }
 
 __all__ = [list(REGISTER_ISAACLAB_ENVS.keys())]

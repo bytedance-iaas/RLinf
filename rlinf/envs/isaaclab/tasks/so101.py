@@ -54,6 +54,11 @@ from ..so101_utils import SO101_ACTION_DIM, lerobot_state_scales_torch
 class IsaaclabSO101Env(IsaaclabBaseEnv):
     """SO101 single-arm tasks (LeIsaac) wrapped for RLinf."""
 
+    # Class-level default because _wrap_obs runs before this subclass's __init__ body:
+    # IsaaclabBaseEnv.__init__ resets the env, which calls _wrap_obs. None for every
+    # task without a `render` observation group, which is all of them but one.
+    last_render_obs = None
+
     def __init__(
         self,
         cfg,
@@ -187,7 +192,18 @@ class IsaaclabSO101Env(IsaaclabBaseEnv):
             ``joint_pos`` -> ``states``          (num_envs, 6) float32, LeRobot
                                                  normalized motor units
             cfg.task_description -> ``task_descriptions``
+
+        A task may also declare a ``render`` observation group -- the PickPlace-Render
+        variant uses it for a third-person camera. Those frames are kept off the
+        returned dict and stashed in :attr:`last_render_obs` instead, so a video-capture
+        caller can read them while the policy's input stays exactly what it is for the
+        non-render task ids. Putting them in the returned dict would work today (the
+        openpi obs_processor reads four keys by name) but would make the observation
+        contract depend on which task id is running.
         """
+        # Overwritten every step; the caller reads it between steps or not at all.
+        self.last_render_obs = obs.get("render")
+
         policy_obs = obs["policy"]
 
         joint_pos = policy_obs["joint_pos"][..., :SO101_ACTION_DIM]
