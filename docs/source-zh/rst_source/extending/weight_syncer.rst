@@ -411,18 +411,30 @@ Bucket 模式会把当前选中的同步子集切成多个块顺序发送。它�
 Async 场景下的行为
 ------------------------------
 
-在 async 具身训练中，如果启用了 ``actor.sync_weight_no_wait=true``，
-rollout 侧的权重接收与应用会放到后台 ``asyncio`` task 中执行。
+``AsyncEmbodiedRunner`` 和 ``AsyncPPOEmbodiedRunner`` 都支持
+``actor.sync_weight_no_wait``。当它为 ``true`` 时，actor 更新后的权重同步会立即
+把控制权交还给 runner，而 rollout worker 在后台 ``asyncio`` task 中接收并应用
+权重。actor 到 rollout 的首次同步仍为阻塞式，确保新任务或恢复任务不会在权重尚未
+落地时开始采样。
+
+该选项目前要求 ``weight_syncer.type=patch``。Bucket 模式会在不同 bucket 之间
+让出执行权，可能导致同步期间的推理观察到只应用了部分权重的模型，因此 RLinf 会拒绝
+这种组合。
 
 这意味着：
 
 - actor 发起同步请求后，rollout 不一定立刻阻塞等待。
 - 新权重要等到后台任务完成后，才真正对 rollout 生效。
 - 权重的“请求时刻”与“生效时刻”之间可能存在一个小延迟。
+- 如果上一次同步仍在进行，新的请求会被合并，而不会形成积压。
+
+runner 跟踪的是 rollout 侧的权重应用完成状态，而不只是 sender 侧的完成状态。
+后续的阻塞式同步和 runner 正常退出都会先等待后台权重应用完成。
 
 因此在 async 场景下，``version`` 的传递就比较重要。  
 当前 ``WeightSyncer.apply(...)`` 会返回本次真正应用到 rollout 上的版本号，
-rollout 再据此更新自身版本状态。
+rollout 再据此更新自身版本状态。生成的 trajectory 会记录该已应用版本，供 async
+PPO 统计并过滤陈旧数据。
 
 
 性能建议

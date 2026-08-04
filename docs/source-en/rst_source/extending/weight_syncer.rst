@@ -463,19 +463,34 @@ the end.
 Behavior In Async Training
 ------------------------------
 
-In async embodied training, if ``actor.sync_weight_no_wait=true`` is enabled,
-rollout-side weight receiving and applying are handled in a background
-``asyncio`` task.
+Both ``AsyncEmbodiedRunner`` and ``AsyncPPOEmbodiedRunner`` honor
+``actor.sync_weight_no_wait``. When it is ``true``, weight synchronization
+after an actor update returns control to the runner immediately, while the
+rollout worker receives and applies the weights in a background ``asyncio``
+task. The initial actor-to-rollout synchronization remains blocking so a new
+or resumed run cannot sample with weights that have not landed yet.
+
+This option currently requires ``weight_syncer.type=patch``. Bucket mode can
+yield between buckets, which would allow inference to observe a partially
+applied model while synchronization is running, so RLinf rejects that
+combination.
 
 This means:
 
 - rollout does not necessarily block immediately when actor requests a sync
 - new weights only become effective after the background task completes
 - there may be a small delay between "sync requested" and "sync applied"
+- a request made while the previous sync is still running is coalesced instead
+  of building a backlog
+
+The runner tracks rollout-side application, not only sender completion. A
+later blocking synchronization and normal runner teardown both wait until any
+background application has finished.
 
 In this async path, version propagation matters more. ``WeightSyncer.apply(...)``
 returns the version that was actually applied on rollout, and rollout updates
-its internal version state from that result.
+its internal version state from that result. Generated trajectories record
+this applied version so async PPO can measure and filter stale data.
 
 
 Performance Suggestions

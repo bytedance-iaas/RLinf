@@ -127,28 +127,63 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         self._weight_sync_requested = False
         self._weight_sync_work = asyncio.create_task(self._recv_and_apply_actor_sync())
 
+    async def _finish_background_weight_sync(self, work: asyncio.Task) -> int:
+        """Wait for one apply task and retire it exactly once."""
+        applied_version = await work
+        if self._weight_sync_work is work:
+            self._weight_sync_work = None
+            self._weight_sync_apply_total += 1
+            self._start_background_weight_sync_if_needed()
+        return applied_version
+
     @Worker.timer("rollout/poll_weight_sync")
     async def _poll_background_weight_sync(self):
         self._start_background_weight_sync_if_needed()
-        if self._weight_sync_work is None:
+        work = self._weight_sync_work
+        if work is None:
             return
 
-        if not self._weight_sync_work.done():
+        if not work.done():
             return
 
-        await self._weight_sync_work
-        self._weight_sync_work = None
-        self._weight_sync_apply_total += 1
-
-        self._start_background_weight_sync_if_needed()
+        await self._finish_background_weight_sync(work)
 
     @Worker.timer("rollout/request_weight_sync")
-    async def request_actor_sync_model(self):
+    async def request_actor_sync_model(self) -> int:
+        """Request a background sync and return after its weights are applied.
+
+        The RPC remains asynchronous to the runner: invoking it immediately
+        returns a ``WorkerGroupFuncResult``. Keeping this coroutine alive until
+        rollout-side application finishes makes that result an accurate
+        completion signal for coalescing, blocking transitions, and teardown.
+
+        Returns:
+            The latest model version applied by the time this request finishes.
+        """
+        assert self._background_weight_sync_active, (
+            "Background weight sync requires actor.sync_weight_no_wait=true."
+        )
         self._weight_sync_request_total += 1
         if self._weight_sync_requested or self._weight_sync_work is not None:
             self._weight_sync_coalesced_total += 1
-        self._weight_sync_requested = True
+
+        pending_apply_count = int(self._weight_sync_work is not None) + int(
+            self._weight_sync_requested
+        )
+        if not self._weight_sync_requested:
+            self._weight_sync_requested = True
+            pending_apply_count += 1
+        target_apply_total = self._weight_sync_apply_total + pending_apply_count
+
         self._start_background_weight_sync_if_needed()
+        while self._weight_sync_apply_total < target_apply_total:
+            work = self._weight_sync_work
+            assert work is not None, (
+                "A requested background weight sync has no active apply task."
+            )
+            await self._finish_background_weight_sync(work)
+
+        return self.version
 
     async def decoupled_generate_one_epoch(
         self, input_channel: Channel, output_channel: Channel
