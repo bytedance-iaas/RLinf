@@ -420,9 +420,25 @@ rollout 侧的权重接收与应用会放到后台 ``asyncio`` task 中执行。
 - 新权重要等到后台任务完成后，才真正对 rollout 生效。
 - 权重的“请求时刻”与“生效时刻”之间可能存在一个小延迟。
 
-因此在 async 场景下，``version`` 的传递就比较重要。  
+因此在 async 场景下，``version`` 的传递就比较重要。
 当前 ``WeightSyncer.apply(...)`` 会返回本次真正应用到 rollout 上的版本号，
 rollout 再据此更新自身版本状态。
+
+这个开关在 runner 侧的实现位于 ``AsyncWeightSyncMixin``
+（``rlinf/runners/async_weight_sync.py``），由 ``AsyncEmbodiedRunner`` 与
+``AsyncPPOEmbodiedRunner`` 共用。启用后，runner 在 training loop 中发起
+actor-to-rollout 传输但不阻塞等待，并且最多只保留一个进行中的同步：如果上一次传输
+尚未结束，新请求会被合并丢弃而不是排队，因此慢传输不会堆积成积压。权重只会被丢弃，
+不会乱序——rollout 要么拿到新权重，要么继续用手上的旧权重。在任何阻塞式同步之前，
+以及 worker 退出之前，runner 都会先等待进行中的传输完成。需要保持原有阻塞行为时，
+请保留默认值 ``false``。training loop 之前的首次同步始终是阻塞的，因为在它完成前
+rollout 没有可用的权重。
+
+在单机 8 张 NVIDIA H20 GPU 的 collocated async-PPO 测试中，runner 的阻塞
+``update_rollout_weights`` 区间从每 step 约 3.1 秒降至 0.0018 秒，actor training
+保持在约 46 秒。该测试中的 rollout 可用性有 0–20 秒波动，因此这个结果表示确定性的
+串行区间被消除，不能作为精确的端到端加速比例。对于 disaggregated 或跨机传输，预期
+重叠收益会更明显。
 
 
 性能建议

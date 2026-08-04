@@ -477,6 +477,26 @@ In this async path, version propagation matters more. ``WeightSyncer.apply(...)`
 returns the version that was actually applied on rollout, and rollout updates
 its internal version state from that result.
 
+The runner side of this switch lives in ``AsyncWeightSyncMixin``
+(``rlinf/runners/async_weight_sync.py``), shared by ``AsyncEmbodiedRunner`` and
+``AsyncPPOEmbodiedRunner``. When it is enabled, the runner starts the
+actor-to-rollout transfer without waiting in the training loop and keeps at most
+one synchronization in flight: a request that arrives while the previous
+transfer is still running is coalesced away rather than queued, so a slow
+transfer cannot build a backlog. Weights are dropped, never reordered — rollout
+either gets an update or keeps the ones it has. The runner drains an in-flight
+transfer before any blocking synchronization and again before worker teardown.
+Keep the default ``false`` value when you need the original blocking behavior.
+The initial synchronization before the training loop always blocks, since
+rollout has no weights to run with until it lands.
+
+A collocated async-PPO measurement on 8 NVIDIA H20 GPUs reduced the runner's
+blocking ``update_rollout_weights`` interval from about 3.1 seconds to 0.0018
+seconds per step. Actor training remained near 46 seconds. Rollout availability
+varied by 0–20 seconds in that run, so treat this result as removal of a
+deterministic serial interval rather than a precise end-to-end speedup. Expect
+the overlap to matter more for disaggregated or cross-node transfers.
+
 
 Performance Suggestions
 ------------------------------
