@@ -34,8 +34,9 @@ EOF
 # mirror env vars that install.sh's setup_mirror exports. Values mirror install.sh.
 setup_mirror() {
 	if [ "$USE_MIRRORS" -eq 1 ]; then
+		export UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-https://mirrors.aliyun.com/pypi/simple}
 		export HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
-		export GITHUB_PREFIX=${GITHUB_PREFIX:-https://gh-proxy.com/}
+		export GITHUB_PREFIX=${GITHUB_PREFIX:-https://gh-proxy.org/}
 	fi
 }
 
@@ -56,53 +57,121 @@ retry_cmd() {
 	done
 }
 
-download_maniskill_assets() {
-	local root_dir=$1
-	local ms_import_err
+# Fetch the Bridge v2 Real2Sim dataset from the Volcengine object store via
+# oniond. Its upstream home is a HuggingFace archive that the mirror network
+# cannot reach, so on --use-mirror we pull the internal copy and verify it
+# against a pinned checksum before unpacking.
+#
+# Runs in a subshell (`(` … `)`) so the staging-dir EXIT trap cannot clobber the
+# caller's traps.
+download_bridge_v2_real2sim_oniond() (
+	local target_parent="$MS_ASSET_DIR/data/tasks"
+	local target_dir="$target_parent/bridge_v2_real2sim_dataset"
 
-	# ManiSkill assets
-	export MS_ASSET_DIR="${root_dir}/.maniskill"
-	if [ -d "$MS_ASSET_DIR" ]; then
-		echo "[download_assets] ManiSkill assets already exist at $MS_ASSET_DIR, skipping download."
-	elif ! ms_import_err=$(python -c "import mani_skill" 2>&1); then
-		# The download goes through mani_skill, and so through torch, which needs
-		# driver libraries the container runtime only injects at run time. Skip
-		# rather than fail so image builds still succeed. MS_ASSET_DIR is left
-		# uncreated so a later run does not mistake it for a finished download.
-		echo "[download_assets] mani_skill is not importable; skipping the ManiSkill assets." >&2
-		echo "[download_assets] Re-run 'download_assets --assets maniskill' once it is." >&2
-		echo "$ms_import_err" >&2
+	if ! command -v oniond &> /dev/null; then
+		echo "oniond is required to download bridge_v2_real2sim with --use-mirror." >&2
+		return 1
+	fi
+
+	local staging_dir archive
+	staging_dir=$(mktemp -d)
+	trap 'rm -rf -- "$staging_dir"' EXIT
+
+	(
+		cd "$staging_dir"
+		BUCKET=ai-infra oniond download dataset ManiSkill_bridge_v2_real2sim \
+			--include bridge_v2_real2sim_dataset.zip \
+			--dir "$staging_dir"
+	)
+	archive="$staging_dir/ManiSkill_bridge_v2_real2sim/bridge_v2_real2sim_dataset.zip"
+	if [ ! -f "$archive" ]; then
+		echo "oniond did not produce the expected archive: $archive" >&2
+		return 1
+	fi
+	if ! echo "618512a205b4528cafecdad14b1788ed1130879f3064deb406516ed5b9c5ba92  $archive" \
+		| sha256sum --check --status; then
+		echo "Bridge v2 Real2Sim archive checksum verification failed." >&2
+		return 1
+	fi
+
+	mkdir -p "$target_parent"
+	rm -rf -- "$target_dir"
+	unzip -q "$archive" -d "$target_parent"
+)
+
+download_bridge_v2_real2sim() {
+	local sentinel="$MS_ASSET_DIR/data/tasks/bridge_v2_real2sim_dataset/stages/bridge_table_1_v1.glb"
+
+	if [ -f "$sentinel" ]; then
+		echo "[download_assets] Bridge v2 Real2Sim assets already exist, skipping download."
+		return
+	fi
+	if [ "$USE_MIRRORS" -eq 1 ]; then
+		retry_cmd download_bridge_v2_real2sim_oniond
 	else
-		mkdir -p "$MS_ASSET_DIR"
-		if [ "$USE_MIRRORS" -eq 1 ]; then
-			# mani_skill.utils.download_asset hardcodes huggingface.co / github.com
-			# URLs in DATA_SOURCES and fetches them with urllib, which ignores
-			# HF_ENDPOINT and git's insteadOf. Rewrite the in-memory URLs to the
-			# mirrors before downloading instead of calling the module directly.
-			for uid in bridge_v2_real2sim widowx250s; do
-				python - "$uid" <<'PYEOF'
-import os, sys
-from mani_skill.utils.download_asset import main, parse_args
-from mani_skill.utils.assets import data as ds
+		retry_cmd python -m mani_skill.utils.download_asset bridge_v2_real2sim -y
+	fi
+	if [ ! -f "$sentinel" ]; then
+		echo "Bridge v2 Real2Sim assets were not installed at $(dirname "$(dirname "$sentinel")")." >&2
+		return 1
+	fi
+	echo "[download_assets] Bridge v2 Real2Sim assets installed."
+}
 
-hf = os.environ.get("HF_ENDPOINT", "").rstrip("/")
-gh = os.environ.get("GITHUB_PREFIX", "")
-for src in ds.DATA_SOURCES.values():
-    url = getattr(src, "url", None)
-    if not url:
-        continue
-    if hf and url.startswith("https://huggingface.co"):
-        src.url = hf + url[len("https://huggingface.co"):]
-    elif gh and url.startswith("https://github.com"):
-        src.url = gh + url
+# ManiSkill fetches this GitHub archive with urllib, which ignores git's
+# insteadOf config, so rewrite the URL in memory before downloading. Kept in a
+# function (rather than an inline heredoc) so retry_cmd can re-run it — a retried
+# heredoc would feed python an already-consumed stdin.
+download_widowx250s_mirrored() {
+	python - widowx250s <<'PYEOF'
+import os
+import sys
+
+from mani_skill.utils.assets import data as ds
+from mani_skill.utils.download_asset import main, parse_args
+
+source = ds.DATA_SOURCES[sys.argv[1]]
+github_prefix = os.environ.get("GITHUB_PREFIX", "")
+if github_prefix and source.url.startswith("https://github.com"):
+    source.url = github_prefix + source.url
 main(parse_args([sys.argv[1], "-y"]))
 PYEOF
-			done
-		else
-			retry_cmd python -m mani_skill.utils.download_asset bridge_v2_real2sim -y
-			retry_cmd python -m mani_skill.utils.download_asset widowx250s -y
-		fi
+}
+
+download_widowx250s() {
+	local target_dir="$MS_ASSET_DIR/data/robots/widowx"
+	local sentinel="$target_dir/wx250s.urdf"
+
+	if [ -f "$sentinel" ]; then
+		echo "[download_assets] WidowX250S assets already exist at $target_dir, skipping download."
+		return
 	fi
+	if [ "$USE_MIRRORS" -eq 1 ]; then
+		retry_cmd download_widowx250s_mirrored
+	else
+		retry_cmd python -m mani_skill.utils.download_asset widowx250s -y
+	fi
+	if [ ! -f "$sentinel" ]; then
+		echo "WidowX250S assets were not installed at $target_dir." >&2
+		return 1
+	fi
+}
+
+download_maniskill_assets() {
+	local root_dir=$1
+
+	# ManiSkill assets. Each asset checks its own sentinel file rather than
+	# short-circuiting on the whole directory, so a run interrupted partway
+	# through resumes instead of reporting everything as present.
+	export MS_ASSET_DIR="${root_dir}/.maniskill"
+	mkdir -p "$MS_ASSET_DIR"
+	# Ensure mani_skill is installed
+	if ! python -c "import mani_skill" &> /dev/null; then
+		echo "mani_skill is not installed. Please install it first." >&2
+		exit 1
+	fi
+	download_bridge_v2_real2sim
+	download_widowx250s
 
 	# SAPIEN assets (PhysX)
 	export PHYSX_VERSION=105.1-physx-5.3.1.patch0
