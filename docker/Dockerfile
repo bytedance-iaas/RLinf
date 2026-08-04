@@ -76,23 +76,32 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN if [ "$NO_MIRROR" != "1" ]; then \
         if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then \
             if [ "$TARGETARCH" = "arm64" ]; then \
-                sed -i 's@//ports.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list.d/ubuntu.sources; \
+                sed -i 's@//ports.ubuntu.com@//mirrors.ivolces.com@g' /etc/apt/sources.list.d/ubuntu.sources; \
             else \
-                sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list.d/ubuntu.sources; \
+                sed -i 's@//.*archive.ubuntu.com@//mirrors.ivolces.com@g' /etc/apt/sources.list.d/ubuntu.sources; \
             fi; \
         elif [ "$TARGETARCH" = "arm64" ]; then \
             sed -i \
                 -e 's@//ports.ubuntu.com/\? @//ports.ubuntu.com/ubuntu-ports @g' \
-                -e 's@//ports.ubuntu.com@//mirrors.ustc.edu.cn@g' \
+                -e 's@//ports.ubuntu.com@//mirrors.ivolces.com@g' \
                 /etc/apt/sources.list; \
         else \
-            sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list; \
+            sed -i 's@//.*archive.ubuntu.com@//mirrors.ivolces.com@g' /etc/apt/sources.list; \
         fi; \
     fi
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git vim libibverbs-dev openssh-server sudo runit runit-systemd tmux \
     build-essential python3-dev cmake pkg-config iproute2 pciutils python3 python3-pip \
-    wget unzip curl
+    wget unzip curl gnupg ca-certificates tini
+
+# Install oniond (onion-ai-data) from the Volcengine internal extra-tools repo.
+# Only available on the Volcengine network, so it is gated on mirror mode
+# (NO_MIRROR != 1) to avoid breaking public GitHub CI builds.
+RUN if [ "$NO_MIRROR" != "1" ]; then \
+        curl -fsSL https://mirrors.ivolces.com/extra-tools/ubuntu/GPG-KEY-system | gpg --dearmor -o /etc/apt/trusted.gpg.d/volc-extra-tools.gpg && \
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/trusted.gpg.d/volc-extra-tools.gpg] http://mirrors.ivolces.com/extra-tools/ubuntu jammy main" > /etc/apt/sources.list.d/volctools.list && \
+        apt-get update && apt-get install -y onion-ai-data; \
+    fi
 
 
 ##################################################################################################
@@ -100,9 +109,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ##################################################################################################
 
 ENV PIP_INDEX=${NO_MIRROR:+"https://pypi.org/simple/"}
-ENV PIP_INDEX=${PIP_INDEX:-"https://mirrors.ustc.edu.cn/pypi/simple"}
+ENV PIP_INDEX=${PIP_INDEX:-"https://mirrors.ivolces.com/pypi/simple/"}
 ENV UV_DEFAULT_INDEX=${NO_MIRROR:+"https://pypi.org/simple/"}
-ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-"https://mirrors.ustc.edu.cn/pypi/simple"}
+ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-"https://mirrors.ivolces.com/pypi/simple/"}
 ENV INSTALL_MIRROR_OPTION=${NO_MIRROR:+" "}
 ENV INSTALL_MIRROR_OPTION=${INSTALL_MIRROR_OPTION:-"--use-mirror"}
 ENV HF_ENDPOINT=${NO_MIRROR:+"https://huggingface.co"}
@@ -484,4 +493,26 @@ RUN rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
 
+# Bake the RLinf source into the image at the exact commit CI is building.
+# SCM_COMMIT_ID is injected by the Volcengine CI; when it is empty (e.g. public
+# GitHub CI) the clone is skipped so those builds are unaffected. GitHub is not
+# directly reachable on the mirror network (NO_MIRROR != 1), so route the clone
+# through the same gh-proxy.org accelerator that install.sh uses.
+ARG SCM_COMMIT_ID
+RUN if [ -n "$SCM_COMMIT_ID" ]; then \
+        GITHUB_PREFIX=$([ "$NO_MIRROR" != "1" ] && echo "https://gh-proxy.org/" || echo "") && \
+        git clone "${GITHUB_PREFIX}https://github.com/bytedance-iaas/RLinf.git" /root/RLinf && \
+        git -C /root/RLinf checkout "$SCM_COMMIT_ID"; \
+    fi
+
+# Run everything under tini as PID 1 so orphaned children (e.g. Ray workers
+# killed by `ray stop`) are reaped instead of piling up as <defunct> zombies.
+# tini forwards signals and calls wait() on re-parented processes, which a bare
+# `sleep infinity` / bash PID 1 never does.
+#
+# NOTE for Kubernetes: a pod-level `command:` overrides this ENTRYPOINT and
+# would drop tini. To keep the pod resident, leave `command:` unset and put the
+# long-running command in `args:` (e.g. args: ["sleep", "infinity"]) so the
+# container runs `tini -- sleep infinity`.
+ENTRYPOINT ["tini", "--"]
 CMD ["/bin/bash"]
