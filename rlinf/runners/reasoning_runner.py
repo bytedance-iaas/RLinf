@@ -304,17 +304,30 @@ class ReasoningRunner:
                     and os.path.isdir(os.path.join(checkpoints_dir, d))
                 ]
 
-            if checkpoint_steps:
-                max_step = max(checkpoint_steps)
+            # ``_save_checkpoint`` creates ``global_step_<N>/`` before filling it and
+            # writes the dataloader state last, so the newest directory may belong to
+            # a save that never finished (crash, preemption, ``kill -9``). Resume from
+            # the newest *complete* checkpoint instead of the newest directory.
+            resume_step = None
+            for step in sorted(checkpoint_steps, reverse=True):
+                candidate = os.path.join(checkpoints_dir, f"global_step_{step}")
+                if self._is_complete_checkpoint(candidate):
+                    resume_step = step
+                    break
+                logging.warning(
+                    f"Skipping incomplete checkpoint {candidate} during auto resume."
+                )
+
+            if resume_step is not None:
                 self.cfg.runner.resume_dir = os.path.join(
-                    checkpoints_dir, f"global_step_{max_step}"
+                    checkpoints_dir, f"global_step_{resume_step}"
                 )
                 logging.info(
                     f"Auto resume from checkpoint: {self.cfg.runner.resume_dir}"
                 )
             else:
                 self.cfg.runner.resume_dir = None
-                logging.info("No checkpoints found, starting from scratch")
+                logging.info("No complete checkpoints found, starting from scratch")
         self.init_rollout_workers()
         self.init_actor_critic_workers()
 
@@ -354,6 +367,27 @@ class ReasoningRunner:
             )
 
         return flops_metrics
+
+    def _is_complete_checkpoint(self, checkpoint_dir: str) -> bool:
+        """Check whether a ``global_step_<N>`` directory holds a finished checkpoint.
+
+        ``_save_checkpoint`` writes the actor first, then the optional critic, and
+        finally ``data/data.pt``. The dataloader state is therefore only present once
+        every earlier step succeeded, which makes it a reliable completion marker.
+
+        Args:
+            checkpoint_dir: Path to a ``global_step_<N>`` directory.
+
+        Returns:
+            ``True`` if the checkpoint can be safely resumed from.
+        """
+        if not os.path.isdir(os.path.join(checkpoint_dir, "actor")):
+            return False
+        if self.critic is not None and not os.path.isdir(
+            os.path.join(checkpoint_dir, "critic")
+        ):
+            return False
+        return os.path.exists(os.path.join(checkpoint_dir, "data", "data.pt"))
 
     def _save_checkpoint(self):
         base_output_dir = os.path.join(
