@@ -266,11 +266,56 @@ class RunStateReporter:
     def _paths(self) -> dict:
         return {
             "log_path": self._log_path,
-            "tensorboard": os.path.join(self._log_path, "tensorboard"),
+            "tensorboard": self._tensorboard_dir(),
+            "worker_logs": self._worker_log_root(),
             "video_root": os.path.join(self._log_path, "video"),
             "checkpoint_root": self._checkpoint_root(),
             "run_root": self._run_root,
         }
+
+    def _tensorboard_dir(self) -> str:
+        """Where the driver's own event files land.
+
+        With ``runner.per_worker_log: true`` the aggregate bundle moves one level
+        down, into ``tensorboard/all/``, to leave room for the per-rank bundles
+        (``MetricLogger`` passes ``log_path_suffix="all"``). Recording the parent
+        for such a run points a reader at a directory that exists and holds no
+        event files, which is indistinguishable from a run that has not logged
+        yet -- every metric reads as absent with nothing to explain why.
+        """
+        tensorboard = os.path.join(self._log_path, "tensorboard")
+        try:
+            if bool(self._cfg.runner.get("per_worker_log", False)):
+                return os.path.join(tensorboard, "all")
+        except Exception as exc:  # noqa: BLE001 - never break training
+            self._logger.debug(f"Could not resolve the TensorBoard dir: {exc}")
+        return tensorboard
+
+    def _worker_log_root(self) -> str | None:
+        """Where the per-rank metric bundles land, or None when there are none.
+
+        With ``runner.per_worker_log: true`` every ``(worker group, rank)`` that
+        logs gets its own backend bundle under
+        ``<root>/<GroupName>/rank_<n>/tensorboard/`` (``MetricLogger.
+        _get_scoped_logger``). Recording the root is what lets a reader break a
+        metric out per rank -- the group and rank are recoverable from the path,
+        so discovery is a glob and needs no second index.
+
+        ``None`` when the flag is off, which is the default. An unconditional
+        value would name a directory nothing ever creates, and a reader cannot
+        tell "configured but empty" from "never enabled" once the path is there.
+        """
+        try:
+            if not bool(self._cfg.runner.get("per_worker_log", False)):
+                return None
+            configured = self._cfg.runner.get("per_worker_log_path", None)
+            # `validate_cfg` sets this alongside the flag, but a config assembled
+            # in code (tests, a notebook) may only set the flag; fall back to the
+            # same default `MetricLogger` uses so the two never disagree.
+            return str(configured or os.path.join(self._log_path, "worker_logs"))
+        except Exception as exc:  # noqa: BLE001 - never break training
+            self._logger.debug(f"Could not resolve the per-worker log root: {exc}")
+            return None
 
     def _checkpoint_root(self) -> str | None:
         """Where this runner writes checkpoints.

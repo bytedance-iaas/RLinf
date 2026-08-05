@@ -151,6 +151,94 @@ def test_manifest_paths_include_checkpoint_and_run_root(tmp_path):
     assert paths["checkpoint_root"] == str(tmp_path / "test-exp" / "checkpoints")
 
 
+def test_tensorboard_path_follows_the_per_worker_layout(tmp_path):
+    """``per_worker_log`` moves the driver's own event files into ``all/``.
+
+    ``MetricLogger._create_logger_bundle`` is passed ``log_path_suffix="all"``
+    when the flag is on, so recording the parent would point a reader at a
+    directory holding only subdirectories. The reader then finds no event files
+    and every metric reads as absent -- a blank page with nothing saying why.
+    """
+    instance = RunStateReporter(
+        _cfg(tmp_path, per_worker_log=True), heartbeat_interval_s=3600
+    )
+    try:
+        paths = _read(instance, "manifest.json")["paths"]
+    finally:
+        instance._stop_heartbeat()
+
+    assert paths["tensorboard"] == str(tmp_path / "tensorboard" / "all")
+
+
+def test_tensorboard_path_is_the_plain_dir_without_per_worker_log(tmp_path):
+    """The negative control for the test above: off by default, so no ``all/``."""
+    instance = RunStateReporter(_cfg(tmp_path), heartbeat_interval_s=3600)
+    try:
+        paths = _read(instance, "manifest.json")["paths"]
+    finally:
+        instance._stop_heartbeat()
+
+    assert paths["tensorboard"] == str(tmp_path / "tensorboard")
+
+
+def test_the_per_worker_log_root_is_recorded_when_enabled(tmp_path):
+    """The anchor a reader needs to break a metric out per rank.
+
+    ``MetricLogger._get_scoped_logger`` writes each rank's bundle under
+    ``<root>/<GroupName>/rank_<n>/tensorboard/``, so recording the root is enough
+    for a reader to enumerate groups and ranks by globbing. ``validate_cfg`` sets
+    ``per_worker_log_path`` beside the flag; it is honoured rather than rederived
+    so an operator who points it elsewhere is not silently overridden.
+    """
+    cfg = _cfg(
+        tmp_path,
+        per_worker_log=True,
+        per_worker_log_path=str(tmp_path / "elsewhere" / "worker_logs"),
+    )
+    instance = RunStateReporter(cfg, heartbeat_interval_s=3600)
+    try:
+        paths = _read(instance, "manifest.json")["paths"]
+    finally:
+        instance._stop_heartbeat()
+
+    assert paths["worker_logs"] == str(tmp_path / "elsewhere" / "worker_logs")
+
+
+def test_the_per_worker_log_root_defaults_beside_the_log_path(tmp_path):
+    """A config that sets only the flag still gets a usable root.
+
+    ``validate_cfg`` normally fills in the path, but a config assembled in code
+    (a test, a notebook) may set just the flag. The default has to match the one
+    ``MetricLogger`` uses, or the manifest names a directory nothing writes to.
+    """
+    instance = RunStateReporter(
+        _cfg(tmp_path, per_worker_log=True), heartbeat_interval_s=3600
+    )
+    try:
+        paths = _read(instance, "manifest.json")["paths"]
+    finally:
+        instance._stop_heartbeat()
+
+    assert paths["worker_logs"] == str(tmp_path / "worker_logs")
+
+
+def test_no_per_worker_log_root_when_the_flag_is_off(tmp_path):
+    """The negative control, and the default for every run.
+
+    Recording the path unconditionally would name a directory nothing ever
+    creates, and a reader cannot then tell "enabled but silent" from "never
+    enabled" -- so a run with the flag off would advertise a drill-down that has
+    no data behind it.
+    """
+    instance = RunStateReporter(_cfg(tmp_path), heartbeat_interval_s=3600)
+    try:
+        paths = _read(instance, "manifest.json")["paths"]
+    finally:
+        instance._stop_heartbeat()
+
+    assert paths["worker_logs"] is None
+
+
 def test_checkpoint_root_follows_output_dir_when_present(tmp_path):
     """Reasoning-style runners put checkpoints under ``runner.output_dir``."""
     cfg = _cfg(tmp_path, output_dir=str(tmp_path / "out"), experiment_name="reason-exp")
