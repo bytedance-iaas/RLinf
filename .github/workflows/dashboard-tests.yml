@@ -150,6 +150,14 @@ jobs:
         working-directory: dashboard/frontend
         run: npm run build
 
+      # The one check here that is neither the compiler nor the bundler, because
+      # both were green while the Metrics tab killed the browser: a one-step run
+      # pinned uPlot's x scale to a zero-width range and its axis-split loop never
+      # terminated. See scripts/check_scales.mjs for why that is not a type error.
+      - name: Check chart scales stay walkable
+        working-directory: dashboard/frontend
+        run: npm run check:scales
+
       # The server mounts dist/ when it exists (api.py), so an index.html that
       # references assets the build did not emit is a blank page in production and
       # nothing else would catch it.

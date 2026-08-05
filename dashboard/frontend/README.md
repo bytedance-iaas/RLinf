@@ -66,7 +66,28 @@ cd dashboard/frontend
 npm install
 npm run typecheck     # tsc --noEmit
 npm run build         # tsc --noEmit && vite build  -> dist/
+npm run check:scales  # the one runtime assertion; see below
 ```
+
+### `check:scales`, and why one runtime check exists
+
+The compiler and the bundler are the gate here, which held until a one-step run
+took the Metrics tab down in every browser: `Chart.tsx` pinned uPlot's x scale to
+`[xs[0], xs[last]]`, both `1`, and uPlot only rejects a zero-width range when
+`dataLen > 1`. Its axis code then chose an increment of `1e-16` and walked
+`for (val = min; val <= max; val += incr)` — where `1 + 1e-16 === 1`, so the loop
+never advanced and pushed splits until the array hit its length limit. Chrome
+killed the renderer ("Error code: 5"); Safari just stopped responding.
+
+Nothing about that is a type error, and the bundle built clean. `scripts/check_scales.mjs`
+asserts the property directly — every extent `xExtent` returns can be walked — and
+carries a negative control proving the unpadded pin still does not advance, so the
+check cannot quietly stop testing anything. It reads `src/lib/series.ts` directly
+via node's type stripping, so there is no second copy of the logic to drift.
+
+Worth noting why it took a real run to surface: `make_demo_runs.py`'s shortest run
+is two steps starting at **0**, and `0 + 1e-16` is not `0`. The fixture that looked
+like the degenerate case was the one value that could not reproduce it.
 
 The Python server mounts `dist/` on its own origin when it exists (a missing `dist/`
 is fine — the API is useful on its own). So the production check needs no dev server

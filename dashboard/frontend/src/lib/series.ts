@@ -239,6 +239,35 @@ export function alignSeries(list: (Series | undefined)[]): PlotData {
 }
 
 /**
+ * The x extent to pin a chart to, or `null` when there is nothing to pin.
+ *
+ * A one-step run has no extent, and uPlot will happily accept `min === max`: its
+ * own zero-width rejection sits behind `dataLen > 1`, which a single point does
+ * not satisfy. The axis then picks an increment of `1e-16` and walks
+ * `for (val = min; val <= max; val += incr)` — but `1 + 1e-16` *is* `1` in
+ * float64, so the loop never advances and pushes splits until the array hits its
+ * length limit. That is a dead tab, not a mis-drawn chart: Chrome kills the
+ * renderer ("Error code: 5") and Safari stops responding. A one-iteration run is
+ * a real case, so the degenerate extent has to be padded here.
+ *
+ * One step of headroom either side, rather than uPlot's own proportional padding
+ * (`rangeNum` stretches step 7 to 0–14): the axis labels integers only, so ±1
+ * keeps them whole and leaves the single point mid-panel.
+ */
+export function xExtent(xs: number[]): { min: number; max: number } | null {
+  if (xs.length === 0) return null;
+  const first = xs[0] as number;
+  const last = xs[xs.length - 1] as number;
+  if (first !== last) return { min: first, max: last };
+  // 1 is exact for any step a run can reach. The relative floor is for a step so
+  // large that 1 falls below its float spacing — a corrupt event file rather than
+  // a real run, but it reaches this line from disk and must not hang the tab.
+  // 2^-40 puts the pad ~4096 steps of spacing clear of it.
+  const pad = Math.max(1, Math.abs(first) * 2 ** -40);
+  return { min: first - pad, max: last + pad };
+}
+
+/**
  * Exponential moving average with a window expressed in points.
  *
  * EMA rather than a boxcar mean because it needs no lookahead: a live run's most

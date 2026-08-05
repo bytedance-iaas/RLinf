@@ -22,7 +22,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import type { PlotData } from "../lib/series";
-import { resolveColor } from "../lib/series";
+import { resolveColor, xExtent } from "../lib/series";
 import { metric as formatMetric } from "../lib/format";
 
 export interface ChartSeriesSpec {
@@ -314,11 +314,11 @@ export function Chart(props: ChartProps) {
     plot.setData(data as unknown as uPlot.AlignedData, false);
     // The x extent does have to follow a growing run, or new points land off the
     // right edge and the chart appears frozen. Only x, and only when not zoomed.
-    const xs = data[0];
+    // `xExtent` is what keeps a one-step run from pinning a zero-width range,
+    // which hangs uPlot's axis-split loop hard enough to kill the tab.
+    const extent = xExtent(data[0]);
     const zoomed = plot.select.width > 0;
-    if (!zoomed && xs.length > 0) {
-      plot.setScale("x", { min: xs[0] as number, max: xs[xs.length - 1] as number });
-    }
+    if (!zoomed && extent !== null) plot.setScale("x", extent);
   }, [data]);
 
   // Visibility toggles, applied in place for the same reason.
