@@ -348,11 +348,18 @@ class OfflineRunner:
                     _step - 1, self.max_steps, start_time, logging_metrics, start_step
                 )
 
+        self._finish_run()
+
+    def _finish_run(self) -> None:
         self.metric_logger.finish()
 
-        # Stop logging thread
-        self.stop_logging = True
+        # Stop logging thread. Drain the queue *before* setting the stop flag:
+        # ``_log_worker`` re-checks ``stop_logging`` between items, so raising the
+        # flag first lets the loop exit with entries still pending, and those
+        # entries never get their ``task_done()`` -- leaving ``log_queue.join()``
+        # blocked forever.
         self.log_queue.join()  # Wait for all queued logs to be processed
+        self.stop_logging = True
         self.log_thread.join(timeout=1.0)
 
     def _save_checkpoint(self):
