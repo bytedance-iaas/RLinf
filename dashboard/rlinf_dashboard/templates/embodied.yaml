@@ -1,0 +1,181 @@
+# Template for embodied RL runs (task_type: embodied).
+#
+# The north-star metric is env/success_once: the fraction of episodes that
+# reached the goal at least once. Loss curves say whether optimization is
+# working; only success rate says whether the policy is getting better at the
+# task, and that is the question someone opens this page to answer.
+#
+# Key names here were read off a real 4xH20 Pi0.5 + PPO + LIBERO run (56 scalar
+# tags) rather than guessed. Where a name differs across RLinf versions both
+# spellings are listed -- bind_keys drops the absent one, so an alias costs
+# nothing while a wrong guess costs a silently missing chart.
+name: embodied
+task_types: [embodied]
+step_axis_label: RL iteration
+
+north_star:
+  key: env/success_once
+  label: Success rate
+  format: percent
+  # Higher is better, so a downward trend is what deserves attention.
+  goal: maximize
+
+groups:
+  - title: Task performance
+    description: Is the policy getting better at the task?
+    charts:
+      - keys: [env/success_once]
+        title: Success rate
+        format: percent
+      - keys: [env/return]
+        title: Episode return
+      - keys: [env/reward]
+        title: Step reward
+      - keys: [env/episode_len]
+        title: Episode length
+        # An episode length that collapses toward the step limit while return
+        # stays flat usually means the policy learned to stall rather than to
+        # solve, which is invisible from return alone.
+      - keys: [env/num_trajectories]
+        title: Trajectories per iteration
+
+  - title: Policy optimization
+    description: Is the update stable?
+    charts:
+      - keys:
+          - train/actor/policy_loss
+          - train/actor/policy_loss_abs
+          - train/actor/total_loss
+          - train/actor/loss
+        title: Actor loss
+        # policy_loss_abs is the same quantity before the signed terms cancel
+        # (losses.py:300). A policy_loss sitting near zero while its absolute
+        # value is large means the batch is pulling in both directions and
+        # averaging out, which the signed line alone cannot show.
+      - keys: [train/actor/entropy_loss, train/actor/entropy]
+        title: Entropy
+        # A hard entropy collapse precedes a stuck policy; worth watching next
+        # to success rate rather than buried among losses.
+      - keys: [train/actor/approx_kl]
+        title: Approx KL
+      - keys:
+          - train/actor/clip_fraction
+          - train/actor/clipped_ratio
+          - train/actor/dual_cliped_ratio
+          - train/actor/clip_frac
+        title: Clipping
+        # Three related fractions together on purpose: clip_fraction rising while
+        # dual_cliped_ratio stays flat is a normal tight update; both rising is a
+        # step size the trust region cannot absorb.
+      - keys: [train/actor/ratio, train/actor/ratio_abs]
+        title: Importance ratio
+      - keys: [train/actor/grad_norm]
+        title: Gradient norm
+        scale: log
+      - keys: [train/actor/lr, train/actor/learning_rate]
+        title: Learning rate
+        scale: log
+
+  - title: Value function
+    description: Is the critic tracking returns?
+    charts:
+      - keys: [train/critic/value_loss, train/critic/loss]
+        title: Critic loss
+      - keys: [train/critic/explained_variance]
+        title: Explained variance
+        # The most diagnostic critic number: at or below zero the value head is
+        # worse than predicting the mean, so every advantage derived from it is
+        # noise and the actor charts above cannot be read at face value.
+      - keys: [train/critic/value_clip_ratio]
+        title: Value clip ratio
+      - keys: [train/critic/lr]
+        title: Critic learning rate
+        scale: log
+
+  - title: Rollout
+    description: What the actor was trained on.
+    charts:
+      - keys: [rollout/rewards, rollout/reward, rollout/mean_reward]
+        title: Rollout reward
+      - keys: [rollout/returns_mean, rollout/returns_min, rollout/returns_max]
+        title: Returns
+      - keys:
+          - rollout/advantages_mean
+          - rollout/advantages_min
+          - rollout/advantages_max
+        title: Advantages
+        # A mean pinned near zero is expected after normalisation; the min/max
+        # spread collapsing toward it means the batch stopped carrying signal.
+
+  - title: Throughput
+    description: Where iteration time goes.
+    charts:
+      - keys:
+          - time/generate_rollouts
+          - time/actor_training
+          - time/cal_adv_and_returns
+          - time/sync_weights
+          - time/eval
+        title: Phase durations
+        unit: s
+        stacked: true
+        # Exactly the driver-level timer scopes, which are the ones that sum to
+        # time/step. Worker sub-scopes (time/env/*, time/rollout/*) overlap these
+        # in wall-clock and would double-count if stacked alongside them.
+      - keys: [time/step]
+        title: Iteration time
+        unit: s
+      - keys:
+          - time/env/interact
+          - time/env/env_interact_step
+          - time/env/run_interact_once
+          - time/env/compute_bootstrap_rewards
+          - time/env/env/bootstrap_step
+          - time/env/env/send_rollout_trajectories
+          - time/env/evaluate
+        title: Environment breakdown
+        unit: s
+        # The doubled `env/env/` spellings are not a mistake: @Worker.timer tags
+        # some methods with an `env/` prefix already (env_worker.py:913, :1026)
+        # and the runner prefixes the whole dict again (embodied_runner.py:373).
+        # Not stacked, so the eval-path `evaluate` scope can sit here alongside
+        # the train-path ones without summing two different phases.
+      - keys:
+          - time/rollout/rollout/generate
+          - time/rollout/predict
+          - time/rollout/generate_one_epoch
+          - time/rollout/sync_model_from_actor
+          - time/rollout/evaluate
+        title: Rollout breakdown
+        unit: s
+        # `rollout/rollout/generate` is the whole generation call
+        # (huggingface_worker.py:765) and so the largest bar here; the doubling is
+        # the same tag-plus-prefix composition as above.
+      - keys:
+          - time/actor/run_training
+          - time/actor/actor/compute_adv
+          - time/actor/actor/recv_traj
+          - time/actor/actor/sync_model_to_rollout
+        title: Actor breakdown
+        unit: s
+
+  - title: Evaluation
+    collapsed: true
+    charts:
+      - keys: [eval/success_once]
+        title: Eval success rate
+        format: percent
+      - keys: [eval/success_at_end]
+        title: Eval success at end
+        format: percent
+        # success_once counts an episode that touched the goal and slid out of
+        # it; success_at_end requires it to still be there when time ran out. A
+        # widening gap between the two is an unstable policy, not noise.
+      - keys: [eval/return]
+        title: Eval return
+      - keys: [eval/reward]
+        title: Eval reward
+      - keys: [eval/episode_len]
+        title: Eval episode length
+      - keys: [eval/num_trajectories]
+        title: Eval trajectories

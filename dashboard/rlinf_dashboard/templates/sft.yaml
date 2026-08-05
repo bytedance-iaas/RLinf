@@ -1,0 +1,138 @@
+# Template for supervised fine-tuning runs (task_type: sft).
+#
+# Deliberately small. SFT has one question -- is the loss going down without
+# overfitting -- and a page of RL panels would bury it.
+#
+# Key names were read off the workers that build the metric dicts. `sft_runner`
+# prefixes whatever the configured worker returns with `train/` (:157) and
+# `eval/` (:166), and the six workers that can sit behind `task_type: sft`
+# disagree on names for the same quantity:
+#
+#   worker                  loss        lr               accuracy
+#   FSDPSftWorker           train/loss  learning_rate    eval/eval_accuracy
+#   FSDPCfgWorker           train/loss  learning_rate    --
+#   MegatronVlmSftWorker    train/loss  learning_rate    -- (run_eval returns {})
+#   FSDPValueSftWorker      train/loss  lr               cat_acc_best
+#   FSDPSteamSftWorker      train/loss  lr               accuracy
+#   FSDPRewardWorker        train/loss  learning_rate    eval/val_accuracy
+#
+# So every chart lists all the spellings. bind_keys drops the absent ones, which
+# makes an alias free and a wrong guess expensive: a missing key is not an error,
+# the chart simply does not appear.
+name: sft
+task_types: [sft]
+step_axis_label: Optimizer step
+
+north_star:
+  key: eval/accuracy
+  label: Eval accuracy
+  format: percent
+  goal: maximize
+  # Ordered by how directly each answers "is it better", not by how common it
+  # is. `eval/eval_accuracy` reads oddly but is what FSDPSftWorker emits
+  # (fsdp_sft_worker.py:131) -- the doubled word is in the worker, not a typo
+  # here. Loss is last: falling loss is necessary, not sufficient.
+  fallback_keys:
+    - eval/eval_accuracy
+    - eval/val_accuracy
+    - eval/cat_acc_best
+    - eval/loss
+    - eval/val_loss
+    - train/loss
+
+groups:
+  - title: Training
+    charts:
+      - keys: [train/loss, train/lm_loss]
+        title: Train loss
+      - keys: [eval/loss, eval/val_loss]
+        title: Eval loss
+        # Train down while eval turns up is the whole reason both are on one
+        # page rather than in separate groups.
+      - keys:
+          - eval/accuracy
+          - eval/eval_accuracy
+          - eval/val_accuracy
+          - eval/cat_acc_best
+        title: Eval accuracy
+        format: percent
+      - keys: [train/accuracy, train/cat_acc_best]
+        title: Train accuracy
+        format: percent
+        # Next to eval accuracy for the same reason as the losses: the gap is
+        # the signal, either number alone is not.
+
+  - title: Optimization
+    charts:
+      - keys: [train/learning_rate, train/lr]
+        title: Learning rate
+        scale: log
+      - keys: [train/grad_norm, train/grad_norm_mean]
+        title: Gradient norm
+        scale: log
+        # `grad_norm_mean` appears only for ensembles, where plain `grad_norm` is
+        # the max across members (fsdp_steam_sft_worker.py:907-910) -- max and
+        # mean together are what show one member diverging.
+      - keys: [train/update_success]
+        title: Optimizer steps applied
+        # Megatron skips the update on a non-finite gradient. A run whose loss
+        # has stopped moving because every step is being skipped looks identical
+        # to a converged one without this.
+
+  - title: Value and reward heads
+    collapsed: true
+    description: Value / reward / progress SFT workers only.
+    charts:
+      - keys: [train/predicted_value_mean, eval/predicted_value_mean]
+        title: Predicted value
+      - keys: [train/target_value_mean, eval/target_value_mean]
+        title: Target value
+        # Paired with predicted: a predicted mean that drifts away from the
+        # target mean is a miscalibrated head, which the loss alone hides.
+      - keys: [train/predicted_value_std, eval/predicted_value_std]
+        title: Predicted value spread
+      - keys: [train/mae, eval/mae]
+        title: Mean absolute error
+      - keys: [train/value_spearman]
+        title: Value rank correlation
+        # For a value head used to rank candidates, rank correlation is the
+        # metric that matches the use; MAE can improve while ranking degrades.
+      - keys:
+          - train/cat_acc_neighbor
+          - eval/cat_acc_neighbor
+          - train/accuracy_neighbor
+          - eval/accuracy_neighbor
+        title: Neighbour-tolerant accuracy
+        format: percent
+      - keys: [train/probabilities_mean, eval/val_probabilities_mean]
+        title: Mean probability
+      - keys:
+          - train/signed_progress_mean
+          - eval/signed_progress_mean
+          - train/progress_value_mean
+          - eval/progress_value_mean
+        title: Progress value
+
+  - title: Throughput
+    collapsed: true
+    charts:
+      - keys: [time/step]
+        title: Step time
+        unit: s
+      - keys: [time/training, time/evaluate]
+        title: Phase durations
+        unit: s
+        stacked: true
+        # `time/evaluate` is present only on val_check_interval steps, so this
+        # chart is mostly the training bar with periodic eval spikes -- which is
+        # exactly the shape that shows eval eating the step budget.
+
+# Per-dataset eval keys (`eval/<dataset>/<metric>`, fsdp_value_sft_worker.py:685
+# and fsdp_steam_sft_worker.py:1040) and per-ensemble-member train keys
+# (`train/member<i>/<metric>`, fsdp_steam_sft_worker.py:903) are composed at
+# runtime from config, so they cannot be listed here. They land in the
+# prefix-grouped `unmatched` section instead, which is why that section is
+# rendered rather than dropped.
+caveats:
+  - Eval metrics are reported from rank 0 only (sft_runner.py takes eval_metrics[0]).
+  - Per-dataset and per-ensemble-member keys are named at runtime and appear under unmatched.

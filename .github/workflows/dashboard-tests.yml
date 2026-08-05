@@ -1,0 +1,91 @@
+name: Dashboard Tests
+
+# The dashboard is a separate distribution with a separate dependency set, and
+# its defining constraint is that it must run where `rlinf` is not installed.
+# That is what this workflow asserts: every step below runs in a plain venv that
+# has never seen rlinf or torch, so an accidental `import rlinf` fails here even
+# though it would pass on a developer machine with the repo on sys.path.
+
+on:
+  workflow_call:
+
+jobs:
+  # The hard gate. If this job passes, the dashboard is installable and testable
+  # by someone who does not have a training environment.
+  dashboard-isolated:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor declared in dashboard/pyproject.toml and a current release.
+        # The floor is the one that matters: it is what a cluster login node
+        # tends to have, and `requires-python = ">=3.10"` is a promise.
+        python-version: ["3.10", "3.13"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install the dashboard alone
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/dashvenv
+          /tmp/dashvenv/bin/python -m pip install --upgrade pip
+          /tmp/dashvenv/bin/pip install -e './dashboard[test]'
+
+      # Runs from /tmp, not from the repo root. At the repo root the sibling
+      # `rlinf/` directory is importable via sys.path[0], so `import rlinf`
+      # would half-succeed and fail later on `torch` -- which proves nothing
+      # about isolation. From /tmp the answer is unambiguous.
+      - name: Assert rlinf is genuinely unavailable
+        working-directory: /tmp
+        run: |
+          set -euo pipefail
+          /tmp/dashvenv/bin/python - <<'PY'
+          import sys
+
+          try:
+              import rlinf  # noqa: F401
+          except ModuleNotFoundError as exc:
+              assert exc.name == "rlinf", f"expected rlinf to be missing, got {exc.name}"
+              print("OK: import rlinf ->", exc)
+          else:
+              sys.exit("rlinf is importable in this venv; the isolation gate is vacuous")
+          PY
+
+      - name: Assert the dashboard imports without rlinf or torch
+        working-directory: /tmp
+        run: |
+          set -euo pipefail
+          /tmp/dashvenv/bin/python - <<'PY'
+          import sys
+
+          import rlinf_dashboard
+          import rlinf_dashboard.api  # noqa: F401
+          import rlinf_dashboard.metrics  # noqa: F401
+          import rlinf_dashboard.registry  # noqa: F401
+
+          print("dashboard", rlinf_dashboard.__version__, "imported from", sys.prefix)
+          # Reading TensorBoard event files needs protobuf, not a DL framework.
+          # If torch ever appears here, the dependency set has drifted and the
+          # install is minutes slower for every user.
+          for module in ("rlinf", "torch"):
+              assert module not in sys.modules, f"{module} was imported transitively"
+          PY
+
+      - name: Run the test suite in the isolated venv
+        run: /tmp/dashvenv/bin/python -m pytest dashboard/tests -q
+        env:
+          # The suite reads docs/schemas/run.v2.schema.json and
+          # tests/fixtures/run_state/ from the repository root rather than from
+          # copies, so the contract cannot drift between the two sides.
+          PYTHONDONTWRITEBYTECODE: "1"
+
+      # The SSE tests drive the route handlers directly: TestClient's
+      # synchronous portal waits for an infinite generator even on close, so it
+      # cannot exercise a stream. This is where the real transport gets covered.
+      - name: Serve a fixture run and check the HTTP surface
+        run: bash dashboard/tests/smoke_server.sh /tmp/dashvenv/bin/python

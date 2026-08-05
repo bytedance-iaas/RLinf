@@ -1,0 +1,54 @@
+# Fallback for any task_type without a dedicated template
+# (offline, embodied_eval, reasoning_eval, and anything added later).
+#
+# Has no fixed chart list. Instead it declares prefix groups, and the registry
+# bins whatever keys the run actually logged. That is what makes a new task_type
+# usable on day one -- before anyone writes it a template, and without touching
+# the frontend.
+name: fallback
+task_types: []
+step_axis_label: Step
+auto_group: true
+
+north_star:
+  # No universally meaningful north star exists here, so the UI shows none rather
+  # than promoting an arbitrary metric to headline status.
+  key: null
+
+# Prefix -> group title, longest prefix wins. Mirrors the grouping
+# print_metrics_table already applies to the stdout table (metric_utils.py:
+# 570-603), so the web view bins metrics the same way the console does.
+#
+# The replay-buffer prefix is `train/replay_buffer/`, not `replay_buffer/`. The
+# worker emits `replay_buffer/{key}` (fsdp_sac_policy_worker.py:668) but
+# offline_runner then prefixes the whole training dict with `train/` (:352), and
+# metric_utils.py:598 special-cases exactly that doubled form. A bare
+# `replay_buffer/` entry matches nothing, and because the shorter `train/` entry
+# then claims those keys, the group appears -- just labelled "Training" -- so the
+# mistake shows up as a missing panel rather than as missing data.
+prefix_groups:
+  - prefix: env/
+    title: Environment
+  - prefix: eval/
+    title: Evaluation
+  - prefix: train/actor/
+    title: Actor training
+  - prefix: train/critic/
+    title: Critic training
+  - prefix: train/replay_buffer/
+    title: Replay buffer
+  - prefix: train/demo_buffer/
+    title: Demo buffer
+  - prefix: train/
+    title: Training
+  - prefix: rollout/
+    title: Rollout
+  - prefix: flops/
+    title: Throughput
+  - prefix: time/
+    title: Timing
+    unit: s
+
+# Anything matching no prefix lands here rather than being dropped: an unbinned
+# metric the user logged themselves is still a metric they want to see.
+other_group_title: Other
