@@ -23,6 +23,11 @@ name: sft
 task_types: [sft]
 step_axis_label: Optimizer step
 
+# No video: SFT has no environment to record. Stated rather than omitted so the
+# next template author sees the field and answers it -- an omitted field reads as
+# "maybe" and would offer a Media tab that always leads to an empty page.
+has_media_view: false
+
 north_star:
   key: eval/accuracy
   label: Eval accuracy

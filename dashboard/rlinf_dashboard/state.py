@@ -124,6 +124,7 @@ class StateStore:
             run_root=run.run_root,
             error=error,
             relocation=run.relocation,
+            has_media=self.has_media(run.run_root),
         )
 
     def summary(self, run: DiscoveredRun, now: datetime | None = None) -> RunSummary:
@@ -268,6 +269,34 @@ class StateStore:
 
         entries.sort(key=sort_key)
         return entries
+
+    def has_media(self, run_root: str) -> bool:
+        """Whether this run recorded any video, without parsing the index.
+
+        Answers the one question the UI needs to decide whether a Media view is
+        worth offering, and answers it from a directory listing plus at most one
+        ``st_size`` per shard. Parsing every row -- thousands, on a long embodied
+        run -- to learn a boolean would put that cost on every status read, and
+        this is called once per run page.
+
+        A shard that exists but is empty counts as no media: the writer is created
+        when an env worker starts, before any clip is encoded, so the file's
+        presence alone would promise a view that renders nothing.
+        """
+        try:
+            names = os.listdir(run_root)
+        except OSError:
+            return False
+
+        for name in names:
+            if not name.startswith(MEDIA_PREFIX) or not name.endswith(".jsonl"):
+                continue
+            try:
+                if os.stat(os.path.join(run_root, name)).st_size > 0:
+                    return True
+            except OSError:
+                continue
+        return False
 
 
 def _read_jsonl(path: str) -> list[dict]:

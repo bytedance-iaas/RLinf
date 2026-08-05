@@ -406,6 +406,81 @@ def test_media_rows_without_a_step_sort_first(run_tree, settings_for):
     assert [os.path.basename(e.path) for e in entries] == ["unknown.mp4", "known.mp4"]
 
 
+def test_has_media_is_true_when_a_shard_holds_rows(run_tree, settings_for):
+    """The cheap answer to "is a Media tab worth offering".
+
+    Asserted alongside ``read_media`` rather than instead of it: the whole point
+    of the predicate is that it does *not* parse, so the two could drift apart and
+    only the pair of assertions catches it.
+    """
+    store, run = _store_and_run(
+        run_tree,
+        settings_for,
+        snapshot=_snapshot(),
+        media={0: [{"path": "/v/r0_s1.mp4", "step": 1, "shard": 0}]},
+    )
+
+    assert store.has_media(run.run_root) is True
+    assert len(store.read_media(run.run_root)) == 1
+    assert store.status(run, NOW).has_media is True
+
+
+def test_has_media_is_false_with_no_shards(run_tree, settings_for):
+    """The common case, including every SFT and reasoning run.
+
+    ``enable_dump_video`` defaults off, so most embodied runs land here too. A
+    Media tab offered to any of them is a tab that always leads to an empty page.
+    """
+    store, run = _store_and_run(run_tree, settings_for, snapshot=_snapshot())
+
+    assert store.has_media(run.run_root) is False
+    assert store.status(run, NOW).has_media is False
+
+
+def test_an_empty_shard_does_not_count_as_media(run_tree, settings_for):
+    """A shard exists before any clip is encoded.
+
+    The writer is created when an env worker starts, so between that moment and
+    the first ``flush_video`` there is a zero-byte ``media.rank<k>.jsonl`` on
+    disk. Treating the file's presence as the signal would promise a view that
+    renders nothing -- which is why the predicate checks ``st_size`` and not
+    ``os.path.exists``.
+    """
+    store, run = _store_and_run(
+        run_tree, settings_for, snapshot=_snapshot(), media={0: []}
+    )
+
+    assert os.path.exists(os.path.join(run.run_root, "media.rank0.jsonl"))
+    assert store.has_media(run.run_root) is False
+    assert store.read_media(run.run_root) == []
+
+
+def test_has_media_ignores_files_that_are_not_shards(run_tree, settings_for):
+    """Negative control on the name match.
+
+    The run root is a directory operators poke at, and video lives under it in
+    some layouts. Neither an mp4 nor a similarly-named log may satisfy the
+    predicate, or the tab appears for a run with no index to render from.
+    """
+    store, run = _store_and_run(run_tree, settings_for, snapshot=_snapshot())
+    for name in ("media.rank0.mp4", "media.jsonl", "mediarank0.jsonl"):
+        with open(os.path.join(run.run_root, name), "w") as handle:
+            handle.write("not an index\n")
+
+    assert store.has_media(run.run_root) is False
+
+
+def test_has_media_on_a_missing_run_root_is_false(run_tree, settings_for):
+    """An unmounted scan root must not raise on the way to a boolean.
+
+    ``status()`` calls this on every read, so an ``OSError`` here would turn a
+    stale mount into a 500 for the whole run rather than a run with no video.
+    """
+    store, run = _store_and_run(run_tree, settings_for, snapshot=_snapshot())
+
+    assert store.has_media(os.path.join(run.run_root, "does-not-exist")) is False
+
+
 def test_missing_table_files_read_as_empty(run_tree, settings_for):
     """Absence is the normal early state, not an error.
 

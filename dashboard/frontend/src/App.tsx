@@ -29,12 +29,42 @@ import { RunList } from "./views/RunList";
 /** How often derived ages are recomputed. One second, because ages are shown to it. */
 const TICK_MS = 1000;
 
-const TABS = [
+/**
+ * The tabs every run has. Media is not among them.
+ *
+ * Only embodied runs record simulator video. An SFT or reasoning run shown a
+ * Media tab gets a tab that always leads to an empty page -- and a navigation
+ * item that never has content teaches people to distrust the rest of the nav. So
+ * the tab is derived rather than fixed; see `mediaTabState`.
+ */
+const BASE_TABS = [
   { name: "overview", label: "Overview" },
   { name: "metrics", label: "Metrics" },
-  { name: "media", label: "Media" },
-  { name: "events", label: "Events" },
 ] as const;
+
+const EVENTS_TAB = { name: "events", label: "Events" } as const;
+
+/**
+ * Whether to offer a Media tab, from the two independent facts the server sends.
+ *
+ * * `template.has_media_view` -- can this *kind* of run have video? A property of
+ *   the task type, declared in the template YAML, so a new task type answers it
+ *   in data rather than here.
+ * * `status.has_media` -- did *this* run record any? `enable_dump_video: false`
+ *   is the common case even for embodied runs.
+ *
+ * `"pending"` while the template is still in flight: the tab strip must not
+ * flicker a Media tab in and then remove it, because a tab that appears and
+ * vanishes under the pointer is a misclick.
+ */
+function mediaTabState(
+  template: RunTemplate | null,
+  status: RunStatus | null,
+): "show" | "hide" | "pending" {
+  if (template === null || status === null) return "pending";
+  if (template.has_media_view === false) return "hide";
+  return status.has_media ? "show" : "hide";
+}
 
 export function App() {
   const [route, navigate] = useRoute();
@@ -121,6 +151,24 @@ export function App() {
     [],
   );
 
+  const mediaTab = mediaTabState(template, status);
+  const tabs = useMemo(
+    () => (mediaTab === "show"
+      ? [...BASE_TABS, { name: "media", label: "Media" } as const, EVENTS_TAB]
+      : [...BASE_TABS, EVENTS_TAB]),
+    [mediaTab],
+  );
+
+  // A deep link to a media view this run does not have -- a bookmark from another
+  // run, or a link shared before `enable_dump_video` was turned off -- lands on
+  // the overview rather than on a page whose only content is an explanation of
+  // why it is empty. Replaced rather than pushed so Back does not bounce.
+  useEffect(() => {
+    if (route.name === "media" && mediaTab === "hide") {
+      window.location.replace(href({ name: "overview", runId: route.runId }));
+    }
+  }, [route, mediaTab]);
+
   const liveState: LiveState = runId ? run.liveState : runs.liveState;
   const updatedAt = runId ? run.updatedAt : runs.updatedAt;
 
@@ -198,7 +246,7 @@ export function App() {
 
         {runId && (
           <nav className="tabs" aria-label="Run views">
-            {TABS.map((tab) => (
+            {tabs.map((tab) => (
               <a
                 className="tab"
                 key={tab.name}

@@ -38,6 +38,10 @@ name: reasoning
 task_types: [reasoning, coding_online_rl]
 step_axis_label: Minibatch
 
+# No video: these runs have no environment in the embodied sense. Their rollouts
+# are token sequences, which belong in a text view, not a video grid.
+has_media_view: false
+
 north_star:
   key: rollout/reward_scores
   label: Mean reward

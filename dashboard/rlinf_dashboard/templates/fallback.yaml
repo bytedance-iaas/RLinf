@@ -10,6 +10,12 @@ task_types: []
 step_axis_label: Step
 auto_group: true
 
+# Left open, because `embodied_eval` lands here and does record video. The server
+# gates the tab on clips actually existing, so "maybe" costs nothing and the
+# alternative -- declaring false for every task type without a template -- would
+# hide the video an eval run exists to produce.
+has_media_view: true
+
 north_star:
   # No universally meaningful north star exists here, so the UI shows none rather
   # than promoting an arbitrary metric to headline status.

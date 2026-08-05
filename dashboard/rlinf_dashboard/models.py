@@ -252,6 +252,11 @@ class RunStatus(_Lenient):
     #: silently, so a path in the UI that differs from what the training side
     #: logged can be traced to the translation instead of looking like a bug.
     relocation: dict[str, str] | None = None
+    #: Whether this run recorded any video. Reported because the client otherwise
+    #: cannot tell without a second request, and a Media view offered to a run
+    #: with no media -- every SFT and reasoning run -- is a tab that always leads
+    #: to an empty page. Cheap: a directory listing, not a parse of the index.
+    has_media: bool = False
 
 
 class RunSummary(_Lenient):

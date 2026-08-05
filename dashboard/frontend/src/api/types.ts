@@ -158,6 +158,15 @@ export interface RunStatus {
   error: string | null;
   /** Present when launch-time absolute paths were translated for this machine. */
   relocation?: Record<string, string> | null;
+  /**
+   * Whether this run recorded any video at all.
+   *
+   * The claim about *this* run, as opposed to the template's `has_media_view`,
+   * which is about its task type. Both are needed: a reasoning run has no video
+   * view even in the impossible case that a clip appeared, and an embodied run
+   * with `enable_dump_video: false` has nothing to show.
+   */
+  has_media?: boolean;
 }
 
 export interface RunSummary {
@@ -290,6 +299,14 @@ export interface RunTemplate {
   unmatched?: string[];
   auto_group?: boolean;
   caveats?: string[];
+  /**
+   * Whether this *kind* of run can have simulator video.
+   *
+   * A claim about the task type, not about this run: `embodied` is true even when
+   * `env.enable_dump_video` was off. Pair it with `RunStatus.has_media`, which is
+   * the claim about this run, before offering a Media view.
+   */
+  has_media_view?: boolean;
 }
 
 export interface ServerHealth {

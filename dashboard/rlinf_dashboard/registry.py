@@ -370,4 +370,8 @@ _EMPTY_TEMPLATE = {
     "auto_group": True,
     "prefix_groups": [],
     "step_axis_label": "Step",
+    # Reached only when the template directory itself failed to load, so nothing is
+    # known about the run's kind. Left open for the same reason as the fallback:
+    # the tab appears only if clips exist.
+    "has_media_view": True,
 }

@@ -13,6 +13,12 @@ name: embodied
 task_types: [embodied]
 step_axis_label: RL iteration
 
+# Embodied runs are the ones that produce simulator video, so this is the one
+# template that offers the view. `env.enable_dump_video: false` is common, so the
+# server still checks whether any clip exists before the tab appears -- declaring
+# it here says "this kind of run can have video", not "this run does".
+has_media_view: true
+
 north_star:
   key: env/success_once
   label: Success rate

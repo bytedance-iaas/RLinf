@@ -168,6 +168,39 @@ def test_sft_records_its_rank_zero_caveat(registry):
     assert any("rank 0" in caveat for caveat in caveats)
 
 
+@pytest.mark.parametrize("name", SHIPPED)
+def test_every_shipped_template_answers_the_media_question(registry, name):
+    """``has_media_view`` must be stated, not defaulted.
+
+    The client reads a missing field as "maybe", which is right for the fallback
+    and wrong for anything with a template: an omitted field on ``sft.yaml``
+    offers a Media tab to a task type that has no environment to record. Asserting
+    the *presence* of the key -- not just a truthy value -- is what makes the next
+    template author answer it.
+    """
+    assert isinstance(registry.get(name).get("has_media_view"), bool), (
+        f"{name}.yaml must declare has_media_view"
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        # The only family that produces simulator video.
+        ("embodied", True),
+        # No environment at all.
+        ("sft", False),
+        # Has rollouts, but they are token sequences: a text view, not a grid.
+        ("reasoning", False),
+        # Open, because `embodied_eval` lands here and does record video. The
+        # server still gates the tab on clips existing, so "maybe" costs nothing.
+        ("fallback", True),
+    ],
+)
+def test_media_views_are_declared_per_task_type(registry, name, expected):
+    assert registry.get(name)["has_media_view"] is expected
+
+
 def test_the_fallback_declares_prefix_groups(registry):
     fallback = registry.get("fallback")
     assert fallback["auto_group"] is True
@@ -378,7 +411,13 @@ def test_a_malformed_template_file_is_skipped(tmp_path):
 def test_a_missing_template_dir_does_not_crash(tmp_path):
     registry = TemplateRegistry(str(tmp_path / "nope"))
     assert registry.names() == []
-    assert registry.select("embodied")["name"] == "empty"
+    template = registry.select("embodied")
+    assert template["name"] == "empty"
+    # Nothing is known about the run's kind here, so the media question is left
+    # open rather than answered "no": the server still gates the tab on clips
+    # existing, and hiding video from an embodied run because the template
+    # directory failed to load would be the wrong failure to inherit.
+    assert template["has_media_view"] is True
 
 
 # ---------------------------------------------------------------------- bind_keys
