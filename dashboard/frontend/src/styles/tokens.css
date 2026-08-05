@@ -1,0 +1,156 @@
+/* GENERATED FROM DESIGN.md -- do not edit.
+ *
+ * Regenerate with:  python scripts/gen_tokens.py
+ * Verify with:      python scripts/gen_tokens.py --check
+ *
+ * Every value here has a rationale in DESIGN.md's prose. Change the
+ * token there, regenerate, and the reason travels with the value.
+ */
+
+:root {
+
+  /* Colors */
+  --color-primary: #9F23EF;
+  --color-secondary: #0F90EE;
+  --color-tertiary: #CF9BFF;
+  --color-bg: #0B0D12;
+  --color-surface: #141821;
+  --color-surface-raised: #1C2130;
+  --color-surface-sunken: #0F1218;
+  --color-border: #252B3A;
+  --color-border-strong: #39415A;
+  --color-text: #E8EAF0;
+  --color-text-muted: #9AA3B8;
+  --color-text-faint: #6B7488;
+  --color-healthy: #2DD4A7;
+  --color-degraded: #F0B429;
+  --color-unreachable: #F2555A;
+  --color-unknown: #6B7488;
+  --color-series-1: #9F23EF;
+  --color-series-2: #0F90EE;
+  --color-series-3: #2DD4A7;
+  --color-series-4: #F0B429;
+  --color-series-5: #F2555A;
+  --color-series-6: #CF9BFF;
+  --color-series-7: #5EEAD4;
+  --color-series-8: #FB923C;
+
+  /* Radii */
+  --radius-none: 0px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 999px;
+
+  /* Spacing and sizes */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+  --space-3xl: 48px;
+  --space-card-gap: 12px;
+  --space-overview-columns: 4;
+  --space-chart-height: 180px;
+  --space-chart-height-tall: 260px;
+  --space-chart-height-spark: 44px;
+
+  /* Typography */
+  --type-display-size: 32px;
+  --type-display-weight: 650;
+  --type-display-leading: 1.15;
+  --type-display-tracking: -0.02em;
+  --type-headline-lg-size: 20px;
+  --type-headline-lg-weight: 600;
+  --type-headline-lg-leading: 1.3;
+  --type-headline-lg-tracking: -0.01em;
+  --type-headline-md-size: 15px;
+  --type-headline-md-weight: 600;
+  --type-headline-md-leading: 1.35;
+  --type-body-md-size: 14px;
+  --type-body-md-weight: 400;
+  --type-body-md-leading: 1.5;
+  --type-body-sm-size: 13px;
+  --type-body-sm-weight: 400;
+  --type-body-sm-leading: 1.45;
+  --type-label-md-size: 12px;
+  --type-label-md-weight: 550;
+  --type-label-md-leading: 1.3;
+  --type-label-md-tracking: 0.04em;
+  --type-label-sm-size: 11px;
+  --type-label-sm-weight: 550;
+  --type-label-sm-leading: 1.25;
+  --type-label-sm-tracking: 0.06em;
+  --type-numeric-lg-size: 28px;
+  --type-numeric-lg-weight: 500;
+  --type-numeric-lg-leading: 1.1;
+  --type-numeric-lg-feature: 'tnum' 1, 'zero' 1;
+  --type-numeric-md-size: 14px;
+  --type-numeric-md-weight: 450;
+  --type-numeric-md-leading: 1.4;
+  --type-numeric-md-feature: 'tnum' 1, 'zero' 1;
+  --type-numeric-sm-size: 12px;
+  --type-numeric-sm-weight: 450;
+  --type-numeric-sm-leading: 1.35;
+  --type-numeric-sm-feature: 'tnum' 1, 'zero' 1;
+
+  --font-inter: 'Inter', system-ui, -apple-system, Segoe UI, sans-serif;
+  --font-jetbrains-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Component tokens */
+  --card-bg: var(--color-surface);
+  --card-fg: var(--color-text);
+  --card-radius: var(--radius-lg);
+  --card-pad: 16px;
+  --card-label-fg: var(--color-text-faint);
+  --card-value-fg: var(--color-text);
+  --card-hint-fg: var(--color-text-muted);
+  --badge-healthy-bg: color-mix(in srgb, #2DD4A7 16%, transparent);
+  --badge-healthy-fg: var(--color-healthy);
+  --badge-healthy-radius: var(--radius-full);
+  --badge-healthy-pad: 4px;
+  --badge-degraded-bg: color-mix(in srgb, #F0B429 16%, transparent);
+  --badge-degraded-fg: var(--color-degraded);
+  --badge-degraded-radius: var(--radius-full);
+  --badge-degraded-pad: 4px;
+  --badge-unreachable-bg: color-mix(in srgb, #F2555A 16%, transparent);
+  --badge-unreachable-fg: var(--color-unreachable);
+  --badge-unreachable-radius: var(--radius-full);
+  --badge-unreachable-pad: 4px;
+  --badge-unknown-bg: color-mix(in srgb, #6B7488 16%, transparent);
+  --badge-unknown-fg: var(--color-unknown);
+  --badge-unknown-radius: var(--radius-full);
+  --badge-unknown-pad: 4px;
+  --health-bar-radius: var(--radius-none);
+  --health-bar-height: 4px;
+  --progress-track-bg: var(--color-surface-sunken);
+  --progress-track-radius: var(--radius-full);
+  --progress-track-height: 6px;
+  --progress-fill-bg: var(--color-primary);
+  --progress-fill-radius: var(--radius-full);
+  --chart-panel-bg: var(--color-surface);
+  --chart-panel-radius: var(--radius-lg);
+  --chart-panel-pad: 12px;
+  --chart-grid-line-bg: var(--color-border);
+  --chart-axis-label-fg: var(--color-text-faint);
+  --button-ghost-bg: transparent;
+  --button-ghost-fg: var(--color-text-muted);
+  --button-ghost-radius: var(--radius-md);
+  --button-ghost-pad: 8px;
+  --button-ghost-hover-bg: var(--color-surface-raised);
+  --button-ghost-hover-fg: var(--color-text);
+  --button-primary-bg: var(--color-primary);
+  --button-primary-fg: #FFFFFF;
+  --button-primary-radius: var(--radius-md);
+  --button-primary-pad: 8px;
+  --button-primary-hover-bg: var(--color-tertiary);
+  --table-row-bg: transparent;
+  --table-row-fg: var(--color-text);
+  --table-row-hover-bg: var(--color-surface-raised);
+  --table-header-fg: var(--color-text-faint);
+  --code-inline-bg: var(--color-surface-sunken);
+  --code-inline-fg: var(--color-tertiary);
+  --code-inline-radius: var(--radius-sm);
+  --code-inline-pad: 4px;
+}

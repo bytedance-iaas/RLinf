@@ -89,3 +89,83 @@ jobs:
       # cannot exercise a stream. This is where the real transport gets covered.
       - name: Serve a fixture run and check the HTTP surface
         run: bash dashboard/tests/smoke_server.sh /tmp/dashvenv/bin/python
+
+  # DESIGN.md is the normative source for the frontend's tokens, and
+  # src/styles/tokens.css is generated from it. Nothing stops someone editing the
+  # CSS directly, and a design system whose prose and pixels disagree is worse
+  # than none -- so the generated file is checked, not trusted.
+  #
+  # Both scripts are plain Python in this repo rather than `npx @google/design.md`
+  # so a repo check never depends on fetching an npm package at CI time.
+  design-system:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install PyYAML
+        run: python -m pip install --quiet pyyaml
+
+      - name: Validate DESIGN.md against the spec
+        working-directory: dashboard/frontend
+        run: python scripts/lint_design_md.py DESIGN.md
+
+      - name: Assert tokens.css is current with DESIGN.md
+        working-directory: dashboard/frontend
+        run: python scripts/gen_tokens.py --check
+
+  # The frontend has no test framework, deliberately: with no server and no
+  # business logic of its own, the checks that would catch a real regression here
+  # are the compiler and the bundler. This job is what makes them a gate rather
+  # than something a developer remembers to run.
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          # package-lock.json is committed, so the cache key is exact and `ci`
+          # installs the resolved tree rather than re-solving it.
+          cache: npm
+          cache-dependency-path: dashboard/frontend/package-lock.json
+
+      - name: Install from the lockfile
+        working-directory: dashboard/frontend
+        run: npm ci
+
+      # `npm run build` runs tsc itself, but as one step a type error and a bundle
+      # error are indistinguishable in the log. Split so the failure names itself.
+      - name: Typecheck
+        working-directory: dashboard/frontend
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: dashboard/frontend
+        run: npm run build
+
+      # The server mounts dist/ when it exists (api.py), so an index.html that
+      # references assets the build did not emit is a blank page in production and
+      # nothing else would catch it.
+      - name: Assert the bundle is self-consistent
+        working-directory: dashboard/frontend
+        run: |
+          set -euo pipefail
+          test -f dist/index.html
+          python - <<'PY'
+          import os
+          import re
+
+          html = open("dist/index.html", encoding="utf-8").read()
+          refs = re.findall(r'(?:src|href)="/(assets/[^"]+)"', html)
+          assert refs, "dist/index.html references no built assets"
+          missing = [ref for ref in refs if not os.path.exists(os.path.join("dist", ref))]
+          assert not missing, f"index.html references files the build did not emit: {missing}"
+          print(f"OK: {len(refs)} asset references, all present")
+          PY

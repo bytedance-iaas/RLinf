@@ -8,6 +8,12 @@ TensorBoard, wandb and swanlab are the **data plane**; they answer "what are the
 numbers". This is the **control plane**: it answers "should I be worried". The two
 are complementary, and this service reads from the former rather than replacing it.
 
+Two halves, documented separately: this file covers the server (a JSON API, useful
+on its own — `curl` and `/docs` are a complete interface to it), and
+[`frontend/README.md`](frontend/README.md) covers the browser console. The server
+mounts the built frontend when `frontend/dist/` exists and works fine when it does
+not.
+
 ## Why it does not import `rlinf`
 
 RLinf training environments are many and heavy — isaac-sim, omnigibson and sglang
@@ -92,6 +98,11 @@ process cannot record its own death — still show up as `unreachable`.
 ## Manual verification
 
 Requires a run tree. Either a real one, or the committed fixtures.
+
+For the browser console's own steps — eleven fixture runs covering every health
+verdict and run state, and what each view must show — see
+[`frontend/README.md`](frontend/README.md#manual-verification). The checks below
+are server-only and need no `npm`.
 
 ### 1. One command, end to end (no training needed)
 
@@ -192,3 +203,10 @@ has never seen `rlinf` or `torch`, on Python 3.10 and 3.13, and asserts that
 `import rlinf` fails there. It runs those steps from `/tmp`: at the repository root
 the sibling `rlinf/` directory is importable through `sys.path[0]`, so the assertion
 would pass for the wrong reason.
+
+The same workflow has two frontend jobs: `design-system` regenerates
+`frontend/src/styles/tokens.css` from `frontend/DESIGN.md` and fails if the
+committed file differs, and `frontend-build` typechecks, builds, and asserts the
+built `index.html` references only assets the build emitted. There is no frontend
+test framework — with no server and no logic of its own, the compiler and the
+bundler are what catch a real regression there.

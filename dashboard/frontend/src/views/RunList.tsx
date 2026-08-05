@@ -1,0 +1,239 @@
+/**
+ * The run list: every discovered run, live over SSE.
+ *
+ * Sort order is fixed and does not follow the data. A list that reorders itself
+ * while someone is reading it is called out in DESIGN.md, and it is worse here than
+ * elsewhere: the rows are click targets, and a row that moves under the pointer
+ * opens the wrong run. So rows are ordered by start time descending -- an immutable
+ * property -- and the "needs attention" grouping is expressed by a leading marker,
+ * not by moving the row.
+ */
+
+import { useMemo, useState } from "react";
+import type { Health, RunState, RunSummary } from "../api/types";
+import { Badge, Note } from "../components/primitives";
+import { age, ageSince, duration, integer, semanticsLabel } from "../lib/format";
+
+export interface RunListProps {
+  runs: RunSummary[];
+  selected: string[];
+  now: number;
+  onOpen: (runId: string) => void;
+  onToggleSelect: (runId: string) => void;
+  onCompare: () => void;
+}
+
+/**
+ * Attention order, for the "needs attention" card only -- never for row order.
+ *
+ * `unknown` sorts above `healthy`: "we cannot tell" is not "fine".
+ */
+const HEALTH_RANK: Record<Health, number> = {
+  unreachable: 0,
+  degraded: 1,
+  unknown: 2,
+  healthy: 3,
+};
+
+/**
+ * React key for a row.
+ *
+ * `run_id` alone is not unique. Two scan roots can each hold a copy of the same
+ * tree -- a run copied off a cluster next to the original mount is the ordinary
+ * case -- and the server lists both, since deduplicating them would hide the fact
+ * that there are two. `run_root` is what actually distinguishes them, so it is
+ * appended: a key collision here makes React drop or duplicate rows silently,
+ * which on a click target is a wrong-run-opened bug rather than a cosmetic one.
+ */
+function rowKey(run: RunSummary): string {
+  return `${run.run_id}\0${run.run_root}`;
+}
+
+export function RunList(props: RunListProps) {
+  const { runs, selected, now } = props;
+  const [stateFilter, setStateFilter] = useState<RunState | "all">("all");
+  const [query, setQuery] = useState("");
+
+  const rows = useMemo(() => {
+    const filtered = runs.filter((run) => {
+      if (stateFilter !== "all" && run.state !== stateFilter) return false;
+      if (query.trim() === "") return true;
+      const needle = query.trim().toLowerCase();
+      return (
+        run.run_id.toLowerCase().includes(needle) ||
+        (run.experiment_name ?? "").toLowerCase().includes(needle) ||
+        (run.task_type ?? "").toLowerCase().includes(needle)
+      );
+    });
+    // Started-at descending, with the run id and then the run root as tiebreaks so
+    // the order is total: two runs that started in the same second never swap
+    // places between pushes, and neither do two copies of the same run found under
+    // different scan roots.
+    return [...filtered].sort((a, b) => {
+      const at = a.started_at ? Date.parse(a.started_at) : 0;
+      const bt = b.started_at ? Date.parse(b.started_at) : 0;
+      return (
+        bt - at || a.run_id.localeCompare(b.run_id) || a.run_root.localeCompare(b.run_root)
+      );
+    });
+  }, [runs, stateFilter, query]);
+
+  /**
+   * Every run that is not healthy, `unknown` included.
+   *
+   * This card is now the only place the list names them -- the health strip above
+   * used to repeat the same list as a sentence, which was the same information
+   * twice on one screen. So the filter has to be the full complement of
+   * `healthy`: it was `rank <= 1` while the strip covered the rest, and under
+   * that bound an `unknown` run appeared in neither place.
+   *
+   * `unknown` belongs here for the reason `HEALTH_RANK` puts it above `healthy`:
+   * "we cannot tell" is not "fine". It is what a run with no heartbeat file at
+   * all looks like, which is usually a reporter that never started.
+   *
+   * Worst first, unlike the table below. Reordering is only a hazard where rows
+   * are click targets; these are labels, and the run that most needs opening
+   * should be the one read first.
+   */
+  const attention = useMemo(
+    () =>
+      runs
+        .filter((run) => run.health !== "healthy")
+        .sort(
+          (a, b) =>
+            HEALTH_RANK[a.health] - HEALTH_RANK[b.health] ||
+            a.run_id.localeCompare(b.run_id),
+        ),
+    [runs],
+  );
+
+  // Run ids that appear more than once, i.e. the same tree found under two scan
+  // roots. Those rows are otherwise identical, so they get their run root shown --
+  // without it the list reads as a duplicated row, which looks like a bug in the
+  // dashboard rather than two copies of a tree on disk.
+  const duplicated = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const run of runs) counts.set(run.run_id, (counts.get(run.run_id) ?? 0) + 1);
+    return new Set([...counts.entries()].filter(([, n]) => n > 1).map(([id]) => id));
+  }, [runs]);
+
+  return (
+    <div className="stack">
+      <div className="controls">
+        <label className="control">
+          <span>Search</span>
+          <input
+            type="search"
+            value={query}
+            placeholder="run id, experiment, task type"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
+        <div className="control">
+          <span>State</span>
+          <div className="control-group">
+            {(["all", "running", "finished", "failed", "stopped", "pending"] as const).map((value) => (
+              <button
+                className="btn"
+                key={value}
+                type="button"
+                data-active={stateFilter === value ? "true" : undefined}
+                onClick={() => setStateFilter(value)}
+              >
+                {value}
+              </button>
+            ))}
+          </div>
+        </div>
+        <button
+          className="btn btn-primary"
+          type="button"
+          disabled={selected.length < 2}
+          onClick={props.onCompare}
+          title={selected.length < 2 ? "Select two or more runs to compare" : undefined}
+        >
+          Compare {selected.length > 0 ? `(${selected.length})` : ""}
+        </button>
+      </div>
+
+      {attention.length > 0 && (
+        <Note tone="warn" title={`${attention.length} run${attention.length === 1 ? "" : "s"} need attention`}>
+          {attention.map((run) => (
+            <div key={rowKey(run)}>
+              <Badge tone={run.health} /> {run.experiment_name ?? run.run_id}
+            </div>
+          ))}
+        </Note>
+      )}
+
+      <table className="table">
+        <thead>
+          <tr>
+            <th style={{ width: 32 }} aria-label="Select for compare" />
+            <th>Run</th>
+            <th>State</th>
+            <th>Health</th>
+            <th>Phase</th>
+            <th className="col-num">Step</th>
+            <th className="col-num">Elapsed</th>
+            <th className="col-num">ETA</th>
+            <th className="col-num">Ckpt</th>
+            <th className="col-num">Heartbeat</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((run) => (
+            <tr key={rowKey(run)} data-selected={selected.includes(run.run_id) ? "true" : undefined}>
+              <td>
+                <input
+                  type="checkbox"
+                  checked={selected.includes(run.run_id)}
+                  onChange={() => props.onToggleSelect(run.run_id)}
+                  aria-label={`Select ${run.run_id} for compare`}
+                />
+              </td>
+              <td>
+                <a
+                  className="table-link"
+                  href={`#/runs/${encodeURIComponent(run.run_id)}`}
+                  title={run.run_id}
+                >
+                  {run.experiment_name ?? run.run_id}
+                </a>
+                <div className="faint" style={{ fontSize: "var(--type-label-sm-size)" }}>
+                  {run.task_type} · {semanticsLabel(run.step_semantics)}
+                  {duplicated.has(run.run_id) && <> · {run.run_root}</>}
+                </div>
+              </td>
+              <td>
+                <Badge tone={run.state ?? "unknown"} />
+              </td>
+              <td>
+                <Badge tone={run.health} />
+              </td>
+              <td className="muted">{run.phase ?? "—"}</td>
+              <td className="col-num">
+                {integer(run.step)}
+                {run.max_steps ? <span className="faint">/{integer(run.max_steps)}</span> : null}
+              </td>
+              <td className="col-num">{duration(run.elapsed_s)}</td>
+              <td className="col-num">{run.eta_s === null ? "—" : duration(run.eta_s)}</td>
+              <td className="col-num">
+                {run.latest_checkpoint_step === null ? "—" : integer(run.latest_checkpoint_step)}
+              </td>
+              <td className="col-num">{age(ageSince(run.heartbeat_at, now))}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {rows.length === 0 && (
+        <Note title="No runs match">
+          {runs.length === 0
+            ? "The server discovered no runs. A dashboard showing zero runs is almost always a scan root that does not exist — check GET /api/health."
+            : "Every discovered run is filtered out by the current search or state filter."}
+        </Note>
+      )}
+    </div>
+  );
+}
