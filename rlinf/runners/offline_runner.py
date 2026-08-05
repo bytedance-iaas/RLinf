@@ -27,6 +27,7 @@ from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics, print_metrics_table
+from rlinf.utils.run_state import attach_reporter
 from rlinf.utils.runner_utils import check_progress
 
 
@@ -60,6 +61,8 @@ class OfflineRunner:
         self.enable_per_worker_metric_log = bool(
             self.cfg.runner.get("per_worker_log", False)
         )
+        # Control plane: run state, heartbeat, phase, progress, checkpoints.
+        self.reporter = attach_reporter(self, cfg)
 
         # Async logging setup
         self.stop_logging = False
@@ -89,7 +92,15 @@ class OfflineRunner:
         metrics: dict,
         start_step: int = 0,
     ):
-        """Async version that puts table printing in queue."""
+        """Async version that puts table printing in queue.
+
+        The ETA comes from the reporter's :class:`ProgressEstimator`, which
+        separates plain-step, eval and save costs. Computed here rather than in
+        the worker thread so the estimate reflects this step, and passed as None
+        when no step has been timed yet so the table falls back to its own
+        whole-run average.
+        """
+        eta_seconds = self.reporter.progress.eta_s(step + 1)
         self.log_queue.put(
             (
                 print_metrics_table,
@@ -100,6 +111,7 @@ class OfflineRunner:
                     metrics,
                     start_step,
                     self.metric_logger.log_path,
+                    eta_seconds,
                 ),
             )
         )
@@ -251,6 +263,11 @@ class OfflineRunner:
         return aggregated_metrics, ranked_metrics_list
 
     def run(self):
+        """Run training, always recording a terminal run state."""
+        with self.reporter.run_lifecycle():
+            return self._run_impl()
+
+    def _run_impl(self):
         start_step = self.global_step
         start_time = time.time()
         log_interval = int(self.cfg.runner.log_interval)
@@ -264,6 +281,7 @@ class OfflineRunner:
             if not worker_step_synced:
                 self.actor.set_global_step(_step)
 
+            step_started = time.time()
             with self.timer("step"):
                 actor_training_handle: Handle = self.actor.run_training()
                 actor_metrics_per_rank = actor_training_handle.wait()
@@ -297,6 +315,11 @@ class OfflineRunner:
                 self.global_step = next_step
                 worker_step_synced = False
             _step = self.global_step
+            self.reporter.set_progress(
+                step=self.global_step,
+                epoch=self.epoch,
+                step_duration_s=time.time() - step_started,
+            )
 
             run_val, save_model, is_train_end = check_progress(
                 self.global_step,
@@ -309,12 +332,14 @@ class OfflineRunner:
             eval_episodes = int(self.cfg.runner.get("eval_episodes", 0))
             eval_metrics: dict[str, Any] = {}
             if run_val and eval_episodes > 0:
+                eval_started = time.time()
                 with self.timer("eval"):
                     self.update_rollout_weights()
                     eval_metrics = {f"eval/{k}": v for k, v in self.evaluate().items()}
                     self.metric_logger.log(data=eval_metrics, step=_step)
+                self.reporter.record_eval_duration(time.time() - eval_started)
             if save_model:
-                self._save_checkpoint()
+                self._save_checkpoint(metrics=eval_metrics)
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
@@ -362,7 +387,7 @@ class OfflineRunner:
         self.stop_logging = True
         self.log_thread.join(timeout=1.0)
 
-    def _save_checkpoint(self):
+    def _save_checkpoint(self, metrics: dict | None = None):
         self.logger.info(f"Saving checkpoint at step {self.global_step}.")
         base_output_dir = os.path.join(
             self.cfg.runner.logger.log_path,
@@ -371,7 +396,15 @@ class OfflineRunner:
         )
         actor_save_path = os.path.join(base_output_dir, "actor")
         os.makedirs(actor_save_path, exist_ok=True)
-        self.actor.save_checkpoint(actor_save_path, self.global_step).wait()
+        save_started = time.time()
+        with self.reporter.phase("save_ckpt"):
+            self.actor.save_checkpoint(actor_save_path, self.global_step).wait()
+        self.reporter.record_checkpoint(
+            step=self.global_step,
+            path=base_output_dir,
+            duration_s=time.time() - save_started,
+            metrics=metrics or {},
+        )
 
     def set_max_steps(self):
         self.num_steps_per_epoch = 1

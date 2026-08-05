@@ -120,6 +120,11 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         return eval_metrics
 
     def run(self):
+        """Run training, always recording a terminal run state."""
+        with self.reporter.run_lifecycle():
+            return self._run_impl()
+
+    def _run_impl(self):
         start_step = self.global_step
         start_time = time.time()
         self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
@@ -144,6 +149,13 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         actor_handle: Handle = self.actor.recv_rollout_trajectories(
             input_channel=self.actor_channel
         )
+        # env, rollout, and actor now all run concurrently for the whole loop,
+        # which a single scalar `phase` cannot express.
+        self.reporter.component_enter("env")
+        self.reporter.component_enter("rollout")
+        self.reporter.component_enter("actor")
+        if self.reward is not None:
+            self.reporter.component_enter("reward")
 
         while self.global_step < self.max_steps:
             # Use the step we're ABOUT to run as the profiling key, mirroring
@@ -156,6 +168,7 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
             if profiled_step is not None:
                 self._open_profiling_window(profiled_step)
             skip_step = False
+            step_started = time.time()
             with self.timer("step"):
                 actor_training_handle: Handle = self.actor.run_training()
                 actor_result = actor_training_handle.wait()
@@ -164,6 +177,11 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
 
                 if not skip_step:
                     self.global_step += 1
+                    self.reporter.set_progress(
+                        step=self.global_step,
+                        epoch=self.epoch,
+                        step_duration_s=time.time() - step_started,
+                    )
                     if self.global_step % self.weight_sync_interval == 0:
                         self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
 
@@ -186,11 +204,13 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
                         self._save_checkpoint()
                     eval_metrics = {}
                     if run_val:
+                        eval_started = time.time()
                         with self.timer("eval"):
                             eval_metrics = self.evaluate()
                             eval_metrics = {
                                 f"eval/{k}": v for k, v in eval_metrics.items()
                             }
+                        self.reporter.record_eval_duration(time.time() - eval_started)
 
             if skip_step:
                 self.timer.consume_durations()
@@ -285,5 +305,10 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         env_handle.wait()
         rollout_handle.wait()
         actor_handle.wait()
+        self.reporter.component_exit("env")
+        self.reporter.component_exit("rollout")
+        self.reporter.component_exit("actor")
+        if self.reward is not None:
+            self.reporter.component_exit("reward")
 
         self._finish_run()
