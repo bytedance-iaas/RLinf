@@ -3,9 +3,10 @@
 set -euo pipefail
 
 DOWNLOAD_DIR=${DOWNLOAD_DIR:-$HOME}
-SUPPORT_LIST=("maniskill" "openpi")
+SUPPORT_LIST=("maniskill" "openpi" "libero")
 GITHUB_PREFIX=${GITHUB_PREFIX:-""}
 USE_MIRRORS=${USE_MIRRORS:-0}
+ONIOND_BUCKET=${ONIOND_BUCKET:-ai-infra}
 ASSETS=()
 
 print_help() {
@@ -17,15 +18,22 @@ Options:
 					Default: \$DOWNLOAD_DIR or \$HOME.
 
   --assets NAMES    Comma-separated list of assets to download.
+					Supported: ${SUPPORT_LIST[*]}.
 
-  --use-mirror      Use mirrors (HuggingFace / GitHub) for faster downloads.
+  --use-mirror      Use mirrors for faster downloads. On this network the
+					HuggingFace mirror is unreliable, so assets that have a copy
+					in the Volcengine object store are pulled with oniond
+					instead; the rest fall back to HF_ENDPOINT / GITHUB_PREFIX.
 					Mirrors are also picked up automatically when HF_ENDPOINT /
 					GITHUB_PREFIX are already exported (e.g. by install.sh).
+
+Environment:
+  ONIOND_BUCKET     Object-store bucket oniond reads from. Default: ai-infra.
 
 Examples:
   bash requirements/embodied/download_assets.sh --assets maniskill
   bash requirements/embodied/download_assets.sh --dir /opt/.assets --assets maniskill,openpi
-  bash requirements/embodied/download_assets.sh --use-mirror --assets maniskill,openpi
+  bash requirements/embodied/download_assets.sh --use-mirror --assets maniskill,openpi,libero
 EOF
 }
 
@@ -58,6 +66,25 @@ retry_cmd() {
 }
 
 
+# Whether the Volcengine object store is usable for asset downloads. It only
+# exists on the internal network, so callers outside it fall back to HuggingFace.
+oniond_available() {
+	[ "$USE_MIRRORS" -eq 1 ] && command -v oniond &> /dev/null
+}
+
+# Fetch one repo from the object store into DEST_PARENT/<name>.
+#
+# Usage: oniond_fetch {model|dataset} NAME DEST_PARENT [ONIOND_ARGS...]
+#
+# oniond is resumable and always writes to <dir>/<name>, so the caller gets the
+# same layout as the HuggingFace repo it mirrors.
+oniond_fetch() {
+	local kind="$1" name="$2" dest_parent="$3"
+	shift 3
+	mkdir -p "$dest_parent"
+	BUCKET="$ONIOND_BUCKET" oniond download "$kind" "$name" --dir "$dest_parent" "$@"
+}
+
 # Fetch the Bridge v2 Real2Sim dataset from the Volcengine object store via
 # oniond. Its upstream home is a HuggingFace archive that the mirror network
 # cannot reach, so on --use-mirror we pull the internal copy and verify it
@@ -80,7 +107,7 @@ download_bridge_v2_real2sim_oniond() (
 
 	(
 		cd "$staging_dir"
-		BUCKET=ai-infra oniond download dataset ManiSkill_bridge_v2_real2sim \
+		BUCKET="$ONIOND_BUCKET" oniond download dataset ManiSkill_bridge_v2_real2sim \
 			--include bridge_v2_real2sim_dataset.zip \
 			--dir "$staging_dir"
 	)
@@ -190,13 +217,67 @@ download_openpi_assets() {
 	local root_dir=$1
 
 	export TOKENIZER_DIR="${root_dir}/.cache/openpi/"
+	# The repo stores the tokenizer under big_vision/, so that is where both the
+	# HuggingFace and oniond paths land it.
+	local sentinel="$TOKENIZER_DIR/big_vision/paligemma_tokenizer.model"
 
-	if [ -f "$TOKENIZER_DIR/paligemma_tokenizer.model" ]; then
+	if [ -f "$sentinel" ]; then
 		echo "[download_assets] OpenPI tokenizer already exists at $TOKENIZER_DIR, skipping download."
+		return
+	fi
+
+	mkdir -p "$TOKENIZER_DIR"
+	if oniond_available; then
+		# oniond writes to <dir>/<name>, so stage into a temp parent and move the
+		# repo contents into TOKENIZER_DIR to match the HuggingFace layout.
+		local staging
+		staging=$(mktemp -d)
+		if retry_cmd oniond_fetch model openpi_tokenizer "$staging"; then
+			cp -a "$staging/openpi_tokenizer/." "$TOKENIZER_DIR/"
+			rm -rf -- "$staging"
+		else
+			rm -rf -- "$staging"
+			echo "[download_assets] oniond could not fetch the OpenPI tokenizer." >&2
+			return 1
+		fi
 	else
-		mkdir -p "$TOKENIZER_DIR"
 		retry_cmd hf download RLinf/openpi_tokenizer --local-dir "$TOKENIZER_DIR"
 	fi
+
+	if [ ! -f "$sentinel" ]; then
+		echo "[download_assets] OpenPI tokenizer was not installed at $TOKENIZER_DIR." >&2
+		return 1
+	fi
+	echo "[download_assets] OpenPI tokenizer installed at $TOKENIZER_DIR."
+}
+
+# Fetch the LIBERO simulation assets (~286MB of meshes/scenes/textures). The
+# rlinf-libero wheel does not ship them; its libero-download-assets command
+# normally pulls them from HuggingFace, but it also accepts a pre-existing tree
+# via LIBERO_ASSET_PATH and just symlinks to it. Staging one shared copy here
+# means the per-venv installs symlink instead of each downloading 286MB.
+download_libero_assets() {
+	local root_dir=$1
+
+	export LIBERO_ASSETS_DIR="${root_dir}/.libero_assets/LIBERO-assets"
+	# assets_are_present() in rlinf-libero keys off the scenes/ subdirectory.
+	local sentinel="$LIBERO_ASSETS_DIR/scenes"
+
+	if [ -d "$sentinel" ]; then
+		echo "[download_assets] LIBERO assets already exist at $LIBERO_ASSETS_DIR, skipping download."
+		return
+	fi
+	if ! oniond_available; then
+		echo "[download_assets] LIBERO assets need oniond (--use-mirror); libero-download-assets will fetch them from HuggingFace instead."
+		return
+	fi
+
+	retry_cmd oniond_fetch dataset LIBERO-assets "${root_dir}/.libero_assets"
+	if [ ! -d "$sentinel" ]; then
+		echo "[download_assets] LIBERO assets were not installed at $LIBERO_ASSETS_DIR." >&2
+		return 1
+	fi
+	echo "[download_assets] LIBERO assets installed at $LIBERO_ASSETS_DIR."
 }
 
 parse_args() {
@@ -259,6 +340,9 @@ main() {
 				;;
 			openpi)
 				download_openpi_assets "$DOWNLOAD_DIR"
+				;;
+			libero)
+				download_libero_assets "$DOWNLOAD_DIR"
 				;;
 			*)
 				echo "Unknown asset group: $asset. Supported: ${SUPPORT_LIST[*]}" >&2
