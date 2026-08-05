@@ -121,6 +121,16 @@ ENV INSTALL_MIRROR_OPTION=${INSTALL_MIRROR_OPTION:-"--use-mirror"}
 ENV HF_ENDPOINT=${NO_MIRROR:+"https://huggingface.co"}
 ENV HF_ENDPOINT=${HF_ENDPOINT:-"https://hf-mirror.com"}
 
+# Which index install.sh pulls the torch wheels from. The Tencent mirror it
+# defaults to under --use-mirror only proxies the index pages — the wheels
+# themselves still come from download-r2.pytorch.org, which measured ~200 KB/s
+# from the Volcengine network against ~4.9 MB/s straight from
+# download.pytorch.org. At 531 MB per torch wheel across nine venvs that reads
+# as a hung build, so go direct. Override with --build-arg if a faster mirror
+# becomes available.
+ARG TORCH_INDEX_BASE="https://download.pytorch.org/whl"
+ENV RLINF_TORCH_INDEX_BASE=${TORCH_INDEX_BASE}
+
 RUN pip config set global.index-url ${PIP_INDEX}
 RUN python3 -m pip install -i ${PIP_INDEX} --upgrade pip setuptools wheel uv
 

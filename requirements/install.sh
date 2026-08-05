@@ -495,7 +495,15 @@ configure_nvidia() {
                 echo "[install.sh] No NVIDIA driver or CUDA toolkit detected; using CPU-only torch."
             fi
         fi
-        if [ "$USE_MIRRORS" -eq 1 ]; then
+        # The mirror only proxies the index pages; every link on them points back
+        # at download-r2.pytorch.org, which is slow enough from some networks
+        # (measured ~200 KB/s on Volcengine, vs ~4.9 MB/s going straight to
+        # download.pytorch.org) that a multi-venv build appears to hang. Export
+        # RLINF_TORCH_INDEX_BASE to route the torch wheels elsewhere.
+        if [ -n "${RLINF_TORCH_INDEX_BASE:-}" ]; then
+            _index_base="${RLINF_TORCH_INDEX_BASE%/}"
+            echo "[install.sh] Using RLINF_TORCH_INDEX_BASE=${_index_base} for the torch wheel index."
+        elif [ "$USE_MIRRORS" -eq 1 ]; then
             _index_base="https://mirrors.tencent.com/pytorch-wheels/whl"
         else
             _index_base="https://download.pytorch.org/whl"
