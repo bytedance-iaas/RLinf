@@ -38,7 +38,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from . import __version__
 from .discovery import DiscoveredRun, RunDiscovery
 from .media import MediaService, content_type_for
-from .metrics import MetricGateway
+from .metrics import MetricGateway, worker_label
 from .models import (
     CheckpointEntry,
     MediaEntry,
@@ -254,6 +254,10 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - one function per rou
         return {
             "keys": keys,
             "sources": [s.name for s in services.gateway.sources_for(run.manifest)],
+            # Empty unless the run set `runner.per_worker_log: true`. The UI uses
+            # this to decide whether to offer a per-rank drill-down at all, rather
+            # than offering a control that would come back empty.
+            "workers": services.gateway.workers(run.manifest),
         }
 
     @app.get("/api/runs/{run_id}/series", summary="Metric history")
@@ -261,9 +265,39 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - one function per rou
         run_id: str,
         services: ServicesDep,
         keys: Annotated[list[str], Query(description="Metric keys; repeatable")],
+        expand: str | None = Query(
+            None,
+            pattern="^ranks$",
+            description=(
+                "`ranks` adds one series per (worker group, rank) beside each "
+                "aggregate, for runs with `runner.per_worker_log: true`."
+            ),
+        ),
     ) -> dict[str, Series]:
+        """Read series, optionally broken out per worker rank.
+
+        The aggregate series keeps its own key, and each per-rank series is keyed
+        ``"<key>@<group>/rank_<n>"``. One flat map rather than a nested document
+        so the unexpanded response shape is unchanged and a caller that ignores
+        `expand` needs no migration; the `group`/`rank` fields on each series are
+        the machine-readable form of that suffix.
+        """
         run = _require_run(services, run_id)
-        return services.gateway.read(run.manifest, keys)
+        result = services.gateway.read(run.manifest, keys)
+        if expand != "ranks":
+            return result
+
+        for key, series_list in services.gateway.read_workers(
+            run.manifest, keys
+        ).items():
+            for series in series_list:
+                if series.group is None or series.rank is None:
+                    continue
+                label = worker_label(series.group, series.rank)
+                result[f"{key}@{label}"] = series.model_copy(
+                    update={"key": f"{key}@{label}"}
+                )
+        return result
 
     @app.get("/api/runs/{run_id}/template", summary="Chart layout for a run")
     def get_run_template(run_id: str, services: ServicesDep) -> dict:

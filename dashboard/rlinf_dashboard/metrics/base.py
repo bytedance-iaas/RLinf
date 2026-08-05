@@ -50,6 +50,28 @@ class MetricSource(Protocol):
         ...
 
 
+@runtime_checkable
+class WorkerAwareSource(Protocol):
+    """A source that can also break a series out per ``(worker group, rank)``.
+
+    Kept separate from :class:`MetricSource` because breaking a series out per
+    rank needs more than the ability to read one: the ranks have to be
+    addressable. Event files are, by path. A source that knows a run only by
+    name is not, and would have to answer with a stub returning nothing.
+    Declaring the capability optional lets the gateway ask whoever can answer.
+    """
+
+    def workers(self, manifest: RunManifest) -> list[tuple[str, int]]:
+        """The ``(group, rank)`` pairs with per-worker data, or empty."""
+        ...
+
+    def read_workers(
+        self, manifest: RunManifest, keys: list[str]
+    ) -> dict[str, list[Series]]:
+        """Read each key once per worker that logged it."""
+        ...
+
+
 class MetricGateway:
     """Serve series from the first source that has data for a run.
 
@@ -133,6 +155,79 @@ class MetricGateway:
             result[key] = Series(key=key, source="none")
         return result
 
+    def _worker_sources(self) -> list[WorkerAwareSource]:
+        """Sources that can break a series out per rank.
+
+        Not filtered through :meth:`sources_for`: ``available()`` asks whether the
+        *aggregate* bundle has data, and the per-worker bundles are a different
+        set of directories. A run whose driver bundle is empty while its ranks are
+        writing is exactly a run worth drilling into, so gating on the aggregate
+        would hide the breakdown in the case it is most wanted.
+        """
+        return [
+            source for source in self._sources if isinstance(source, WorkerAwareSource)
+        ]
+
+    def workers(self, manifest: RunManifest) -> list[str]:
+        """Worker labels with per-rank data, as ``"<group>/rank_<n>"``.
+
+        A flat list of labels rather than pairs because this is an API response:
+        the label is what a chart legend shows and what a caller round-trips, and
+        it is one field instead of two that must be kept in step.
+        """
+        labels: list[str] = []
+        for source in self._worker_sources():
+            try:
+                labels = [
+                    worker_label(group, rank)
+                    for group, rank in source.workers(manifest)
+                ]
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Source %s failed to list workers: %s", source.name, exc)
+                continue
+            if labels:
+                break
+        return labels
+
+    def read_workers(
+        self, manifest: RunManifest, keys: list[str]
+    ) -> dict[str, list[Series]]:
+        """Read each key broken out per ``(worker group, rank)``.
+
+        Same fallback discipline as :meth:`read`: the first source that has
+        per-worker data for a key answers for that key, and a key no source can
+        break out is simply absent -- distinct from the aggregate path, which
+        returns an empty series for a missing key. Absent here means "no
+        breakdown available", and the caller still has the aggregate to show.
+        """
+        wanted = {key: _candidate_keys(key, manifest) for key in keys}
+        result: dict[str, list[Series]] = {}
+
+        for source in self._worker_sources():
+            if len(result) == len(wanted):
+                break
+            probe = sorted({alias for aliases in wanted.values() for alias in aliases})
+            try:
+                found = source.read_workers(manifest, probe)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Source %s failed to read per-worker series: %s", source.name, exc
+                )
+                continue
+
+            for key, aliases in wanted.items():
+                if key in result:
+                    continue
+                for alias in aliases:
+                    series_list = [s for s in found.get(alias, []) if s.points]
+                    if series_list:
+                        result[key] = [
+                            self._decimate(series.model_copy(update={"key": key}))
+                            for series in series_list
+                        ]
+                        break
+        return result
+
     def _decimate(self, series: Series) -> Series:
         """Strided-sample a long series down to a displayable size.
 
@@ -152,6 +247,15 @@ class MetricGateway:
         return series.model_copy(
             update={"points": sampled, "decimated": True, "total_points": total}
         )
+
+
+def worker_label(group: str, rank: int) -> str:
+    """``"<group>/rank_<n>"`` -- the on-disk spelling, reused as the UI label.
+
+    Matching the directory layout ``MetricLogger`` writes means a label in the UI
+    is also the path to grep, which is the whole point of a drill-down.
+    """
+    return f"{group}/rank_{rank}"
 
 
 def _candidate_keys(key: str, manifest: RunManifest) -> list[str]:

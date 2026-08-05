@@ -38,6 +38,14 @@ export interface ChartSeriesSpec {
   fill?: boolean;
   /** Dashed stroke, for a run that has different step semantics than the axis. */
   dashed?: boolean;
+  /**
+   * Context rather than subject: drawn, but kept out of the tooltip.
+   *
+   * For the bundle of per-rank lines behind a drill-down. The bundle's *shape* is
+   * the content -- whether one line strays from it -- and thirty-two rows of
+   * numbers on hover would bury the handful that were singled out by name.
+   */
+  muted?: boolean;
 }
 
 export interface ChartProps {
@@ -153,7 +161,10 @@ export function Chart(props: ChartProps) {
         const entry: uPlot.Series = {
           label: spec.label,
           stroke,
-          width: strokeWidth,
+          // A muted line is drawn thinner as well as fainter. At 1.5px a bundle of
+          // thirty ranks is a solid block; at 1px the individual paths stay
+          // separable, which is the only reason to draw them at all.
+          width: spec.muted ? 1 : strokeWidth,
           show: spec.hidden !== true,
           // Square-cornered data marks: DESIGN.md forbids rounding a mark, since
           // it misrepresents the value at the pixel level.
@@ -274,7 +285,9 @@ export function Chart(props: ChartProps) {
     cursorGroup,
     showPoints,
     series.length,
-    series.map((spec) => `${spec.label}|${spec.color}|${spec.fill}|${spec.dashed}`).join(","),
+    series
+      .map((spec) => `${spec.label}|${spec.color}|${spec.fill}|${spec.dashed}|${spec.muted}`)
+      .join(","),
   ]);
 
   // Create and destroy. Recreated only when the option identity above changes,
@@ -363,7 +376,7 @@ function buildTooltip(
   if (step === undefined) return null;
   const rows = series
     .map((spec, index) => ({ spec, value: (data[index + 1] as (number | null)[] | undefined)?.[idx] ?? null }))
-    .filter((row) => row.spec.hidden !== true);
+    .filter((row) => row.spec.hidden !== true && row.spec.muted !== true);
   if (rows.length === 0) return null;
 
   return (

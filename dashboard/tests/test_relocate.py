@@ -95,6 +95,24 @@ def test_existing_path_is_rewritten_to_where_it_actually_is(tmp_path):
     assert "tensorboard" in relocation["rewritten"]
 
 
+def test_the_per_worker_log_root_is_relocated_too(tmp_path):
+    """A container-written ``worker_logs`` must survive the same translation.
+
+    Left untranslated, the run still charts (the aggregate bundle relocates) but
+    the per-rank drill-down silently offers nothing -- the same class of blank
+    that relocation exists to prevent, one layer down.
+    """
+    actual, run_root, paths = _tree(tmp_path)
+    worker_logs = os.path.join(actual, "worker_logs", "EnvGroup", "rank_0")
+    os.makedirs(worker_logs)
+    paths["worker_logs"] = "/workspace/orig/worker_logs"
+
+    out, relocation = relocate_paths(paths, paths["run_root"], run_root)
+    assert out["worker_logs"] == os.path.join(actual, "worker_logs")
+    assert relocation is not None
+    assert "worker_logs" in relocation["rewritten"]
+
+
 def test_a_path_that_does_not_exist_either_way_keeps_the_recorded_value(tmp_path):
     """Never substitute a guess for a path that is wrong anyway.
 

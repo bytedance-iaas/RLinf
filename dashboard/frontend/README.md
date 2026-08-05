@@ -117,8 +117,9 @@ eleven states at once. `scripts/make_demo_runs.py` writes a scan root that is:
 eleven runs covering all four health verdicts, `running`/`finished`/`failed`/
 `pending`, a run with no `max_steps`, a run with a NaN in its loss, a run whose
 step is a minibatch rather than an RL iteration, a GRPO arm with no critic keys,
-sharded media indices with recorded, unrecorded and zero-success clips, and real
-TensorBoard event files.
+sharded media indices with recorded, unrecorded and zero-success clips, one run
+with per-worker logging on and one rank deliberately slow, and real TensorBoard
+event files.
 
 ```bash
 cd dashboard/frontend
@@ -126,7 +127,7 @@ cd dashboard/frontend
 python scripts/make_demo_runs.py --root /tmp/rlinf-demo --clean
 ```
 
-Takes ~2 minutes (it writes real event files). Two options matter:
+Takes ~2 minutes (it writes real event files). Three options matter:
 
 - `--clean` removes the root first. Without it a re-run leaves the previous tree's
   files in place, and a half-written tree makes the server 404 on `/keys`.
@@ -134,6 +135,8 @@ Takes ~2 minutes (it writes real event files). Two options matter:
   it the clips are undecodable stubs, which exercises the media view's decode-error
   path but not playback. Use it at least once to check playback, and once without
   to check the error path.
+- `--ranks N` (default 4) sets how many ranks per group the per-worker run gets.
+  It decides which branch of the rank drill-down is reachable — see step 5.
 
 **The tree decays, and there is a one-second fix.** Health is a function of age, and
 the budget is 5x each run's own step time — about 95s here — so the healthy runs
@@ -285,7 +288,80 @@ last thing that happened at the top:
   fields, not from a stored command string — a baked command goes stale the moment
   the launch changes.
 
-### 5. Media — a count, never a boolean
+### 5. Expand to ranks — and the card that is holding the job up
+
+Only `libero_10_ppo_lr3e6` has per-worker data; the other ten runs are how a run
+without `runner.per_worker_log: true` must behave. Start on one of those:
+
+```
+http://localhost:5273/#/runs/20260801-101500-libero_10_ppo_baseline/metrics
+```
+
+There is **no** "Expand to ranks" control here at all. Not a disabled one — a
+control that can never do anything asks about a feature instead of answering
+something about this run. Confirm the server agrees the data is absent:
+
+```bash
+curl -s http://127.0.0.1:8861/api/runs/20260801-101500-libero_10_ppo_baseline/keys \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["workers"])'   # []
+```
+
+Now `.../20260801-142200-libero_10_ppo_lr3e6/metrics`. The toggle is present and
+reads `12` — three worker groups × four ranks, and hovering the count lists them.
+Tick it. What to look for, in the order it matters:
+
+- **Iteration time** and the other driver-only charts do not change. `time/step` is
+  logged by the driver, not by any rank, so there is nothing to expand. It stays a
+  single line rather than growing four flat ones at zero.
+- **Environment breakdown** (7 keys) draws its 28 rank lines faint and unlabelled,
+  with a panel note saying so. Seven metrics × four ranks cannot each get a colour
+  from an eight-slot ramp, and two same-coloured legend rows meaning different
+  metrics is worse than no legend at all.
+- Any single-key `env/*` chart — **Success rate**, **Return** — gives each rank its
+  own colour and legend row, and the aggregate entry picks up a faint `mean`. That
+  word is load-bearing: cross-rank aggregation is an arithmetic mean while the
+  driver's own timers take a max, and the two conventions sit on one page.
+- **Phase durations** keeps its aggregates and says `stacked — shown as the
+  aggregate`. Stacking asserts the bands sum to something meaningful; stacking four
+  ranks of each band would add the same seconds four times.
+
+The point of the whole feature is the last one. `rank_3` of `EnvGroup` was written
+4x slow, and the mean hides most of it:
+
+```bash
+curl -s "http://127.0.0.1:8861/api/runs/20260801-142200-libero_10_ppo_lr3e6/series?keys=time/env/interact&expand=ranks" \
+  | python -c '
+import json, sys
+d = json.load(sys.stdin)
+last = lambda s: [p["value"] for p in s["points"] if p["value"] is not None][-1]
+agg = last(d["time/env/interact"])
+per = {s["rank"]: last(s) for s in d.values() if s["rank"] is not None}
+for r in sorted(per):
+    print(f"  rank {r}: {per[r]:8.2f}")
+print(f"aggregate {agg:.2f}; slowest is {max(per.values())/min(per.values()):.2f}x "
+      f"the fastest rank but only {max(per.values())/agg:.2f}x the aggregate")'
+```
+
+Expect roughly `82 / 88 / 93 / 395`, aggregate `165`: **4.8x between cards, 2.4x
+against the mean.** Unexpanded, that page says the job got slower and nothing else.
+
+With four ranks every single-metric chart still fits the colour ramp. The other
+branch — too many lines to name, so only the extremes and the median get labels —
+needs a wider node:
+
+```bash
+python scripts/make_demo_runs.py --root /tmp/rlinf-demo --clean --ranks 8
+# restart the server: replaced event files keep their old offsets in a live process
+```
+
+Now the same charts name three lines out of eight (`lowest`, `highest`, `median`)
+and draw the rest faint, with `5 more ranks drawn unlabelled — named lines are the
+extremes and the median` on the panel.
+`--ranks 0` writes no per-worker tree at all, which is the shape of a run without
+`per_worker_log` — including moving the aggregate event files back out of
+`tensorboard/all/`.
+
+### 6. Media — a count, never a boolean
 
 Open `.../20260801-101500-libero_10_ppo_baseline/media`.
 
@@ -301,7 +377,7 @@ One mp4 tiles N environments, so an outcome is a **count**:
   `640x480`. Without it, every card reads "This clip could not be decoded" — the
   error path, distinct from "not recorded".
 
-### 6. F3.7 — compare, across runs that do not agree
+### 7. Compare — across runs that do not agree
 
 Select two runs' checkboxes in the run list and press **Compare**, or go straight
 to:
@@ -332,7 +408,7 @@ http://localhost:5273/#/compare?run=20260801-101500-libero_10_ppo_baseline&run=2
   meaningful and not be.
 - The table carries a **Step semantics** column for the same reason.
 
-### 7. Geometry must not shift when an SSE update lands
+### 8. Geometry must not shift when an SSE update lands
 
 This is the one property that cannot be checked by looking, because the page is
 correct exactly when nothing happens. Leave a run overview open for a minute with
@@ -357,7 +433,7 @@ Reconnection is native `EventSource` only. The server emits `retry:`, so there i
 no hand-rolled backoff to test — kill the server, watch the header go stale, start
 it again, and the stream comes back on its own.
 
-### 8. Degenerate inputs
+### 9. Degenerate inputs
 
 - Point the server at a path that does not exist
   (`python -m rlinf_dashboard /tmp/nope --port 8870`). The list says "The server

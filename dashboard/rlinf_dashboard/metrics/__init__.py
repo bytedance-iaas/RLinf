@@ -14,7 +14,13 @@
 
 """Time-series sources for the data plane."""
 
-from .base import MetricGateway, MetricSource
+from .base import MetricGateway, MetricSource, WorkerAwareSource, worker_label
 from .tensorboard import TensorboardSource
 
-__all__ = ["MetricGateway", "MetricSource", "TensorboardSource"]
+__all__ = [
+    "MetricGateway",
+    "MetricSource",
+    "TensorboardSource",
+    "WorkerAwareSource",
+    "worker_label",
+]

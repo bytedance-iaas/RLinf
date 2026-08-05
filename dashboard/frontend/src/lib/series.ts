@@ -30,6 +30,169 @@ export function seriesColor(index: number): string {
 }
 
 /**
+ * Server key for one rank's copy of a metric, matching `?expand=ranks`.
+ *
+ * The suffix is `@<group>/rank_<n>`, which is also the on-disk directory the
+ * numbers came from -- a legend entry doubles as the path to go and grep.
+ */
+export function rankKey(key: string, worker: string): string {
+  return `${key}@${worker}`;
+}
+
+/**
+ * How a chart can draw its ranks, given how many lines that comes to.
+ *
+ * Three modes because three different questions are being asked, and which one is
+ * answerable depends only on the line count:
+ *
+ * * `distinct` -- few enough lines that every rank gets its own colour and legend
+ *   entry. "Compare the ranks."
+ * * `outliers` -- too many to colour, but one metric, so the lowest, highest and
+ *   median can be named against it. "Is any rank an outlier?"
+ * * `bundle` -- too many, and several metrics. Nothing is named: the notable
+ *   palette would have to repeat across metrics, and two legend entries of the
+ *   same colour meaning different metrics is the ambiguity the cap exists to
+ *   avoid. The bundle's width is still the answer to "how tight is the spread".
+ *
+ * Decided once per chart rather than per metric, so two metrics in one panel are
+ * never drawn under two different conventions.
+ */
+export type RankMode = "distinct" | "outliers" | "bundle";
+
+/**
+ * @param keyCount How many aggregate series the chart draws.
+ * @param rankLineCount How many rank lines will be drawn across all of them.
+ *   A count rather than a rank count, because a worker that never logged one of
+ *   the chart's keys contributes no line for it.
+ */
+export function rankMode(keyCount: number, rankLineCount: number): RankMode {
+  // Aggregates and rank lines share the eight-slot ramp. Past it `seriesColor`
+  // cycles, and two ranks drawn in the same colour make a legend that cannot
+  // answer "which one is rank 9" -- worse than no colours, which is what the other
+  // two modes do instead.
+  if (keyCount + rankLineCount <= SERIES_COLORS.length) return "distinct";
+  return keyCount === 1 ? "outliers" : "bundle";
+}
+
+/**
+ * Which of `workers` actually logged `metric`.
+ *
+ * Not every worker logs every metric: `env/*` comes from the env group alone, so
+ * an actor rank has no series for it and the server omits it rather than sending
+ * an empty one. Narrowing here keeps a chart from spending a colour and a legend
+ * entry on a line that would be drawn flat at the axis for a metric that group
+ * does not measure.
+ */
+export function workersWith(
+  metric: string,
+  workers: string[],
+  series: Record<string, Series>,
+): string[] {
+  return workers.filter((worker) => series[rankKey(metric, worker)] !== undefined);
+}
+
+/** One line in an expanded chart. */
+export interface RankLine {
+  /** Server key: `rankKey(metric, worker)`. */
+  key: string;
+  /** The metric this rank is a breakdown of. */
+  metric: string;
+  /** Worker label, e.g. `EnvGroup/rank_3`. */
+  worker: string;
+  color: string;
+  /**
+   * Whether this line is a subject of the chart or context for it.
+   *
+   * `false` puts it in the bundle: drawn, but with no legend entry and no
+   * tooltip row. See `bundleRanks` for why a wide bundle is drawn that way.
+   */
+  legend: boolean;
+  /** Why it was singled out, for the legend's title text. */
+  note?: string;
+}
+
+/**
+ * Palette for the named lines in `outliers` mode.
+ *
+ * Fixed rather than taken from the ramp by position: these three are picked by
+ * *role*, and the reader has to be able to learn "amber is the slowest rank" once
+ * and have it hold across every chart on the page.
+ */
+const NOTABLE_COLORS = [
+  "var(--color-series-5)",
+  "var(--color-series-3)",
+  "var(--color-series-2)",
+] as const;
+
+/**
+ * Decide how to draw N ranks of one metric.
+ *
+ * In `distinct` mode every rank gets its own colour and its own legend entry. In
+ * the other two the bundle is drawn faint -- the rest are still drawn, because the
+ * shape of the bundle is how you see whether it is one straggler or a wide spread
+ * -- and `outliers` additionally names the lowest, highest and median.
+ *
+ * `colorOffset` is the first ramp slot this metric's ranks may use, so a chart can
+ * lay several metrics' ranks side by side without two lines sharing a colour.
+ *
+ * `workers` must already be narrowed to those that logged `metric` -- see
+ * `workersWith`. A worker without the key would otherwise take a colour, a legend
+ * entry and a flat line at the axis for a metric it does not measure.
+ */
+export function bundleRanks(
+  metric: string,
+  workers: string[],
+  series: Record<string, Series>,
+  options: { colorOffset?: number; mode?: RankMode } = {},
+): RankLine[] {
+  const colorOffset = options.colorOffset ?? 1;
+  const mode = options.mode ?? rankMode(1, workers.length);
+
+  if (mode === "distinct") {
+    return workers.map((worker, index) => ({
+      key: rankKey(metric, worker),
+      metric,
+      worker,
+      color: seriesColor(colorOffset + index),
+      legend: true,
+    }));
+  }
+
+  const notable = new Map<string, string>();
+  if (mode === "outliers") {
+    const ranked = workers
+      .map((worker) => ({ worker, value: lastValue(series[rankKey(metric, worker)]) }))
+      .filter((entry): entry is { worker: string; value: number } => entry.value !== null)
+      .sort((a, b) => a.value - b.value);
+    if (ranked.length > 0) {
+      notable.set((ranked[0] as { worker: string }).worker, "lowest");
+      notable.set((ranked[ranked.length - 1] as { worker: string }).worker, "highest");
+      // Set after the extremes, so a median that collides with one of them keeps
+      // the more informative label rather than overwriting it.
+      const middle = (ranked[Math.floor(ranked.length / 2)] as { worker: string }).worker;
+      if (!notable.has(middle)) notable.set(middle, "median");
+    }
+  }
+
+  let taken = 0;
+  return workers.map((worker) => {
+    const note = notable.get(worker);
+    if (note === undefined) {
+      return {
+        key: rankKey(metric, worker),
+        metric,
+        worker,
+        color: "var(--color-text-faint)",
+        legend: false,
+      };
+    }
+    const color = NOTABLE_COLORS[taken % NOTABLE_COLORS.length] as string;
+    taken += 1;
+    return { key: rankKey(metric, worker), metric, worker, color, legend: true, note };
+  });
+}
+
+/**
  * Resolve a `var(--...)` token to a literal colour.
  *
  * uPlot draws to a canvas, and canvas `strokeStyle` does not understand CSS custom

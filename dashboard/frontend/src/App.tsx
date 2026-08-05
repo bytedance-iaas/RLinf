@@ -116,19 +116,23 @@ export function App() {
   );
   const template = templateQuery.data;
 
-  const keysQuery = useFetch<string[]>(
+  // Keys and workers come from one response: both describe what this run logged,
+  // and the drill-down toggle must not appear a request later than the charts.
+  const keysQuery = useFetch<{ keys: string[]; workers: string[] }>(
     useCallback(
-      async (signal) => (runId ? (await api.keys(runId, signal)).keys : []),
+      async (signal) =>
+        runId ? await api.keys(runId, signal) : { keys: [], workers: [] },
       [runId],
     ),
     [runId, dataVersion],
   );
+  const workers = keysQuery.data?.workers ?? [];
 
   // The overview's watch set: enough series to run the metric-side checks without
   // pulling every key of a long run into the page that has to be legible in five
   // seconds. The deep-dive view checks everything it renders.
   const watchKeys = useMemo(
-    () => watchSetKeys(template, new Set(keysQuery.data ?? [])),
+    () => watchSetKeys(template, new Set(keysQuery.data?.keys ?? [])),
     [template, keysQuery.data],
   );
   const watchQuery = useFetch<Record<string, Series>>(
@@ -268,6 +272,7 @@ export function App() {
             templateError: templateQuery.error,
             watchSeries,
             watchKeys,
+            workers,
             signals,
             dataVersion,
             now,
@@ -318,6 +323,8 @@ interface RenderArgs {
   templateError: string | null;
   watchSeries: Record<string, Series>;
   watchKeys: string[];
+  /** `(group, rank)` labels with per-worker metrics; empty for most runs. */
+  workers: string[];
   signals: ReturnType<typeof collectSignals>;
   dataVersion: number;
   now: number;
@@ -382,6 +389,7 @@ function renderRoute(args: RenderArgs) {
           template={args.template}
           templateError={args.templateError}
           dataVersion={args.dataVersion}
+          workers={args.workers}
         />
       );
     case "media":

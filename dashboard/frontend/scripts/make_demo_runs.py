@@ -23,6 +23,10 @@ exercise the cases that only appear with history:
 * multi-run compare, which needs a second run to overlay;
 * the client-side metric signals -- a step time that doubles, an eval that
   plateaus, a NaN in a series -- none of which a one-point run can contain;
+* the per-worker drill-down, which needs a run written with
+  ``runner.per_worker_log: true`` and at least one rank behaving differently from
+  the others -- a tree where every rank agrees cannot show whether the expansion
+  works, because the aggregate already answers the question;
 * the four lifecycle states other than ``finished``, and the health verdicts that
   only a *running* snapshot can produce.
 
@@ -203,6 +207,67 @@ def _write_scalars(log_dir: str, series: dict[str, list[float]], t0: float) -> N
             )
             writer.add_event(event)
     writer.close()
+
+
+def _write_worker_scalars(
+    worker_root: str,
+    series: dict[str, list[float]],
+    t0: float,
+    ranks: int,
+    straggler: int,
+) -> None:
+    """Break a few series out per ``(group, rank)``, as ``per_worker_log`` does.
+
+    Mirrors the layout `MetricLogger._get_scoped_logger` writes --
+    ``<root>/<group>/rank_<n>/tensorboard`` -- because that path *is* the index the
+    server globs for; there is no manifest listing of ranks to fake instead.
+
+    Only the groups that really log each namespace get it: `env/*` comes from the
+    env workers alone, so an actor rank has no series for it. Leaving those absent
+    rather than writing zeros is the fixture's job, since "absent" is exactly the
+    case the frontend has to be seen not drawing a line for.
+
+    One rank is made slow on purpose. A fixture where every rank agrees cannot show
+    whether the drill-down works: the aggregate mean already answers it. The whole
+    claim is that one card lagging is visible per-rank and washed out in the mean.
+
+    The per-rank factors are normalised to average to 1, so the ranks written here
+    really do average to the aggregate curve already on disk -- which is what
+    `_aggregate_numeric_metrics` produces on the training side. Skipping that step
+    leaves the aggregate as the *unskewed* curve, and then the fixture shows the
+    straggler at 4.4x the aggregate instead of 2.3x: it would make the drill-down
+    look less necessary than it is, by making the mean look like it caught the
+    problem.
+    """
+    scoped = {
+        "EnvGroup": [k for k in series if k.startswith(("env/", "time/env/"))],
+        "RolloutGroup": [k for k in series if k.startswith("time/rollout/")],
+        "ActorGroup": [k for k in series if k.startswith("time/actor/")],
+    }
+    # A spread wide enough to be visible but not so wide it looks like a different
+    # metric, plus a 4x tail on the straggler's timings -- then divided by their own
+    # mean so the ranks average back to the aggregate.
+    spread = [1.0 + (rank - (ranks - 1) / 2) * 0.06 for rank in range(ranks)]
+    heavy = [4.0 if rank == straggler else 1.0 for rank in range(ranks)]
+    timing = [s * h for s, h in zip(spread, heavy)]
+    timing = [f / (sum(timing) / ranks) for f in timing]
+
+    for group, keys in scoped.items():
+        if not keys:
+            continue
+        for rank in range(ranks):
+            per_rank = {
+                key: [
+                    value * (timing[rank] if key.startswith("time/") else spread[rank])
+                    for value in series[key]
+                ]
+                for key in keys
+            }
+            _write_scalars(
+                os.path.join(worker_root, group, f"rank_{rank}", "tensorboard"),
+                per_rank,
+                t0,
+            )
 
 
 def _curves(
@@ -422,11 +487,19 @@ def make_run(
     with_media: bool = True,
     semantics: str = "rl_iteration",
     drop_critic: bool = False,
+    per_worker_ranks: int = 0,
 ) -> None:
     """Write one run tree: manifest, snapshot, events, checkpoints, media, scalars."""
     log_path = os.path.join(root, experiment)
     run_root = os.path.join(log_path, "_rlinf", "runs", run_id)
+    # With `per_worker_log` on, the real writer puts the aggregate bundle under an
+    # `all/` subdirectory (`MetricLogger` passes `log_path_suffix="all"`), so the
+    # fixture has to as well -- otherwise it would not reproduce the layout the
+    # path-recovery fix in 9ad4dd81 exists for.
     tb_dir = os.path.join(log_path, "tensorboard")
+    if per_worker_ranks:
+        tb_dir = os.path.join(tb_dir, "all")
+    worker_root = os.path.join(log_path, "worker_logs") if per_worker_ranks else None
     video_root = os.path.join(log_path, "video")
     ckpt_root = os.path.join(log_path, "checkpoints")
     for path in (run_root, tb_dir, ckpt_root):
@@ -448,6 +521,14 @@ def make_run(
         tb_dir, {k: v for k, v in series.items() if not k.startswith("eval/")}, t0
     )
     _write_eval_sparse(tb_dir, series, steps, t0)
+    if worker_root is not None:
+        _write_worker_scalars(
+            worker_root,
+            {k: v for k, v in series.items() if not k.startswith("eval/")},
+            t0,
+            per_worker_ranks,
+            straggler=per_worker_ranks - 1,
+        )
 
     step_times = series["time/step"]
     recent = step_times[-8:]
@@ -488,6 +569,11 @@ def make_run(
             "video_root": video_root,
             "checkpoint_root": ckpt_root,
             "run_root": run_root,
+            # Recorded only when per-worker logging is on, matching
+            # `RunStateReporter._worker_log_root`. A reader must not guess it from
+            # `log_path`: every embodied example config shares `../results`, so a
+            # guessed path makes one run advertise another's ranks.
+            "worker_logs": worker_root,
         },
         "metric_aliases": {
             "actor/training/": "train/actor/",
@@ -740,6 +826,19 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--ranks",
+        type=int,
+        default=4,
+        help=(
+            "How many ranks per worker group to write for the one run that has "
+            "per-worker logging on. 4 matches a single H20 node and leaves every "
+            "single-metric chart inside the eight-slot colour ramp; 8 or more "
+            "pushes past it, which is how the drill-down's outlier mode -- only "
+            "the extremes and the median get names -- becomes reachable. Set 0 to "
+            "write no per-worker tree at all."
+        ),
+    )
+    parser.add_argument(
         "--touch",
         action="store_true",
         help=(
@@ -777,6 +876,12 @@ def main() -> int:
         max_steps=200,
         components=False,
     )
+    # Also the per-worker run. Its step time degrades, which is precisely the
+    # situation where "is the whole job slow, or is one card holding it up?" is the
+    # question -- and the aggregate is an arithmetic mean across ranks, so one card
+    # at 4x shows up as only ~1.75x there. Four ranks over three groups gives the
+    # drill-down twelve extra event directories to find, and `env/*` on the env
+    # group alone gives it the absent-not-empty case.
     make_run(
         args.root,
         "20260801-142200-libero_10_ppo_lr3e6",
@@ -788,6 +893,7 @@ def main() -> int:
         components=True,
         plateau_from=45,
         step_time_doubles=True,
+        per_worker_ranks=args.ranks,
     )
     # No horizon: the progress card must render indeterminate rather than a
     # fabricated percentage.

@@ -1032,6 +1032,13 @@ input[type="range"] {
   accent-color: var(--color-primary);
 }
 
+/* The browser default is a light box with a blue tick, which on a dark surface is
+ * the brightest thing on the page. Tokenised so a control is never louder than the
+ * data it controls. */
+input[type="checkbox"] {
+  accent-color: var(--color-primary);
+}
+
 .control-value {
   min-width: 3.5ch;
   font-family: var(--font-jetbrains-mono);

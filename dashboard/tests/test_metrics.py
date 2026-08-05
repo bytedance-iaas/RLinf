@@ -100,6 +100,41 @@ def test_the_log_dir_falls_back_to_log_path_over_tensorboard(tmp_path, settings_
     assert TensorboardSource(settings_for()).available(manifest)
 
 
+def test_a_per_worker_run_is_read_from_the_all_subdirectory(tmp_path, settings_for):
+    """``runner.per_worker_log: true`` moves the aggregate bundle down a level.
+
+    ``MetricLogger`` passes ``log_path_suffix="all"`` for the driver's own bundle
+    so the per-rank ones can live beside it, and manifests written before that
+    was recorded name the parent. The parent exists and holds only the ``all``
+    directory, so without this the run renders with every metric absent and no
+    field saying why -- the same failure shape as an unrelocated path.
+    """
+    log_dir = tmp_path / "logs" / "tensorboard"
+    write_event_file(str(log_dir / "all"), {"env/success_once": [(0, 0.4)]})
+    manifest = _manifest(tmp_path)  # records the parent, not `all/`
+    source = TensorboardSource(settings_for())
+
+    assert source.available(manifest)
+    series = source.read(manifest, ["env/success_once"])["env/success_once"]
+    assert series.points[-1].value == pytest.approx(0.4)
+
+
+def test_the_parent_wins_over_all_when_both_hold_event_files(tmp_path, settings_for):
+    """The recorded directory is authoritative.
+
+    A resumed run can leave event files in both places (one launch with
+    ``per_worker_log`` off, a later one with it on). Preferring ``all/`` would
+    silently switch which launch's curve is shown; the negative control for the
+    test above is that the fallback stays a fallback.
+    """
+    log_dir = tmp_path / "logs" / "tensorboard"
+    write_event_file(str(log_dir), {"env/return": [(0, 1.0)]})
+    write_event_file(str(log_dir / "all"), {"env/return": [(0, 99.0)]})
+
+    series = TensorboardSource(settings_for()).read(_manifest(tmp_path), ["env/return"])
+    assert series["env/return"].points[-1].value == pytest.approx(1.0)
+
+
 def test_a_growing_event_file_is_picked_up(tmp_path, settings_for):
     """A live run appends while the dashboard polls.
 
@@ -125,6 +160,216 @@ def test_an_unknown_key_is_absent_rather_than_empty(tmp_path, settings_for):
     write_event_file(str(tmp_path / "logs" / "tensorboard"), {"env/return": [(0, 1.0)]})
     out = TensorboardSource(settings_for()).read(_manifest(tmp_path), ["nope/nope"])
     assert out == {}
+
+
+# ---------------------------------------------------------------- per-worker
+
+
+def _write_worker_tree(tmp_path, tree: dict[tuple[str, int], dict]) -> None:
+    """Write per-rank bundles the way ``MetricLogger._get_scoped_logger`` does."""
+    root = tmp_path / "logs" / "worker_logs"
+    for (group, rank), series in tree.items():
+        write_event_file(str(root / group / f"rank_{rank}" / "tensorboard"), series)
+
+
+def _per_worker_manifest(tmp_path, **extra) -> RunManifest:
+    return _manifest(
+        tmp_path,
+        paths={
+            "log_path": str(tmp_path / "logs"),
+            "tensorboard": str(tmp_path / "logs" / "tensorboard" / "all"),
+            "worker_logs": str(tmp_path / "logs" / "worker_logs"),
+        },
+        **extra,
+    )
+
+
+def test_workers_are_discovered_from_the_recorded_root(tmp_path, settings_for):
+    """``(group, rank)`` comes out of the path, so no second index is needed.
+
+    ``MetricLogger`` writes ``<worker_logs>/<Group>/rank_<n>/tensorboard/``, so
+    the two dimensions are recoverable by globbing. Sorted, because readdir order
+    is not stable and an unstable order would reshuffle chart colours per poll.
+    """
+    _write_worker_tree(
+        tmp_path,
+        {
+            ("EnvGroup", 1): {"env/success_once": [(0, 0.3)]},
+            ("EnvGroup", 0): {"env/success_once": [(0, 0.1)]},
+            ("ActorGroup", 0): {"train/actor/loss": [(0, 2.0)]},
+        },
+    )
+    source = TensorboardSource(settings_for())
+    assert source.workers(_per_worker_manifest(tmp_path)) == [
+        ("ActorGroup", 0),
+        ("EnvGroup", 0),
+        ("EnvGroup", 1),
+    ]
+
+
+def test_no_worker_root_means_no_drill_down(tmp_path, settings_for):
+    """``per_worker_log`` is off by default, so this is the common case.
+
+    The manifest omits ``worker_logs``, and a tree is left at the location a
+    reader would guess -- ``<log_path>/worker_logs``, which is the default
+    ``MetricLogger`` writes to. That is not a contrived fixture: every embodied
+    example config sets ``log_path: "../results"``, so one run with the flag on
+    leaves ranks in the directory the *next* run would be guessed to own. Only
+    the recorded path may be trusted, or run B advertises run A's cards.
+    """
+    write_event_file(str(tmp_path / "logs" / "tensorboard"), {"env/return": [(0, 1.0)]})
+    _write_worker_tree(tmp_path, {("EnvGroup", 0): {"env/return": [(0, 9.0)]}})
+
+    source = TensorboardSource(settings_for())
+    assert source.workers(_manifest(tmp_path)) == []
+    assert source.read_workers(_manifest(tmp_path), ["env/return"]) == {}
+
+
+def test_each_rank_keeps_its_own_values(tmp_path, settings_for):
+    """The point of the feature: one line per rank, not their mean.
+
+    The aggregate is an arithmetic mean across ranks
+    (``_aggregate_numeric_metrics``), so "one card in four is four times slower"
+    shows up there as merely 1.75x. Only the per-rank series can answer which card.
+    """
+    _write_worker_tree(
+        tmp_path,
+        {
+            ("EnvGroup", 0): {"time/step": [(0, 10.0), (1, 10.0)]},
+            ("EnvGroup", 1): {"time/step": [(0, 40.0), (1, 41.0)]},
+        },
+    )
+    out = TensorboardSource(settings_for()).read_workers(
+        _per_worker_manifest(tmp_path), ["time/step"]
+    )
+
+    by_rank = {series.rank: series for series in out["time/step"]}
+    assert by_rank[0].points[-1].value == pytest.approx(10.0)
+    assert by_rank[1].points[-1].value == pytest.approx(41.0)
+    assert all(series.group == "EnvGroup" for series in out["time/step"])
+
+
+def test_a_group_that_never_logged_a_key_is_absent_not_zero(tmp_path, settings_for):
+    """Only the env group logs ``env/*``; the actor group logs none of it.
+
+    Returning an empty series for the actor group would draw a flat line at the
+    axis for a metric it does not measure -- a chart that lies rather than one
+    with a missing line.
+    """
+    _write_worker_tree(
+        tmp_path,
+        {
+            ("EnvGroup", 0): {"env/success_once": [(0, 0.5)]},
+            ("ActorGroup", 0): {"train/actor/loss": [(0, 2.0)]},
+        },
+    )
+    out = TensorboardSource(settings_for()).read_workers(
+        _per_worker_manifest(tmp_path), ["env/success_once"]
+    )
+    assert [(s.group, s.rank) for s in out["env/success_once"]] == [("EnvGroup", 0)]
+
+
+def test_an_empty_rank_directory_is_not_a_worker(tmp_path, settings_for):
+    """A bundle's ``tensorboard`` directory is created eagerly on first use.
+
+    So an empty one means that rank logged nothing, and offering it as a line
+    would put an entry in the legend that can never draw.
+    """
+    _write_worker_tree(tmp_path, {("EnvGroup", 0): {"env/return": [(0, 1.0)]}})
+    (tmp_path / "logs" / "worker_logs" / "EnvGroup" / "rank_1" / "tensorboard").mkdir(
+        parents=True
+    )
+    assert TensorboardSource(settings_for()).workers(
+        _per_worker_manifest(tmp_path)
+    ) == [("EnvGroup", 0)]
+
+
+def test_a_non_rank_directory_is_skipped(tmp_path, settings_for):
+    """Only ``rank_<int>`` is a rank. Anything else is not guessed at.
+
+    ``step_1`` is the interesting name here, not ``notes``: it is the case where
+    a reader that only tried to parse an integer off the end of the name -- and
+    did not first require the ``rank_`` prefix -- would take the digit after the
+    fifth character and invent "rank 1" out of a directory that is not a rank at
+    all. That would put a line on a chart attributed to a card that never logged
+    it, which is worse than omitting it.
+    """
+    _write_worker_tree(tmp_path, {("EnvGroup", 0): {"env/return": [(0, 1.0)]}})
+    for name in ("notes", "step_1"):
+        write_event_file(
+            str(tmp_path / "logs" / "worker_logs" / "EnvGroup" / name / "tensorboard"),
+            {"env/return": [(0, 5.0)]},
+        )
+    assert TensorboardSource(settings_for()).workers(
+        _per_worker_manifest(tmp_path)
+    ) == [("EnvGroup", 0)]
+
+
+def test_per_worker_series_resolve_legacy_key_aliases(tmp_path, settings_for):
+    """The drill-down must not lose the alias window the aggregate path has.
+
+    An older run wrote ``actor/training/loss`` into its per-rank bundles too, and
+    a template asking for the canonical name has to find it there as well or the
+    breakdown is empty for exactly the runs that most need explaining.
+    """
+    _write_worker_tree(
+        tmp_path, {("ActorGroup", 0): {"actor/training/loss": [(0, 2.0), (1, 1.5)]}}
+    )
+    gateway = MetricGateway(settings_for(), sources=[TensorboardSource(settings_for())])
+
+    out = gateway.read_workers(_per_worker_manifest(tmp_path), ["train/actor/loss"])
+    series = out["train/actor/loss"][0]
+    assert series.key == "train/actor/loss"
+    assert series.points[-1].value == pytest.approx(1.5)
+
+
+def test_the_gateway_labels_workers_by_their_directory(tmp_path, settings_for):
+    """The label is the on-disk spelling, so a legend entry is also a path to grep."""
+    _write_worker_tree(tmp_path, {("EnvGroup", 3): {"env/return": [(0, 1.0)]}})
+    gateway = MetricGateway(settings_for(), sources=[TensorboardSource(settings_for())])
+    assert gateway.workers(_per_worker_manifest(tmp_path)) == ["EnvGroup/rank_3"]
+
+
+def test_a_source_that_cannot_break_out_ranks_is_skipped(tmp_path, settings_for):
+    """Per-worker reading is an optional capability, not part of every source.
+
+    Breaking a series out per rank needs the ranks to be addressable. A source
+    that knows a run only by name cannot address one, and forcing it to declare a
+    stub returning nothing would put that emptiness behind the same call the real
+    answer comes from. The gateway asks whoever can answer instead.
+    """
+    plain = _FakeSource("plain", {"env/return": [(0, 1.0)]})
+    gateway = MetricGateway(settings_for(), sources=[plain])
+    assert gateway.workers(_manifest(tmp_path)) == []
+    assert gateway.read_workers(_manifest(tmp_path), ["env/return"]) == {}
+
+
+def test_per_worker_series_are_decimated_like_any_other(tmp_path, settings_for):
+    """Four ranks of a long run is four times the points of one.
+
+    The point cap exists because a browser cannot draw an unbounded series; the
+    breakdown is the case that most needs it, so skipping decimation here would
+    make the feature the one that blows the page up.
+    """
+    _write_worker_tree(
+        tmp_path,
+        {
+            ("EnvGroup", 0): {
+                "env/return": [(step, float(step)) for step in range(3000)]
+            }
+        },
+    )
+    gateway = MetricGateway(
+        settings_for(max_series_points=100),
+        sources=[TensorboardSource(settings_for())],
+    )
+
+    series = gateway.read_workers(_per_worker_manifest(tmp_path), ["env/return"])[
+        "env/return"
+    ][0]
+    assert series.decimated is True
+    assert series.total_points == 3000
+    assert series.points[-1].step == 2999
 
 
 def test_a_corrupt_event_file_does_not_raise(tmp_path, settings_for):

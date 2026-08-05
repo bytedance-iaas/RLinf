@@ -209,6 +209,15 @@ export interface Series {
   source: string;
   decimated: boolean;
   total_points: number;
+  /**
+   * Worker group, on a series from `?expand=ranks`. `null` on the aggregate.
+   *
+   * The aggregate is a mean across ranks, so these two fields are what let the
+   * UI say *which* rank, rather than only that the mean moved.
+   */
+  group: string | null;
+  /** Rank within `group`. `null` on the aggregate. */
+  rank: number | null;
 }
 
 export interface MediaEntry {

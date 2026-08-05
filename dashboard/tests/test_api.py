@@ -237,6 +237,102 @@ def test_series_requires_at_least_one_key(client):
     assert client.get("/api/runs/api-run/series").status_code == 422
 
 
+# ---------------------------------------------------------------- per-worker
+
+
+@pytest.fixture
+def per_worker_client(tmp_path, run_tree, settings_for):
+    """A run with ``per_worker_log`` on: an ``all/`` bundle plus two ranks."""
+    logs = tmp_path / "logs"
+    write_event_file(
+        str(logs / "tensorboard" / "all"),
+        {"time/step": [(0, 25.0), (1, 25.5)]},
+    )
+    for rank, values in ((0, 10.0), (1, 40.0)):
+        write_event_file(
+            str(logs / "worker_logs" / "EnvGroup" / f"rank_{rank}" / "tensorboard"),
+            {"time/step": [(0, values), (1, values + 1)]},
+        )
+    run_tree(
+        "pw-run",
+        manifest={
+            "paths": {
+                "log_path": str(logs),
+                "tensorboard": str(logs / "tensorboard" / "all"),
+                "worker_logs": str(logs / "worker_logs"),
+            }
+        },
+        snapshot=_snapshot(run_id="pw-run"),
+    )
+    with TestClient(create_app(settings_for())) as test_client:
+        yield test_client
+
+
+def test_keys_advertises_the_runs_workers(per_worker_client):
+    """The UI offers the drill-down only when there is something to drill into."""
+    body = per_worker_client.get("/api/runs/pw-run/keys").json()
+    assert body["workers"] == ["EnvGroup/rank_0", "EnvGroup/rank_1"]
+
+
+def test_keys_reports_no_workers_without_per_worker_logging(client):
+    """The default. An always-present control that comes back empty is worse."""
+    assert client.get("/api/runs/api-run/keys").json()["workers"] == []
+
+
+def test_expanding_ranks_adds_series_beside_the_aggregate(per_worker_client):
+    """The aggregate keeps its own key; each rank gets a suffixed one.
+
+    One flat map rather than a nested document, so a caller that ignores
+    ``expand`` sees exactly the response it saw before this feature existed.
+    """
+    body = per_worker_client.get(
+        "/api/runs/pw-run/series?keys=time/step&expand=ranks"
+    ).json()
+    assert set(body) == {
+        "time/step",
+        "time/step@EnvGroup/rank_0",
+        "time/step@EnvGroup/rank_1",
+    }
+    # The aggregate is the driver's own value, not recomputed from the ranks.
+    assert body["time/step"]["points"][-1]["value"] == pytest.approx(25.5)
+    assert body["time/step@EnvGroup/rank_1"]["points"][-1]["value"] == pytest.approx(
+        41.0
+    )
+    assert body["time/step@EnvGroup/rank_1"]["group"] == "EnvGroup"
+    assert body["time/step@EnvGroup/rank_1"]["rank"] == 1
+
+
+def test_series_without_expand_is_unchanged(per_worker_client):
+    """The negative control for the test above: opt-in, and off by default.
+
+    A page that suddenly returns 4x the series for every chart would be a silent
+    cost increase on every run that happens to have the flag on.
+    """
+    body = per_worker_client.get("/api/runs/pw-run/series?keys=time/step").json()
+    assert set(body) == {"time/step"}
+    assert body["time/step"]["group"] is None
+    assert body["time/step"]["rank"] is None
+
+
+def test_expanding_a_run_with_no_worker_logs_is_not_an_error(client):
+    """Asking to expand a run that cannot is the aggregate alone, not a 4xx.
+
+    A bookmarked URL with ``expand=ranks`` must keep working when it is opened on
+    a run launched without the flag.
+    """
+    response = client.get("/api/runs/api-run/series?keys=env/success_once&expand=ranks")
+    assert response.status_code == 200
+    assert set(response.json()) == {"env/success_once"}
+
+
+def test_an_unknown_expand_value_is_rejected(per_worker_client):
+    """A typo must fail loudly rather than silently return the aggregate."""
+    response = per_worker_client.get(
+        "/api/runs/pw-run/series?keys=time/step&expand=rank"
+    )
+    assert response.status_code == 422
+
+
 # -------------------------------------------------------------------------- template
 
 

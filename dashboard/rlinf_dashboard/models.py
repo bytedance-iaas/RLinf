@@ -302,6 +302,13 @@ class Series(_Lenient):
     #: True when decimation dropped points, so the UI can say "sampled".
     decimated: bool = False
     total_points: int = 0
+    #: Which worker group produced this series, for a per-rank breakdown. ``None``
+    #: on the aggregate series -- the one every chart shows by default -- so an
+    #: unexpanded response is byte-identical to one from a server without the
+    #: breakdown at all.
+    group: str | None = None
+    #: The rank within that group. ``None`` on the aggregate series.
+    rank: int | None = None
 
 
 class MediaEntry(_Lenient):

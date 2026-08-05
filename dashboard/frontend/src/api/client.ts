@@ -63,7 +63,7 @@ export const api = {
     get<RunTemplate>(`/api/runs/${encodeURIComponent(runId)}/template`, signal),
 
   keys: (runId: string, signal?: AbortSignal) =>
-    get<{ keys: string[]; sources: string[] }>(
+    get<{ keys: string[]; sources: string[]; workers: string[] }>(
       `/api/runs/${encodeURIComponent(runId)}/keys`,
       signal,
     ),
@@ -73,11 +73,22 @@ export const api = {
    *
    * `keys` is a repeated query parameter, not a comma-joined list -- a metric key
    * may legitimately contain a comma, and the server declares `list[str]`.
+   *
+   * `expandRanks` adds one series per `(worker group, rank)` beside each
+   * aggregate, keyed `"<key>@<group>/rank_<n>"`. Off by default: it multiplies the
+   * response by the rank count, and only runs with `runner.per_worker_log: true`
+   * have anything to expand.
    */
-  series: async (runId: string, keys: string[], signal?: AbortSignal) => {
+  series: async (
+    runId: string,
+    keys: string[],
+    signal?: AbortSignal,
+    expandRanks = false,
+  ) => {
     if (keys.length === 0) return {};
     const params = new URLSearchParams();
     for (const key of keys) params.append("keys", key);
+    if (expandRanks) params.set("expand", "ranks");
     return get<Record<string, Series>>(
       `/api/runs/${encodeURIComponent(runId)}/series?${params}`,
       signal,

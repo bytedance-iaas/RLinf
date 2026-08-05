@@ -66,7 +66,13 @@ logger = logging.getLogger(__name__)
 #: Paths whose value is a directory or file on the machine that ran the job.
 #: ``run_root`` is excluded: it is the evidence used to derive the mapping, and
 #: discovery's on-disk value for it is already correct by construction.
-_RELOCATABLE = ("log_path", "tensorboard", "video_root", "checkpoint_root")
+_RELOCATABLE = (
+    "log_path",
+    "tensorboard",
+    "worker_logs",
+    "video_root",
+    "checkpoint_root",
+)
 
 
 def derive_prefix(
