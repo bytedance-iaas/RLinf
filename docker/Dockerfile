@@ -120,10 +120,14 @@ RUN if [ "$NO_MIRROR" != "1" ]; then \
 # Python / pip / uv setup
 ##################################################################################################
 
+# Both indexes stay on Aliyun, matching install.sh's setup_mirror. The
+# Volcengine PyPI mirror only carries upstream PyPI projects, so RLinf's own
+# releases (rlinf-openpi, rlinf-transformer-openpi, rlinf_latex2sympy2) resolve
+# to "not found" there and the build fails partway through.
 ENV PIP_INDEX=${NO_MIRROR:+"https://pypi.org/simple/"}
-ENV PIP_INDEX=${PIP_INDEX:-"https://mirrors.ivolces.com/pypi/simple/"}
+ENV PIP_INDEX=${PIP_INDEX:-"https://mirrors.aliyun.com/pypi/simple"}
 ENV UV_DEFAULT_INDEX=${NO_MIRROR:+"https://pypi.org/simple/"}
-ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-"https://mirrors.ivolces.com/pypi/simple/"}
+ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-"https://mirrors.aliyun.com/pypi/simple"}
 ENV INSTALL_MIRROR_OPTION=${NO_MIRROR:+" "}
 ENV INSTALL_MIRROR_OPTION=${INSTALL_MIRROR_OPTION:-"--use-mirror"}
 ENV HF_ENDPOINT=${NO_MIRROR:+"https://huggingface.co"}
