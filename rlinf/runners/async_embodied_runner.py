@@ -285,3 +285,5 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         env_handle.wait()
         rollout_handle.wait()
         actor_handle.wait()
+
+        self._finish_run()
