@@ -63,6 +63,7 @@ class EnvWorker(Worker):
         self.train_video_cnt = 0
         self.eval_video_cnt = 0
         self.should_stop = False
+        self._global_step: int | None = None
 
         self.env_list = []
         self.eval_env_list = []
@@ -256,6 +257,48 @@ class EnvWorker(Worker):
                 self.history_lengths = [{} for _ in range(self.stage_num)]
 
         self._init_env()
+        self._attach_media_index()
+
+    def _attach_media_index(self):
+        """Give each video-recording env a shard of the control-plane media index.
+
+        One shard per worker rank keeps every index file single-writer. Only a
+        writer is attached here, never a ``RunStateReporter``: a reporter in this
+        process would start a second heartbeat thread and overwrite the driver's
+        ``run.json``.
+        """
+        from rlinf.utils.run_state import build_media_index
+
+        train_video = self.cfg.env.train.video_cfg.get("save_video", False)
+        eval_video = self.cfg.env.eval.video_cfg.get("save_video", False)
+        if not (train_video or eval_video):
+            return
+
+        media_index = build_media_index(self.cfg, shard=self._rank)
+        if media_index is None:
+            return
+
+        env_lists = []
+        if train_video:
+            env_lists.extend(self.env_list)
+        if eval_video:
+            env_lists.extend(self.eval_env_list)
+        for env in env_lists:
+            setter = get_env_attr(env, "set_media_index")
+            if callable(setter):
+                setter(media_index, self._rank)
+
+    def set_global_step(self, global_step: int):
+        """Tell the recording wrappers which step upcoming videos belong to.
+
+        Mirrors the existing ``set_global_step`` on the actor and rollout
+        workers, so the driver can call it the same way.
+        """
+        self._global_step = global_step
+        for env in list(self.env_list) + list(self.eval_env_list):
+            setter = get_env_attr(env, "set_global_step")
+            if callable(setter):
+                setter(global_step)
 
     def update_env_cfg(self):
         if self.enable_train:
@@ -733,14 +776,17 @@ class EnvWorker(Worker):
                 if self.cfg.env.train.video_cfg.save_video:
                     flush_video = get_env_attr(self.env_list[i], "flush_video")
                     if callable(flush_video):
-                        flush_video()
+                        # `split=` rather than `video_sub_dir=`: the label belongs
+                        # in the media index, and passing a sub-directory here
+                        # would move where videos land for every existing run.
+                        flush_video(split=mode)
                 self.env_list[i].update_reset_state_ids()
         elif mode == "eval":
             for i in range(self.stage_num):
                 if self.cfg.env.eval.video_cfg.save_video:
                     flush_video = get_env_attr(self.eval_env_list[i], "flush_video")
                     if callable(flush_video):
-                        flush_video()
+                        flush_video(split=mode)
                 if not self.cfg.env.eval.auto_reset:
                     self.eval_env_list[i].update_reset_state_ids()
 
