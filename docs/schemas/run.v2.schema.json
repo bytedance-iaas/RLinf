@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/RLinf/RLinf/docs/schemas/run.v2.schema.json",
+  "title": "RLinf run control-plane snapshot",
+  "description": "Contract for <log_path>/_rlinf/runs/<run_id>/run.json. The training side writes it (plain stdlib, atomic replace); the dashboard reads it without importing rlinf. This file is the single source of truth for both sides -- each keeps its own model (dataclass / pydantic) and validates against this schema.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "task_type",
+    "state",
+    "heartbeat_at",
+    "heartbeat_seq",
+    "progress",
+    "timing"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 2,
+      "description": "Bumped from 1 to 2 to add the three-timestamp liveness model, concurrent components, structured resume fields, and step semantics. See feature_list.md section 2.7."
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique per launch, injected as cfg.runner.run_id. Format <timestamp>-<experiment_name>."
+    },
+    "task_type": {
+      "enum": [
+        "embodied",
+        "embodied_eval",
+        "reasoning",
+        "reasoning_eval",
+        "coding_online_rl",
+        "sft",
+        "offline"
+      ],
+      "description": "Mirrors SUPPORTED_TASK_TYPE in rlinf/config.py. Also the dashboard template selection key."
+    },
+    "algorithm": {
+      "type": ["object", "null"],
+      "properties": {
+        "loss_type": { "type": ["string", "null"] },
+        "adv_type": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true,
+      "description": "Optional secondary template key when task_type alone is too coarse."
+    },
+    "state": {
+      "enum": ["pending", "running", "finished", "failed", "stopped"],
+      "description": "Write-side fact only. Deliberately has no 'stalled': a dead writer cannot record its own death, so liveness is derived read-side from the timestamps below (see 'health' in the dashboard, which is NOT persisted here)."
+    },
+    "phase": {
+      "type": ["string", "null"],
+      "description": "Driver-side phase, narrowed in v2 to the innermost non-'step' ScopedTimer scope. For async runners a single scalar phase cannot describe env/rollout/actor running concurrently -- use 'components' for that. Unmapped scopes pass through verbatim."
+    },
+    "phase_since": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "components": {
+      "type": ["object", "null"],
+      "description": "v2 addition (A2). Concurrent component activity for async runners, where env/rollout/actor all run for the whole loop. Empty or null for synchronous runners.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["active"],
+        "additionalProperties": false,
+        "properties": {
+          "active": { "type": "boolean" },
+          "since": { "type": ["string", "null"], "format": "date-time" }
+        }
+      }
+    },
+    "heartbeat_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Updated by the background heartbeat thread. Proves the process is alive -- nothing more."
+    },
+    "heartbeat_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic tick counter; lets a reader distinguish a fresh write from an unchanged file."
+    },
+    "last_progress_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "v2 addition (A1). Updated on step advance. Fresh heartbeat + stale last_progress_at is the signature of a hung training thread (NCCL hang, stuck env) -- the most common RL failure, and invisible to a single heartbeat."
+    },
+    "last_metric_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "v2 addition (A1). Updated from the MetricLogger.log callback. Detects a broken metric path while training still advances."
+    },
+    "progress": {
+      "type": "object",
+      "required": ["step", "max_steps"],
+      "additionalProperties": false,
+      "properties": {
+        "step": { "type": "integer", "minimum": 0 },
+        "max_steps": { "type": ["integer", "null"], "minimum": 0 },
+        "epoch": {
+          "type": ["integer", "null"],
+          "description": "Only when the runner already tracks it; never synthesized."
+        },
+        "step_semantics": {
+          "enum": ["rl_iteration", "minibatch", "optimizer_step"],
+          "description": "v2 addition (A7). What one step means for this runner, so the frontend can label the x-axis and refuse to compare incomparable runs. embodied/sft report rl_iteration; reasoning/coding report minibatch, reflecting reasoning_runner.py:606,625. This labels existing behaviour -- it does not change step semantics."
+        }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "required": ["started_at", "elapsed_s"],
+      "additionalProperties": false,
+      "properties": {
+        "started_at": { "type": "string", "format": "date-time" },
+        "elapsed_s": { "type": "number", "minimum": 0 },
+        "step_time_p50": { "type": ["number", "null"], "minimum": 0 },
+        "step_time_recent": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0 }
+        },
+        "eta_s": { "type": ["number", "null"], "minimum": 0 },
+        "eta_confidence": { "enum": ["low", "medium", "high"] }
+      }
+    },
+    "latest_checkpoint": {
+      "type": ["object", "null"],
+      "description": "Mirror of the last line of checkpoints.jsonl. Appended only after _save_checkpoint completes, so a reader can never observe a half-written checkpoint (A4) -- no WRITING/READY protocol needed.",
+      "required": ["step", "path"],
+      "additionalProperties": true,
+      "properties": {
+        "step": { "type": "integer", "minimum": 0 },
+        "path": { "type": "string" },
+        "saved_at": { "type": ["string", "null"], "format": "date-time" },
+        "size_bytes": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": { "type": ["string", "null"] },
+      "description": "Where the data plane lives: tensorboard dir, per-worker log root, video root."
+    },
+    "cluster": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "num_nodes": { "type": ["integer", "null"], "minimum": 1 },
+        "component_placement": { "type": ["object", "null"] }
+      }
+    },
+    "exit": {
+      "type": ["object", "null"],
+      "description": "Non-null only for failed / stopped.",
+      "additionalProperties": false,
+      "properties": {
+        "reason": { "type": "string" },
+        "traceback_tail": { "type": ["string", "null"] }
+      },
+      "required": ["reason"]
+    }
+  },
+  "allOf": [
+    {
+      "description": "A terminal failure must say why.",
+      "if": { "properties": { "state": { "const": "failed" } }, "required": ["state"] },
+      "then": { "properties": { "exit": { "type": "object" } }, "required": ["exit"] }
+    },
+    {
+      "description": "A live run must not carry exit info.",
+      "if": {
+        "properties": { "state": { "enum": ["pending", "running"] } },
+        "required": ["state"]
+      },
+      "then": { "properties": { "exit": { "type": "null" } } }
+    }
+  ]
+}
