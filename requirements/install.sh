@@ -2375,9 +2375,29 @@ retry_cmd() {
     done
 }
 
+# Stage the shared LIBERO assets tree and point LIBERO_ASSET_PATH at it, so
+# libero-download-assets symlinks to it instead of pulling ~286MB from
+# HuggingFace into every venv. No-op when the object store is unreachable, in
+# which case libero-download-assets falls back to HuggingFace as before.
+stage_libero_assets() {
+    [ "$USE_MIRRORS" -eq 1 ] || return 0
+    command -v oniond &>/dev/null || return 0
+    [ -n "${LIBERO_ASSET_PATH:-}" ] && return 0
+
+    local assets_root="${LIBERO_ASSETS_ROOT:-/opt/assets}"
+    bash "$SCRIPT_DIR/embodied/download_assets.sh" \
+        --use-mirror --dir "$assets_root" --assets libero
+    local staged="$assets_root/.libero_assets/LIBERO-assets"
+    if [ -d "$staged/scenes" ]; then
+        export LIBERO_ASSET_PATH="$staged"
+        echo "[install.sh] Using staged LIBERO assets at $staged (LIBERO_ASSET_PATH)."
+    fi
+}
+
 install_libero_env() {
     uv pip install rlinf-libero
     materialize_package_files rlinf-libero
+    stage_libero_assets
     retry_cmd libero-download-assets --skip-existing
     reset_libero_config
 }
@@ -2456,7 +2476,10 @@ install_liberopro_env() {
     uv pip install rlinf-libero rlinf-liberopro
     materialize_package_files rlinf-libero
     materialize_package_files rlinf-liberopro
+    stage_libero_assets
     retry_cmd libero-download-assets --skip-existing
+    # LIBERO-pro assets have no object-store copy yet, so this one still goes to
+    # HuggingFace.
     retry_cmd liberopro-download-assets --skip-existing
     reset_libero_config
 }
@@ -2465,7 +2488,10 @@ install_liberoplus_env() {
     uv pip install rlinf-libero "rlinf-liberoplus>=0.1.3"
     materialize_package_files rlinf-libero
     materialize_package_files rlinf-liberoplus
+    stage_libero_assets
     retry_cmd libero-download-assets --skip-existing
+    # LIBERO-plus assets have no object-store copy yet, so this one still goes to
+    # HuggingFace.
     export LIBERO_PLUS_ASSETS_REPO="${LIBERO_PLUS_ASSETS_REPO:-RLinf/LIBERO-plus-assets}"
     retry_cmd liberoplus-download-assets --skip-existing
     reset_libero_config
