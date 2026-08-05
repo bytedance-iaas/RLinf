@@ -1,8 +1,8 @@
 训练可视化
 ======================
 
-RLinf 支持实时实验追踪。  
-你可以将损失曲线、准确率、GPU 利用率以及任意自定义指标，  
+RLinf 支持实时实验追踪。
+你可以将损失曲线、准确率、耗时以及任意自定义指标，
 流式传输到以下一个或多个后端：
 
 - `TensorBoard <https://www.tensorflow.org/tensorboard>`_:  
@@ -59,8 +59,12 @@ TensorBoard
 
    tensorboard --logdir ./logs/grpo-1.5b/tensorboard --port 6006
 
-在浏览器中打开 `http://localhost:6006`  
-即可查看标量曲线、直方图和计算图。  
+在浏览器中打开 `http://localhost:6006` 即可查看标量曲线。
+
+.. note::
+
+   RLinf **只记录标量**。直方图、图像和计算图都不会写入，
+   因此 TensorBoard 中对应的标签页会是空的。
 
 
 Weights & Biases (WandB)

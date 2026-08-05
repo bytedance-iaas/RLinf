@@ -2,7 +2,7 @@ Training Visualisation
 ======================
 
 RLinf support for real-time experiment tracking.
-You can stream loss curves, accuracy, GPU utilization and arbitrary
+You can stream loss curves, accuracy, timings and arbitrary
 custom metrics to one or more of the following backends:
 
 - `TensorBoard <https://www.tensorflow.org/tensorboard>`_: 
@@ -57,8 +57,12 @@ TensorBoard
 
    tensorboard --logdir ./logs/grpo-1.5b/tensorboard --port 6006
 
-Open `http://localhost:6006` in your browser
-to inspect scalar plots, histograms and the computation graph.
+Open `http://localhost:6006` in your browser to inspect the scalar plots.
+
+.. note::
+
+   RLinf logs **scalars only**. Histograms, images, and the computation graph are
+   not written, so those TensorBoard tabs stay empty.
 
 
 Weights & Biases (WandB)
