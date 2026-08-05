@@ -986,6 +986,106 @@ EMBODIED_PPO_LIBERO_KEYS = [
 ]
 
 
+#: The same model, task and hardware in async mode: a 4xH20 Pi0.5 + LIBERO run
+#: through `train_async.py` with `loss_type: decoupled_actor_critic`, read off
+#: `/api/runs/<id>/keys` (50 tags) rather than from the emitting code, because
+#: the point of this list is what the async path actually produces -- seventeen
+#: of these keys exist in no synchronous run and the template had no chart for
+#: any of them until this list was captured.
+#:
+#: What differs from the synchronous list above, and why:
+#: `train/actor/{proximal_ratio,clipped_proximal_ratio,proximal_approx_kl,
+#:   behav_approx_kl,dual_clip_fraction,behav_clip_fraction}` -- losses.py:146-154
+#:   in compute_decoupled_ppo_actor_loss, reached only via the
+#:   `decoupled_actor_critic` registration (:383). The synchronous
+#:   compute_ppo_actor_loss emits `ratio`/`approx_kl`/`clipped_ratio` instead, so
+#:   these are additions and not renames.
+#: `train/actor/{current_version,average_version}` -- losses.py:162-164, and only
+#:   when the batch carries per-sample versions, which is the definition of the
+#:   async path.
+#: `rollout/{data_staleness_0/ratio,discarded_unused_trajs}` --
+#:   async_ppo_fsdp_worker.py:174-177. The bin name is built from the observed
+#:   lag, so only `_0` can be declared; see embodied.yaml for why the rest are
+#:   deliberately left to `unmatched`.
+#: `time/{construct_rollout_batch,update_rollout_weights}` and
+#:   `time/actor/{construct_rollout_batch,wait_for_rollout_store_ready,
+#:   drain_received_trajectories,remove_below}` -- driver scopes at
+#:   async_ppo_embodied_runner.py:159/180 and @Worker.timer tags at
+#:   async_ppo_fsdp_worker.py:112/133/141/161.
+#: `num_trajectories` unprefixed -- async_env_worker.py:74 already prefixes the
+#:   env dict, so compute_evaluate_metrics (metric_utils.py:346) adds the count
+#:   on top of an already-prefixed dict and it arrives bare.
+#:
+#: And what is absent: no `eval/*` at all (AsyncPPOEmbodiedRunner warns that
+#: validation is unimplemented, async_ppo_embodied_runner.py:55-58), no
+#: `time/generate_rollouts` (rollout runs for the whole run, not inside a step),
+#: no `time/sync_weights`, and no `time/env/interact`/`time/rollout/*/generate`
+#: -- those scopes span the run and never close inside one iteration.
+EMBODIED_ASYNC_PPO_LIBERO_KEYS = [
+    # env: same libero dict, but the count arrives without its prefix
+    "env/success_once",
+    "env/return",
+    "env/episode_len",
+    "env/reward",
+    "num_trajectories",
+    # actor loss metrics (compute_decoupled_ppo_actor_loss)
+    "train/actor/policy_loss",
+    "train/actor/proximal_ratio",
+    "train/actor/clipped_proximal_ratio",
+    "train/actor/clip_fraction",
+    "train/actor/dual_clip_fraction",
+    "train/actor/behav_clip_fraction",
+    "train/actor/proximal_approx_kl",
+    "train/actor/behav_approx_kl",
+    # staleness: the two version numbers whose gap *is* the lag
+    "train/actor/current_version",
+    "train/actor/average_version",
+    # added by the worker, not the loss
+    "train/actor/entropy_loss",
+    "train/actor/total_loss",
+    "train/actor/grad_norm",
+    "train/actor/lr",
+    # critic
+    "train/critic/value_loss",
+    "train/critic/value_clip_ratio",
+    "train/critic/explained_variance",
+    "train/critic/lr",
+    # rollout buffer stats
+    "rollout/rewards",
+    "rollout/advantages_mean",
+    "rollout/advantages_max",
+    "rollout/advantages_min",
+    "rollout/returns_mean",
+    "rollout/returns_max",
+    "rollout/returns_min",
+    # rollout store staleness
+    "rollout/data_staleness_0/ratio",
+    "rollout/discarded_unused_trajs",
+    # driver scopes
+    "time/step",
+    "time/construct_rollout_batch",
+    "time/cal_adv_and_returns",
+    "time/actor_training",
+    "time/update_rollout_weights",
+    # env worker sub-scopes
+    "time/env/run_interact_once",
+    "time/env/env_interact_step",
+    "time/env/compute_bootstrap_rewards",
+    "time/env/env/bootstrap_step",
+    "time/env/env/send_rollout_trajectories",
+    # rollout worker sub-scopes
+    "time/rollout/generate_one_epoch",
+    "time/rollout/predict",
+    "time/rollout/sync_model_from_actor",
+    # actor worker sub-scopes
+    "time/actor/actor/sync_model_to_rollout",
+    "time/actor/construct_rollout_batch",
+    "time/actor/wait_for_rollout_store_ready",
+    "time/actor/drain_received_trajectories",
+    "time/actor/remove_below",
+]
+
+
 def test_embodied_binds_the_keys_a_real_ppo_libero_run_logs(registry):
     """The template must claim what an embodied PPO run actually writes.
 
@@ -1015,6 +1115,44 @@ def test_embodied_binds_the_keys_a_real_ppo_libero_run_logs(registry):
     assert bound["north_star"]["resolved"] is True
 
 
+def test_embodied_binds_the_keys_a_real_async_ppo_libero_run_logs(registry):
+    """The same template has to carry the async loop, which logs different keys.
+
+    The template was fixed against a synchronous run, and the test above locked
+    that in -- but the async PPO driver logs seventeen tags no synchronous run
+    produces, and left seventeen of the async run's fifty keys unmatched. Nothing
+    reported it: an unmatched key still shows up under Other, so the page looked
+    complete while the staleness numbers that are the entire reason to watch an
+    async run had no chart of their own.
+    """
+    bound = bind_keys(registry.get("embodied"), EMBODIED_ASYNC_PPO_LIBERO_KEYS)
+    charted = _charted(bound)
+    missed = [key for key in EMBODIED_ASYNC_PPO_LIBERO_KEYS if key not in charted]
+
+    assert missed == [], f"async embodied keys no chart claims: {missed}"
+
+    # No key may be charted twice. The alias pairs make this easy to get wrong:
+    # `proximal_ratio` and `clipped_proximal_ratio` are both real in this run and
+    # both charted, but only because they sit on one chart deliberately.
+    charted_list = _charted_list(bound)
+    duplicated = sorted({key for key in charted_list if charted_list.count(key) > 1})
+    assert not duplicated, f"charted more than once: {duplicated}"
+
+    # An async run has no eval pass at all (the runner warns and skips), so the
+    # whole Evaluation group binds to nothing and must not survive as an empty
+    # section -- that is bind_keys' job and this is where it gets checked on a
+    # run that genuinely lacks a group.
+    titles = [group["title"] for group in bound["groups"]]
+    assert "Evaluation" not in titles
+    assert "Off-policy lag" in titles, (
+        "the async-only group dropped out, so every staleness key would land in "
+        "Other and read as unclaimed"
+    )
+
+    assert bound["north_star"]["key"] == "env/success_once"
+    assert bound["north_star"]["resolved"] is True
+
+
 def test_embodied_does_not_declare_keys_no_embodied_run_logs(registry):
     """The other half of the guard: charts promising data that never arrives.
 
@@ -1023,6 +1161,10 @@ def test_embodied_does_not_declare_keys_no_embodied_run_logs(registry):
     emitter and no alias, the chart it was meant to draw is permanently empty and
     nothing says so. Only alias spellings kept for other model families and other
     RLinf versions are allowed to go unmatched.
+
+    Both recorded runs count as evidence of an emitter, because one template
+    serves both loops: a key is a typo only if *neither* the synchronous nor the
+    async run produces it.
     """
     declared = {
         key
@@ -1031,6 +1173,7 @@ def test_embodied_does_not_declare_keys_no_embodied_run_logs(registry):
         for key in chart.get("keys") or []
     }
     unknown = declared - set(EMBODIED_PPO_LIBERO_KEYS)
+    unknown -= set(EMBODIED_ASYNC_PPO_LIBERO_KEYS)
 
     # Each of these is a deliberate alias for a spelling this particular run does
     # not produce: `*/loss` and `*/learning_rate` for workers that name them so

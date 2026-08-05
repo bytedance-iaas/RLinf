@@ -120,6 +120,14 @@ portal that waits for the response generator on close, so an endpoint that strea
 forever hangs the test process. `test_api.py` therefore drives the SSE handlers
 directly, and chunked delivery is verified only here.
 
+It binds port 8421 rather than the dashboard's own 8420, so it can run beside a
+dashboard you are already using. That is one port away from being free, though:
+`kubectl port-forward ... 8421:8420` — the natural way to reach a dashboard
+running inside a pod — takes 8421 too, and then the smoke script fails with
+`[Errno 48] address already in use` from a server that never started, not from
+anything it was testing. `PORT=8433 bash dashboard/tests/smoke_server.sh <python>`
+if that happens.
+
 ### 2. Against the committed fixtures
 
 ```bash
@@ -146,7 +154,7 @@ is running rather than defaulting to green. (Swap in `hung_training.json` for
 
 ```bash
 # In the training venv, on the head node:
-bash examples/embodiment/run_embodiment.sh <config_name>   # runner.max_steps=3 is enough
+bash examples/embodiment/run_embodiment.sh <config_name>   # runner.max_epochs=3 is enough
 
 # Anywhere with read access to the log path:
 /tmp/rlinf-dash/bin/rlinf-dashboard <log_path>
@@ -163,6 +171,11 @@ Check, in order:
    (a terminal run is not unhealthy for having stopped talking).
 4. `progress.max_steps` matches the *effective* horizon
    `min(num_steps_per_epoch × max_epochs, runner.max_steps)`, not the config cap.
+   Raising `runner.max_steps` alone will not give you more than one step:
+   `set_max_steps` pins `num_steps_per_epoch` to 1 for embodied runners, so
+   `max_epochs` is the horizon and `max_steps` can only lower it. A run that
+   stops after one step is the least useful shape for checking a dashboard —
+   every curve is a single point and every trend is undefined.
 5. `/api/runs/{id}/checkpoints` gains a row with a real `size_bytes` and
    `duration_s` after the first save.
 6. `/api/runs/{id}/series?keys=env/success_once` returns points.
@@ -184,6 +197,17 @@ For an async run (`train_async.py`), also check `components`: `env`, `rollout` a
 `actor` should all be `active: true` at once during the loop, and all flip to
 `active: false` with `since` preserved at the end. A single scalar `phase` is
 semantically wrong for those runners, which is why the field exists.
+
+To also exercise the per-rank views, add `+runner.per_worker_log=true` — with the
+leading `+`. Most configs never declare the key (the default is filled in by
+`rlinf/config.py` *after* Hydra composes), so a plain override fails struct mode
+with `Key 'per_worker_log' is not in struct` before a single GPU is touched. With
+it on, the run writes its aggregate bundle to `tensorboard/all/` and one bundle per
+rank under `worker_logs/<Group>/rank_<n>/tensorboard/`; expect `workers` in
+`/keys` to be non-empty and `series?expand=ranks` to return the aggregate plus one
+series per rank. Note that neither of those paths contains the run id, so two
+per-worker runs sharing one `log_path` overwrite each other's per-rank data —
+give each its own.
 
 ## Tests
 
@@ -210,3 +234,9 @@ committed file differs, and `frontend-build` typechecks, builds, and asserts the
 built `index.html` references only assets the build emitted. There is no frontend
 test framework — with no server and no logic of its own, the compiler and the
 bundler are what catch a real regression there.
+
+The one exception is `npm run check:scales`, added after a one-step run hung
+uPlot's axis-split loop and killed the browser tab on the Metrics view. A build
+that typechecks and bundles cleanly can still not render, so that property is
+asserted at runtime; see [`frontend/README.md`](frontend/README.md) for the
+mechanism.
