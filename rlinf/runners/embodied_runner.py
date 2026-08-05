@@ -478,6 +478,29 @@ class EmbodiedRunner:
         self.stop_logging = True
         self.log_thread.join(timeout=1.0)
 
+    def _advance_env_step(self) -> None:
+        """Tell the env workers which step upcoming videos belong to.
+
+        Only the media index reads this, so it must never hold up training. The
+        synchronous runner sets it inline with the actor and rollout because the
+        env group is idle at that point in its loop; the async runners cannot,
+        since ``interact`` is a long-running call that owns the env workers for
+        the whole run. There the update lands between rollout chunks, so a clip
+        flushed mid-step can still carry the previous step -- off by at most one,
+        against a row that otherwise carries no step at all.
+
+        Failure is logged and swallowed: an env group that cannot take the call
+        (already draining, or a runner whose env workers do not implement it)
+        would otherwise kill a training run over a video label.
+        """
+        try:
+            self.env.set_global_step(self.global_step).wait()
+        except Exception as exc:  # noqa: BLE001 - a video label is never fatal
+            self.logger.warning(
+                f"Could not set the env step for media indexing: {exc}. "
+                "Videos will be indexed without a step."
+            )
+
     def _should_profile_step(self, step_idx: int) -> bool:
         return self._profile_all_steps or (
             self._profile_steps is not None and step_idx in self._profile_steps

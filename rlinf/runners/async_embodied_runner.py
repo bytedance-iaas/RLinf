@@ -127,6 +127,8 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
     def _run_impl(self):
         start_step = self.global_step
         start_time = time.time()
+        # Before ``interact`` starts, so the very first clip is already labelled.
+        self._advance_env_step()
         self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
 
         env_handle: Handle = self.env.interact(
@@ -182,6 +184,7 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
                         epoch=self.epoch,
                         step_duration_s=time.time() - step_started,
                     )
+                    self._advance_env_step()
                     if self.global_step % self.weight_sync_interval == 0:
                         self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
 

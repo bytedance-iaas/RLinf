@@ -114,6 +114,9 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
 
         self.actor.set_global_step(self.global_step).wait()
         self.rollout.set_global_step(self.global_step).wait()
+        # Before ``interact`` starts, so the very first clip is already labelled.
+        # See ``_advance_env_step`` for why this is not left to the loop below.
+        self._advance_env_step()
         self.update_rollout_weights()
 
         env_handle: Handle = self.env.interact(
@@ -174,6 +177,7 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
                 with self.timer("update_rollout_weights"):
                     self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
                 self.rollout.set_global_step(self.global_step).wait()
+                self._advance_env_step()
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
