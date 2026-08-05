@@ -34,8 +34,7 @@ EOF
 # mirror env vars that install.sh's setup_mirror exports. Values mirror install.sh.
 setup_mirror() {
 	if [ "$USE_MIRRORS" -eq 1 ]; then
-		export UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-https://mirrors.ivolces.com/pypi/simple/}
-		export PIP_INDEX_URL=${PIP_INDEX_URL:-https://mirrors.ivolces.com/pypi/simple/}
+		export UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-https://mirrors.aliyun.com/pypi/simple}
 		export HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
 		export GITHUB_PREFIX=${GITHUB_PREFIX:-https://gh-proxy.org/}
 	fi

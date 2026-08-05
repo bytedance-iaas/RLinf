@@ -1019,9 +1019,6 @@ setup_mirror() {
         # the Volcengine network.
         export UV_PYTHON_INSTALL_MIRROR=https://gh-proxy.org/https://github.com/astral-sh/python-build-standalone/releases/download
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
-        # Some dependencies shell out to plain `pip` instead of uv, which does
-        # not read UV_DEFAULT_INDEX.
-        export PIP_INDEX_URL=https://mirrors.ivolces.com/pypi/simple/
         export HF_ENDPOINT=https://hf-mirror.com
         export GITHUB_PREFIX="https://gh-proxy.org/"
         git config --global url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/"
@@ -1033,7 +1030,6 @@ unset_mirror() {
     if [ "$USE_MIRRORS" -eq 1 ]; then
         unset UV_PYTHON_INSTALL_MIRROR
         unset UV_DEFAULT_INDEX
-        unset PIP_INDEX_URL
         unset HF_ENDPOINT
         git config --global --unset url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/" || true
         unset GITHUB_PREFIX
