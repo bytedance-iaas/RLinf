@@ -20,7 +20,7 @@ RLinf 支持实时实验追踪。
   一个开源、轻量级的实验日志与可视化工具，  
   适用于本地或自建环境。  
   它提供直观的 Python API，记录指标、超参数、硬件与代码信息，  
-  并通过简洁的界面支持实验对比 —— 非常适合注重隐私的工作流。  
+  并通过简洁的界面支持实验对比 —— 非常适合注重隐私的工作流。
 
 启用后端
 -------------------
@@ -36,6 +36,7 @@ RLinf 支持实时实验追踪。
        project_name: rlinf
        experiment_name: ${runner.experiment_name}
        logger_backends: ["tensorboard", "wandb", "swanlab"]   # <─ 选择任意子集
+       flush_interval_s: 10                                   # 可选，默认 10
      experiment_name: grpo-1.5b
      output_dir: ./logs
 
@@ -46,10 +47,15 @@ RLinf 会为每个启用的后端创建一个子目录：
    logs/grpo-1.5b/
    ├── checkpoints/
    ├── converted_ckpts/
-   ├── log/                
+   ├── log/
    ├── swanlab/            # SwanLab 事件文件
    ├── tensorboard/        # TensorBoard 事件文件
    └── wandb/              # WandB 运行目录
+
+``flush_interval_s`` 决定了正在运行的 run 的曲线最多能有多陈旧。
+各后端都会缓冲写入，因此若没有周期性 flush，进行中的 run 最后几步可能还读不到——
+当你正盯着一个 run 判断要不要杀掉它时，这一点很重要。
+如果 flush 在 step 耗时里变得可见，可以把这个值调大。
 
 
 TensorBoard
@@ -91,10 +97,10 @@ SwanLab
 
     swanlab login        # 按提示粘贴 access token
 
-之后 RLinf 会自动启动一个新的 *run* 并流式传输所有指标。  
-你可以通过 dashboard 查看这些指标。  
+之后 RLinf 会自动启动一个新的 *run* 并流式传输所有指标。
+你可以通过 dashboard 查看这些指标。
 
 
 .. tip::
 
-   三个 logger 可以 **并行运行**；你可以自由组合使用。
+   所有后端都可以 **并行运行**；你可以自由组合使用。

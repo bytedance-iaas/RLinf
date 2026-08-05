@@ -15,9 +15,9 @@ custom metrics to one or more of the following backends:
   artifacts (for model and data versioning), reporting, and collaborative features for teams. 
 
 - `SwanLab <https://pypi.org/project/swanlab/>`_:
-  An open-source, lightweight experiment logging and visualization tool designed for local or self-hosted use. 
-  It provides intuitive Python APIs, logs metrics, hyperparameters, hardware and code info, 
-  and supports experiment comparison through a clean UI — ideal for privacy-focused workflows. 
+  An open-source, lightweight experiment logging and visualization tool designed for local or self-hosted use.
+  It provides intuitive Python APIs, logs metrics, hyperparameters, hardware and code info,
+  and supports experiment comparison through a clean UI — ideal for privacy-focused workflows.
 
 Enabling a back-end
 -------------------
@@ -33,6 +33,7 @@ Add the desired logger(s) to ``runner.logger.logger_backends`` in your YAML:
        project_name: rlinf
        experiment_name: ${runner.experiment_name}
        logger_backends: ["tensorboard", "wandb", "swanlab"]   # <─ choose any subset
+       flush_interval_s: 10                                   # optional, default 10
      experiment_name: grpo-1.5b
      output_dir: ./logs
 
@@ -43,10 +44,15 @@ RLinf creates a sub-directory for each active back-end:
    logs/grpo-1.5b/
    ├── checkpoints/
    ├── converted_ckpts/
-   ├── log/                
+   ├── log/
    ├── swanlab/            # SwanLab event files
    ├── tensorboard/        # TensorBoard event files
    └── wandb/              # WandB run directory
+
+``flush_interval_s`` bounds how stale a live run's curves can be. Back-ends
+buffer writes, so without a periodic flush the last few steps of an in-progress
+run may not be readable yet — which matters when you are watching a run to decide
+whether to kill it. Raise it if flushing shows up in your step time.
 
 
 TensorBoard
@@ -98,5 +104,5 @@ metrics. You can check the metrics through your dashboard.
 
 .. tip::
 
-   All three loggers run **in parallel**; feel free to mix and match.
+   All back-ends run **in parallel**; feel free to mix and match.
 
