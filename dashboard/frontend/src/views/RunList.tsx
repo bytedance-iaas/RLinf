@@ -11,7 +11,7 @@
 
 import { useMemo, useState } from "react";
 import type { Health, RunState, RunSummary } from "../api/types";
-import { Badge, Note } from "../components/primitives";
+import { Badge, Code, Note } from "../components/primitives";
 import { age, ageSince, duration, integer, semanticsLabel } from "../lib/format";
 
 export interface RunListProps {
@@ -45,7 +45,7 @@ const HEALTH_RANK: Record<Health, number> = {
  * appended: a key collision here makes React drop or duplicate rows silently,
  * which on a click target is a wrong-run-opened bug rather than a cosmetic one.
  */
-function rowKey(run: RunSummary): string {
+export function rowKey(run: RunSummary): string {
   return `${run.run_id}\0${run.run_root}`;
 }
 
@@ -117,6 +117,33 @@ export function RunList(props: RunListProps) {
     return new Set([...counts.entries()].filter(([, n]) => n > 1).map(([id]) => id));
   }, [runs]);
 
+  /**
+   * Ids shared by runs with *different* experiment names.
+   *
+   * The benign duplicate above is one tree reachable through two scan roots: the
+   * rows describe the same run, so resolving the id to either is correct and
+   * showing `run_root` is enough to explain the repetition.
+   *
+   * This is the other kind, and it is not cosmetic. These are different runs --
+   * different names, different log paths, different numbers -- that collided on
+   * an id, which happens because the default id is a second-resolution timestamp
+   * plus the experiment name and can also be pinned explicitly in a copied
+   * config. Every part of the product addresses a run by id, so opening any of
+   * them shows whichever the server resolves first, and the page gives no sign
+   * it is not the one that was clicked.
+   */
+  const collided = useMemo(() => {
+    const names = new Map<string, Set<string>>();
+    for (const run of runs) {
+      const set = names.get(run.run_id) ?? new Set<string>();
+      set.add(run.experiment_name ?? run.run_id);
+      names.set(run.run_id, set);
+    }
+    return new Set(
+      [...names.entries()].filter(([, seen]) => seen.size > 1).map(([id]) => id),
+    );
+  }, [runs]);
+
   return (
     <div className="stack">
       <div className="controls">
@@ -156,6 +183,36 @@ export function RunList(props: RunListProps) {
         </button>
       </div>
 
+      {collided.size > 0 && (
+        <Note
+          tone="error"
+          title={`${collided.size} run id${collided.size === 1 ? " is" : "s are"} shared by different runs`}
+        >
+          <div>
+            These runs have different names and different log paths but the same
+            run id, and every URL and API call in this dashboard addresses a run by
+            id. Opening any of them shows whichever the server finds first —{" "}
+            <strong>not necessarily the one you clicked</strong> — and the same
+            applies to comparing them.
+          </div>
+          {[...collided].map((id) => (
+            <div key={id} className="faint" style={{ marginTop: "var(--space-xs)" }}>
+              <Code>{id}</Code>{" "}
+              {runs
+                .filter((run) => run.run_id === id)
+                .map((run) => run.experiment_name ?? run.run_id)
+                .join(", ")}
+            </div>
+          ))}
+          <div style={{ marginTop: "var(--space-xs)" }}>
+            The default id is a second-resolution timestamp plus the experiment
+            name, so this also happens when a copied config pins{" "}
+            <Code>runner.run_id</Code>. Give each run its own id to tell them
+            apart.
+          </div>
+        </Note>
+      )}
+
       {attention.length > 0 && (
         <Note tone="warn" title={`${attention.length} run${attention.length === 1 ? "" : "s"} need attention`}>
           {attention.map((run) => (
@@ -183,13 +240,20 @@ export function RunList(props: RunListProps) {
         </thead>
         <tbody>
           {rows.map((run) => (
-            <tr key={rowKey(run)} data-selected={selected.includes(run.run_id) ? "true" : undefined}>
+            <tr
+              key={rowKey(run)}
+              data-selected={selected.includes(rowKey(run)) ? "true" : undefined}
+            >
               <td>
+                {/* Keyed on the row, not on `run.run_id`. Selection used to be
+                    held by id, and since an id can be shared by several rows,
+                    ticking one drew a tick on every row that claimed the same id
+                    while the compare count -- counting ids -- still said one. */}
                 <input
                   type="checkbox"
-                  checked={selected.includes(run.run_id)}
-                  onChange={() => props.onToggleSelect(run.run_id)}
-                  aria-label={`Select ${run.run_id} for compare`}
+                  checked={selected.includes(rowKey(run))}
+                  onChange={() => props.onToggleSelect(rowKey(run))}
+                  aria-label={`Select ${run.experiment_name ?? run.run_id} for compare`}
                 />
               </td>
               <td>

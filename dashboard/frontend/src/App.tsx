@@ -24,7 +24,7 @@ import { Events } from "./views/Events";
 import { Media } from "./views/Media";
 import { Metrics } from "./views/Metrics";
 import { Overview } from "./views/Overview";
-import { RunList } from "./views/RunList";
+import { RunList, rowKey } from "./views/RunList";
 
 /** How often derived ages are recomputed. One second, because ages are shown to it. */
 const TICK_MS = 1000;
@@ -83,12 +83,35 @@ export function App() {
 
   // Compare selection. Held here rather than in the list so it survives navigating
   // into a run and back, which is how a comparison actually gets assembled.
+  //
+  // Holds *row* keys (`run_id\0run_root`), not run ids, because a run id can be
+  // shared by more than one row and a selection keyed by id cannot say which of
+  // them was ticked. The compare route still speaks run ids -- that is all the
+  // API can address -- so the two are converted at this boundary.
   const [selected, setSelected] = useState<string[]>([]);
+  const runRows = runs.data ?? [];
   useEffect(() => {
     // A compare deep link is authoritative: someone pasted it, and the selection
-    // it encodes has to win over whatever this tab had selected.
-    if (route.name === "compare" && route.runIds.length > 0) setSelected(route.runIds);
-  }, [route]);
+    // it encodes has to win over whatever this tab had selected. The link carries
+    // ids, so every row claiming one of them is ticked; with a duplicated id that
+    // is the honest answer, since the link cannot say which was meant.
+    if (route.name !== "compare" || route.runIds.length === 0) return;
+    const wanted = new Set(route.runIds);
+    setSelected(runRows.filter((r) => wanted.has(r.run_id)).map(rowKey));
+    // `runRows` is a dependency because the runs list usually arrives after the
+    // route does, and a link opened in a cold tab would otherwise select nothing.
+  }, [route, runRows]);
+
+  /** Run ids for the selected rows, deduplicated, in selection order. */
+  const selectedRunIds = useMemo(() => {
+    const byKey = new Map(runRows.map((r) => [rowKey(r), r.run_id]));
+    const ids: string[] = [];
+    for (const key of selected) {
+      const id = byKey.get(key);
+      if (id !== undefined && !ids.includes(id)) ids.push(id);
+    }
+    return ids;
+  }, [selected, runRows]);
 
   /**
    * Bumped whenever the run advances, and by the refresh button.
@@ -198,7 +221,7 @@ export function App() {
             {route.name === "compare" && (
               <>
                 <span className="header-crumb-sep">/</span>
-                <span>Compare ({selected.length})</span>
+                <span>Compare ({selectedRunIds.length})</span>
               </>
             )}
             {runId && (
@@ -277,6 +300,7 @@ export function App() {
             dataVersion,
             now,
             selected,
+            selectedRunIds,
             navigate,
             onToggleSelect: toggleSelect,
           })}
@@ -329,6 +353,7 @@ interface RenderArgs {
   dataVersion: number;
   now: number;
   selected: string[];
+  selectedRunIds: string[];
   navigate: (route: Route) => void;
   onToggleSelect: (runId: string) => void;
 }
@@ -345,7 +370,7 @@ function renderRoute(args: RenderArgs) {
         onOpen={(runId) => args.navigate({ name: "overview", runId })}
         onToggleSelect={args.onToggleSelect}
         onCompare={() =>
-          args.navigate({ name: "compare", runIds: args.selected, key: null })
+          args.navigate({ name: "compare", runIds: args.selectedRunIds, key: null })
         }
       />
     );
@@ -355,7 +380,7 @@ function renderRoute(args: RenderArgs) {
     return (
       <Compare
         runs={args.runs}
-        selected={args.selected}
+        selected={args.selectedRunIds}
         metricKey={route.key}
         onChange={(runIds, key) => args.navigate({ name: "compare", runIds, key })}
       />
