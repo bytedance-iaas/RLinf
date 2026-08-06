@@ -28,22 +28,37 @@ step_axis_label: Optimizer step
 # "maybe" and would offer a Media tab that always leads to an empty page.
 has_media_view: false
 
+# Ordered by how directly each answers "is it better", not by how common it is.
+# Loss is last: falling loss is necessary, not sufficient.
+#
+# Grouped into candidates rather than one key plus a flat fallback list, because
+# the fallback here crosses a semantic boundary: accuracy is a percentage that
+# should go up, loss is a plain number that should go down. A run that logs no
+# eval metric at all is real -- `MegatronVlmSftWorker.run_eval` returns `{}` --
+# so the last candidate is reached in practice, and it must not inherit the
+# first one's percent format or `maximize` goal.
 north_star:
-  key: eval/accuracy
-  label: Eval accuracy
-  format: percent
-  goal: maximize
-  # Ordered by how directly each answers "is it better", not by how common it
-  # is. `eval/eval_accuracy` reads oddly but is what FSDPSftWorker emits
-  # (fsdp_sft_worker.py:131) -- the doubled word is in the worker, not a typo
-  # here. Loss is last: falling loss is necessary, not sufficient.
-  fallback_keys:
-    - eval/eval_accuracy
-    - eval/val_accuracy
-    - eval/cat_acc_best
-    - eval/loss
-    - eval/val_loss
-    - train/loss
+  candidates:
+    # All four spellings are the same quantity, so they share one candidate.
+    # `eval/eval_accuracy` reads oddly but is what FSDPSftWorker emits
+    # (fsdp_sft_worker.py:131) -- the doubled word is in the worker, not a typo.
+    - keys:
+        - eval/accuracy
+        - eval/eval_accuracy
+        - eval/val_accuracy
+        - eval/cat_acc_best
+      label: Eval accuracy
+      format: percent
+      goal: maximize
+    - keys: [eval/loss, eval/val_loss]
+      label: Eval loss
+      goal: minimize
+    - keys: [train/loss]
+      label: Train loss
+      goal: minimize
+      # Named "Train loss", not "Eval accuracy": when this one wins, the run
+      # logged nothing to evaluate against, and the headline must say so rather
+      # than borrow the name of a metric that was never computed.
 
 groups:
   - title: Training

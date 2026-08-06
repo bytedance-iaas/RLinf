@@ -566,6 +566,86 @@ def test_the_north_star_falls_back_to_the_first_key_with_data():
     assert bound["north_star"]["resolved"] is True
 
 
+def test_a_winning_fallback_brings_its_own_label_format_and_goal():
+    """The headline's presentation must describe the key that actually won.
+
+    This is the SFT case, and it is not hypothetical: `MegatronVlmSftWorker`'s
+    `run_eval` returns `{}`, so such a run logs no eval metric and the template
+    falls all the way through to `train/loss`.
+
+    Inheriting the first candidate's metadata renders that loss as "Eval
+    accuracy", multiplies it by 100, and -- because `goal: maximize` -- draws a
+    *falling* loss as a north star getting worse. Every trend verdict derived
+    from the goal is then inverted, which is worse than showing nothing.
+    """
+    template = {
+        "name": "t",
+        "north_star": {
+            "candidates": [
+                {
+                    "keys": ["eval/accuracy"],
+                    "label": "Eval accuracy",
+                    "format": "percent",
+                    "goal": "maximize",
+                },
+                {"keys": ["train/loss"], "label": "Train loss", "goal": "minimize"},
+            ]
+        },
+        "groups": [],
+    }
+    bound = bind_keys(template, ["train/loss"])["north_star"]
+    assert bound["key"] == "train/loss"
+    assert bound["resolved"] is True
+    assert bound["label"] == "Train loss"
+    assert bound["goal"] == "minimize"
+    assert "format" not in bound, "a loss is a number, not a percentage"
+
+
+def test_a_legacy_fallback_key_inherits_nothing_it_was_never_given():
+    """The old `key` + `fallback_keys` shape cannot say what a fallback means.
+
+    So the fallback gets no borrowed semantics. A plain number under its own key
+    is the honest rendering of "the template did not say"; a borrowed percentage
+    and goal is a confident answer to a question nobody asked.
+    """
+    template = {
+        "name": "t",
+        "north_star": {
+            "key": "eval/accuracy",
+            "label": "Eval accuracy",
+            "format": "percent",
+            "goal": "maximize",
+            "fallback_keys": ["train/loss"],
+        },
+        "groups": [],
+    }
+    bound = bind_keys(template, ["train/loss"])["north_star"]
+    assert bound["key"] == "train/loss"
+    assert bound["resolved"] is True
+    assert bound.get("format") is None, "percent must not survive onto a loss"
+    assert bound.get("label") != "Eval accuracy"
+    assert bound.get("goal") != "maximize", "an inherited goal inverts the verdict"
+
+    # The primary still keeps everything it declared when it is the one that wins.
+    won = bind_keys(template, ["eval/accuracy"])["north_star"]
+    assert (won["label"], won["format"], won["goal"]) == (
+        "Eval accuracy",
+        "percent",
+        "maximize",
+    )
+
+
+def test_the_real_sft_template_never_calls_a_loss_an_accuracy(registry):
+    """The shipped template, against the keys a no-eval SFT worker really logs."""
+    bound = bind_keys(registry.get("sft"), ["train/loss", "learning_rate"])
+    north_star = bound["north_star"]
+    assert north_star["resolved"] is True
+    assert north_star["key"] == "train/loss"
+    assert "accuracy" not in north_star["label"].lower()
+    assert north_star["goal"] == "minimize"
+    assert north_star.get("format") != "percent"
+
+
 def test_binding_a_run_with_no_metrics_yet_yields_an_empty_but_valid_page(registry):
     """Before the first log call there are no keys at all.
 

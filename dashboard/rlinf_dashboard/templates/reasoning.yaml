@@ -43,18 +43,23 @@ step_axis_label: Minibatch
 has_media_view: false
 
 north_star:
-  key: rollout/reward_scores
-  label: Mean reward
-  goal: maximize
+  # One candidate, four spellings: every one of these is a mean reward that
+  # should go up, so they genuinely share `label`/`goal` -- which is the only
+  # situation where one candidate may cover several keys.
+  #
   # `reward_scores` comes from compute_rollout_metrics (distributed.py:297), used
   # by reasoning_runner and coding_online_rl_runner. The agent runners use
   # compute_rollout_metrics_dynamic instead (distributed.py:175-176), which
   # splits reward per trajectory and per turn -- trajectory-level is the one
   # comparable to a single-turn run's reward, so it comes first.
-  fallback_keys:
-    - rollout/reward_scores_traj
-    - rollout/reward_scores_turn
-    - agent/mean/reward
+  candidates:
+    - keys:
+        - rollout/reward_scores
+        - rollout/reward_scores_traj
+        - rollout/reward_scores_turn
+        - agent/mean/reward
+      label: Mean reward
+      goal: maximize
 
 groups:
   - title: Task performance

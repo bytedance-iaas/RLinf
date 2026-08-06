@@ -306,15 +306,77 @@ def _auto_groups(template: dict, keys: list[str], claimed: set[str]) -> list[dic
     return groups
 
 
+#: Presentation fields that describe *a metric*, not the north-star slot. These
+#: are what must travel with the key when a fallback wins, and what must never be
+#: inherited from a candidate that lost.
+_METRIC_SEMANTICS = ("label", "format", "goal")
+
+
+def _north_star_candidates(north_star: dict) -> list[dict]:
+    """Normalise either declaration shape into an ordered candidate list.
+
+    Two shapes are accepted:
+
+    ``candidates:``
+        The shape to write. Each entry carries its own ``label``/``format``/
+        ``goal`` and one or more ``keys`` that share those semantics -- aliases
+        for the same quantity, which is the only case where sharing is correct.
+
+    ``key:`` plus optional ``fallback_keys:``
+        The original shape. Safe on its own; safe with fallbacks only when every
+        fallback happens to mean the same thing as the primary. Because the
+        template cannot say whether it does, a fallback from this shape inherits
+        *nothing* -- see ``_resolve_north_star`` for why silence beats a guess.
+    """
+    if north_star.get("candidates"):
+        out = []
+        for candidate in north_star["candidates"]:
+            keys = candidate.get("keys") or (
+                [candidate["key"]] if candidate.get("key") else []
+            )
+            semantics = {
+                field: candidate[field]
+                for field in _METRIC_SEMANTICS
+                if candidate.get(field) is not None
+            }
+            out.append({"keys": list(keys), **semantics})
+        return out
+
+    primary = north_star.get("key")
+    declared = {
+        field: north_star[field]
+        for field in _METRIC_SEMANTICS
+        if north_star.get(field) is not None
+    }
+    out = [{"keys": [primary] if primary else [], **declared}]
+    # Each legacy fallback is its own candidate with no inherited semantics.
+    out += [{"keys": [key]} for key in (north_star.get("fallback_keys") or [])]
+    return out
+
+
 def _resolve_north_star(
     north_star: dict | None,
     present: set[str],
     canonical=lambda key: key,
 ) -> dict | None:
-    """Pick the first north-star candidate that has data.
+    """Pick the first north-star candidate that has data, with *its* semantics.
 
     A headline metric with no data is worse than none: an empty hero number reads
     as a broken run rather than as a metric this run does not log.
+
+    The winner's ``label``/``format``/``goal`` come from the winning candidate,
+    never from the one that was declared first. Carrying the primary's
+    presentation onto a fallback is how an SFT run that logs no eval metric ends
+    up rendering ``train/loss`` as "Eval accuracy", formatted as a percentage,
+    with ``goal: maximize`` -- so a *falling* loss, which is the run working,
+    draws a north star that reads as getting worse. Mislabelling is bad; an
+    inverted goal inverts every trend verdict derived from it.
+
+    A candidate that declares no ``format``/``goal`` gets none, and the UI falls
+    back to its own neutral defaults. That is deliberate: for the legacy
+    ``fallback_keys`` shape the template never said what those keys mean, and a
+    plain number under an honest name is the correct rendering of "we do not
+    know", where a borrowed percentage is a confident lie.
 
     The winner is canonicalised for the same reason chart keys are: the headline
     number and the chart of the same metric must request the same key, or the two
@@ -322,11 +384,35 @@ def _resolve_north_star(
     """
     if not north_star:
         return None
-    candidates = [north_star.get("key")] + list(north_star.get("fallback_keys") or [])
-    for key in candidates:
-        if key and key in present:
-            return dict(north_star, key=canonical(key), resolved=True)
-    return dict(north_star, resolved=False)
+
+    slot = {
+        field: value
+        for field, value in north_star.items()
+        if field
+        not in {*_METRIC_SEMANTICS, "key", "keys", "fallback_keys", "candidates"}
+    }
+    candidates = _north_star_candidates(north_star)
+
+    for candidate in candidates:
+        for key in candidate["keys"]:
+            if key and key in present:
+                semantics = {
+                    field: candidate[field]
+                    for field in _METRIC_SEMANTICS
+                    if candidate.get(field) is not None
+                }
+                return {**slot, **semantics, "key": canonical(key), "resolved": True}
+
+    # Nothing resolved. Report the *first* candidate's identity, since that is the
+    # metric this template would have led with, and the UI says it is missing.
+    first = candidates[0] if candidates else {"keys": []}
+    unresolved = {
+        field: first[field]
+        for field in _METRIC_SEMANTICS
+        if first.get(field) is not None
+    }
+    keys = first.get("keys") or []
+    return {**slot, **unresolved, "key": keys[0] if keys else None, "resolved": False}
 
 
 def _resolve(name: str, raw: dict[str, dict], _seen: tuple[str, ...] = ()) -> dict:

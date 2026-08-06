@@ -281,10 +281,17 @@ export interface TemplateGroup {
 
 export interface NorthStar {
   key: string | null;
+  /**
+   * These three always describe the key in `key`, never the metric the template
+   * would have preferred. The server resolves the candidate list and sends the
+   * winner's own semantics, so a template whose accuracy metric is missing and
+   * whose loss fallback won arrives labelled as a loss, unformatted, and with
+   * `goal: minimize` -- rather than as an accuracy percentage to be maximized,
+   * which would invert every trend verdict computed from it.
+   */
   label?: string;
   format?: "percent" | string;
   goal?: "maximize" | "minimize" | string;
-  fallback_keys?: string[];
   /**
    * False when no candidate key had data. A headline metric with no data reads as
    * a broken run rather than as a metric this run does not log, so the UI says
