@@ -1129,6 +1129,17 @@ input[type="checkbox"] {
   display: block;
 }
 
+/* Stands in for a player that has not been mounted yet, so the grid has its
+ * final geometry from the first paint and cards do not shift as they scroll
+ * into view. Deliberately blank: a spinner here would animate twenty times on
+ * one screen and imply the page is waiting on something, when nothing has been
+ * requested. */
+.media-frame-idle {
+  position: absolute;
+  inset: 0;
+  background: var(--color-surface-sunken);
+}
+
 .media-frame-error {
   position: absolute;
   inset: 0;

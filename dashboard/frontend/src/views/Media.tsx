@@ -9,7 +9,7 @@
  * at all, or the clip may predate the field.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { useFetch } from "../api/useLive";
 import type { MediaEntry, RunStatus } from "../api/types";
@@ -189,17 +189,71 @@ function Clip(props: { entry: MediaEntry; semantics: string }) {
   const { entry } = props;
   const url = api.mediaUrl(entry);
   const [failed, setFailed] = useState(false);
+  const [near, setNear] = useState(false);
+  const frameRef = useRef<HTMLDivElement>(null);
   const result = outcome(entry);
+
+  /**
+   * Mount the player only once its card is near the viewport.
+   *
+   * Every card used to render a `<video preload="metadata">` the moment the tab
+   * opened, so arriving here started a fetch for every clip in the run at once
+   * — whether or not any of them was on screen. A LIBERO clip tiles eight
+   * environments and runs about 4 MB, so a twenty-clip run asked for ~76 MB
+   * before showing anything.
+   *
+   * On a fast path that is merely wasteful. Over a `kubectl port-forward` it is
+   * the difference between usable and not: the server serves a whole clip in 9 ms
+   * locally, but through the tunnel two of them saturate it, and because the
+   * browser allows only a handful of connections per origin, *every other request
+   * on the page queues behind them* — measured at 9.7 s for an API call that
+   * normally takes 0.3 s. Switching tabs did not help, because the tab it
+   * switched to was waiting on the same connections.
+   *
+   * `rootMargin` starts the one below the fold slightly early, so scrolling does
+   * not feel like it is waiting on the network.
+   */
+  useEffect(() => {
+    const node = frameRef.current;
+    if (!node || near) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setNear(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (records) => {
+        if (records.some((record) => record.isIntersecting)) {
+          setNear(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "300px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [near]);
 
   return (
     <figure className="media-card" style={{ margin: 0 }}>
-      <div className="media-frame">
+      <div className="media-frame" ref={frameRef}>
         {url && !failed ? (
-          // `controls` and no autoplay: this is evidence being examined, not
-          // ambient motion, and a grid of autoplaying clips is unreadable. The
-          // server's FileResponse handles Range, so seeking works without
-          // downloading the clip whole.
-          <video src={url} controls preload="metadata" onError={() => setFailed(true)} />
+          near ? (
+            // `controls` and no autoplay: this is evidence being examined, not
+            // ambient motion, and a grid of autoplaying clips is unreadable.
+            //
+            // `preload="none"` because the grid is a contact sheet, not a
+            // player: the browser fetches nothing until someone presses play on
+            // a specific clip, and the server's FileResponse handles Range, so
+            // playback and seeking still work without downloading the whole
+            // file. Metadata preloading would put the cost back, one HTTP
+            // request per visible card, for a poster frame nobody asked for.
+            <video src={url} controls preload="none" onError={() => setFailed(true)} />
+          ) : (
+            // Same box, no element: reserving the space keeps the grid from
+            // reflowing as cards mount, which is the rule the rest of the page
+            // follows.
+            <div className="media-frame-idle" aria-hidden="true" />
+          )
         ) : (
           <div className="media-frame-error">
             {url
