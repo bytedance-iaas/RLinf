@@ -23,6 +23,7 @@ key" -- can be tested against a fake instead of a directory of real events.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Protocol, runtime_checkable
 
 from ..models import RunManifest, Series, SeriesPoint
@@ -229,21 +230,93 @@ class MetricGateway:
         return result
 
     def _decimate(self, series: Series) -> Series:
-        """Strided-sample a long series down to a displayable size.
+        """Reduce a long series to a displayable size, keeping its extremes.
 
-        Strided rather than averaged: RL curves are read for their spikes (a loss
-        blowup, a reward collapse), and averaging is exactly what hides those.
-        The last point is always kept so the newest value is never dropped.
+        Averaging is the obvious wrong answer -- RL curves are read for their
+        spikes, and a mean is what erases them. But *strided sampling*, which
+        this used to do, erases them too: a spike lands between two sample
+        indices and simply is not in the output. It looks safer than averaging
+        because each returned point is a real measurement; the loss blowup at
+        step 5001 is equally gone either way, and the chart shows a clean curve
+        that never happened.
+
+        So the series is bucketed and each bucket contributes its **minimum and
+        maximum**, emitted in step order. Two points per bucket rather than one
+        is what makes the reduction lossless in the only dimension that matters
+        here: for any bucket, the highest and lowest values it contained are
+        both still on the chart, so no spike can hide inside one. This is the
+        min/max envelope of M4, minus M4's first/last-per-bucket points, which
+        buy horizontal fidelity that a step-indexed RL curve does not need.
+
+        Non-finite samples get first claim on the budget. A NaN is not one value
+        among many -- it is the event someone needs to see, and
+        ``nonFiniteSignal`` in the frontend decides whether to report the run as
+        diverged by scanning exactly these points. Dropping one for display size
+        does not just leave a gap in a chart, it disarms that warning. They are
+        capped at half the budget all the same: a run that diverged completely
+        can be *all* NaN, and the first few plus the shape of what is left says
+        everything a full transfer of 50 000 NaNs would.
+
+        First and last are always kept: the run's starting point and its newest
+        value are the two a reader looks for by position.
+
+        ``len(points) <= max_series_points`` holds for any limit of 2 or more;
+        the budget is allocated between these three claims rather than exceeded
+        by them. First and last are the one non-negotiable pair, so a limit of 1
+        returns 2 points -- a series cannot be described by fewer.
         """
         limit = self._settings.max_series_points
-        total = len(series.points)
+        points = series.points
+        total = len(points)
         if total <= limit:
             return series.model_copy(update={"total_points": total})
 
-        stride = total // limit + 1
-        sampled = series.points[::stride]
-        if sampled[-1] is not series.points[-1]:
-            sampled.append(series.points[-1])
+        def finite(point) -> bool:
+            return point.value is not None and math.isfinite(point.value)
+
+        kept: dict[int, object] = {}
+
+        # Indices rather than points: a series can repeat a (step, value) pair,
+        # and keying on identity would collapse two real samples into one.
+        kept[0] = points[0]
+        kept[total - 1] = points[total - 1]
+
+        # Earliest first -- `nonFiniteSignal` reports the step of the first
+        # occurrence, so that is the one point of the group that must survive.
+        non_finite_budget = max(1, limit // 2)
+        for index, point in enumerate(points):
+            if len(kept) >= non_finite_budget:
+                break
+            if not finite(point):
+                kept[index] = point
+
+        # Whatever is left buys buckets, two points each. Deliberately not
+        # floored at one: `len(kept) + 2 * buckets <= limit` is what makes the
+        # budget a bound rather than a target, and a floor here would break it
+        # for a `max_series_points` small enough that first, last and the NaNs
+        # have already spent it. Zero buckets still renders -- first and last
+        # are in `kept` -- and a budget that small has no room for detail
+        # anyway.
+        buckets = (limit - len(kept)) // 2
+        for bucket in range(buckets):
+            start = bucket * total // buckets
+            stop = (bucket + 1) * total // buckets
+            lowest = highest = None
+            low_index = high_index = -1
+            for index in range(start, stop):
+                point = points[index]
+                if not finite(point):
+                    continue
+                if lowest is None or point.value < lowest:
+                    lowest, low_index = point.value, index
+                if highest is None or point.value > highest:
+                    highest, high_index = point.value, index
+            if low_index >= 0:
+                kept[low_index] = points[low_index]
+            if high_index >= 0:
+                kept[high_index] = points[high_index]
+
+        sampled = [kept[index] for index in sorted(kept)]
         return series.model_copy(
             update={"points": sampled, "decimated": True, "total_points": total}
         )

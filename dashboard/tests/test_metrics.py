@@ -515,12 +515,18 @@ def test_unavailable_sources_are_never_asked(tmp_path, settings_for):
     assert unavailable.read_calls == []
 
 
-def test_long_series_are_strided_not_averaged(tmp_path, settings_for):
-    """RL curves are read for their spikes; averaging is what hides them.
+def test_long_series_keep_their_spikes(tmp_path, settings_for):
+    """RL curves are read for their spikes, so decimation must preserve them.
 
-    A loss blowup or a reward collapse is a single-point event. Strided sampling
-    may miss it, but a mean over the window would erase it while looking fine --
-    the worse failure, because it is invisible.
+    This test used to assert only that surviving values were ones that had been
+    recorded (``values <= {1.0, 999.0}``) -- a condition ``{1.0}`` satisfies, so
+    it passed for years while the spike was being dropped. Strided sampling put
+    index 5000 between two sample points (stride 21, and 5000 is not a multiple
+    of it), and the chart showed a flat line where a loss blowup had happened.
+
+    Averaging would have erased it too. The point is that "each returned point
+    is a real measurement" is not the property worth having; "no excursion is
+    missing" is.
     """
     spike_step = 5000
     points = [(step, 1.0) for step in range(20_000)]
@@ -531,9 +537,109 @@ def test_long_series_are_strided_not_averaged(tmp_path, settings_for):
     series = gateway.read(_manifest(tmp_path), ["train/actor/loss"])["train/actor/loss"]
     assert series.decimated is True
     assert series.total_points == 20_000
-    assert len(series.points) <= 1100
-    # Every surviving value is one that was genuinely recorded.
+    assert len(series.points) <= 1000
+    # Every surviving value is one that was genuinely recorded...
     assert {point.value for point in series.points} <= {1.0, 999.0}
+    # ...and the one that matters is among them.
+    assert any(point.value == 999.0 for point in series.points), (
+        "the loss blowup was decimated away; the chart would show a clean curve"
+    )
+
+
+@pytest.mark.parametrize("spike_step", [0, 1, 4999, 5000, 7777, 12_345, 19_998, 19_999])
+def test_a_spike_survives_wherever_it_falls(tmp_path, spike_step, settings_for):
+    """One well-placed index is a weak guarantee; the property is positional.
+
+    A stride-based sampler passes for whichever indices happen to be multiples
+    of the stride, so a single fixed spike position tests the sampler's phase
+    rather than its behaviour. These positions include both ends and several
+    interior points chosen to fall off any plausible stride.
+    """
+    points = [(step, 1.0) for step in range(20_000)]
+    points[spike_step] = (spike_step, 999.0)
+    source = _FakeSource("tb", {"train/actor/loss": points})
+    gateway = MetricGateway(settings_for(max_series_points=1000), sources=[source])
+
+    series = gateway.read(_manifest(tmp_path), ["train/actor/loss"])["train/actor/loss"]
+    spikes = [point for point in series.points if point.value == 999.0]
+    assert spikes, f"a spike at step {spike_step} did not survive decimation"
+    assert spikes[0].step == spike_step, "the spike kept its step"
+
+
+def test_a_collapse_survives_too(tmp_path, settings_for):
+    """Reward collapse is a downward excursion, and min matters as much as max."""
+    points = [(step, 5.0) for step in range(20_000)]
+    points[8_888] = (8_888, -100.0)
+    source = _FakeSource("tb", {"env/return": points})
+    gateway = MetricGateway(settings_for(max_series_points=1000), sources=[source])
+
+    series = gateway.read(_manifest(tmp_path), ["env/return"])["env/return"]
+    assert any(point.value == -100.0 for point in series.points), (
+        "keeping only per-bucket maxima would hide every collapse"
+    )
+
+
+def test_non_finite_points_are_never_decimated_away(tmp_path, settings_for):
+    """A NaN is the event, not a sample -- and an alert depends on it.
+
+    ``nonFiniteSignal`` in the frontend decides whether to report the run as
+    broken by scanning the points it receives. A NaN dropped for display size
+    does not just leave a gap in a chart; it disarms the warning that the run
+    diverged.
+    """
+    points = [(step, 1.0) for step in range(20_000)]
+    points[3_333] = (3_333, float("nan"))
+    points[3_334] = (3_334, float("inf"))
+    source = _FakeSource("tb", {"train/actor/loss": points})
+    gateway = MetricGateway(settings_for(max_series_points=200), sources=[source])
+
+    series = gateway.read(_manifest(tmp_path), ["train/actor/loss"])["train/actor/loss"]
+    steps = {point.step for point in series.points}
+    assert 3_333 in steps and 3_334 in steps, (
+        "the non-finite samples were dropped, so the divergence warning would "
+        "never fire for this run"
+    )
+
+
+def test_decimation_respects_its_budget(tmp_path, settings_for):
+    """Two points per bucket must not double the payload the budget promised."""
+    points = [(step, float(step % 7)) for step in range(50_000)]
+    source = _FakeSource("tb", {"env/return": points})
+    gateway = MetricGateway(settings_for(max_series_points=1000), sources=[source])
+
+    series = gateway.read(_manifest(tmp_path), ["env/return"])["env/return"]
+    assert len(series.points) <= 1000
+    assert series.points == sorted(series.points, key=lambda p: p.step), (
+        "points must stay in step order; uPlot requires a sorted x axis"
+    )
+
+
+@pytest.mark.parametrize("limit", [2, 3, 5, 8, 17, 100, 4000])
+@pytest.mark.parametrize(
+    ("shape", "make"),
+    [
+        ("sawtooth", lambda n: [float(i % 2) for i in range(n)]),
+        ("monotonic", lambda n: [float(i) for i in range(n)]),
+        ("all_nan", lambda n: [float("nan")] * n),
+        ("half_nan", lambda n: [float("nan") if i % 2 else float(i) for i in range(n)]),
+    ],
+)
+def test_the_budget_is_a_bound_not_a_target(tmp_path, limit, shape, make, settings_for):
+    """Three claims share one budget, so their sum must still fit inside it.
+
+    First/last, non-finite points and per-bucket extremes each want room. An
+    earlier revision floored the bucket count at one, which broke the bound for
+    small limits -- and an all-NaN series (a run that diverged completely) would
+    otherwise have carried every one of its 50 000 points into the response.
+    """
+    total = 1_000
+    source = _FakeSource("tb", {"env/return": list(enumerate(make(total)))})
+    gateway = MetricGateway(settings_for(max_series_points=limit), sources=[source])
+
+    series = gateway.read(_manifest(tmp_path), ["env/return"])["env/return"]
+    assert len(series.points) <= limit, f"{shape} at limit {limit} overshot"
+    assert series.points[0].step == 0
+    assert series.points[-1].step == total - 1
 
 
 def test_decimation_always_keeps_the_last_point(tmp_path, settings_for):
