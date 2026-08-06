@@ -89,6 +89,16 @@ reasoning, 428s for Pi0.5 on 4×H20. One fixed threshold cannot serve both.
 
 Interactive docs at `/docs`.
 
+Series longer than `max_series_points` (4000) are reduced by a **min/max
+envelope**, not by sampling every *n*th point. Both keep only real measurements,
+but a strided sample drops whatever falls between its indices — and on an RL
+curve that is the loss blowup, which is the one point worth transferring.
+Bucketing and keeping each bucket's extremes means no excursion can hide inside
+one. Non-finite samples get first claim on the budget, capped at half of it: the
+client decides whether to warn that a run diverged by scanning exactly those
+points, so dropping one silently disables the warning. `decimated` and
+`total_points` report what happened.
+
 `health` is **derived on read and never persisted** — it is a pure function of the
 snapshot's three timestamps and the clock. `state` is what the training process
 wrote; `health` is what the reader concludes. That distinction is what lets a

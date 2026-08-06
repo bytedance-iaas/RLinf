@@ -134,13 +134,21 @@ Every command below has been run as written. It takes about ten minutes end to e
 ### 0. Build the fixture tree
 
 The real thing to verify against is a real run tree, but one live run cannot be in
-eleven states at once. `scripts/make_demo_runs.py` writes a scan root that is:
-eleven runs covering all four health verdicts, `running`/`finished`/`failed`/
+twelve states at once. `scripts/make_demo_runs.py` writes a scan root that is:
+twelve runs covering all four health verdicts, `running`/`finished`/`failed`/
 `pending`, a run with no `max_steps`, a run with a NaN in its loss, a run whose
 step is a minibatch rather than an RL iteration, a GRPO arm with no critic keys,
 sharded media indices with recorded, unrecorded and zero-success clips, one run
 with per-worker logging on and one rank deliberately slow, and real TensorBoard
 event files.
+
+One of the twelve, `libero_10_ppo_onestep`, is there purely as a degenerate
+shape: a single logged point, at step **1**. It is the run that killed the
+Metrics tab in every browser, and the offset is the whole reason it works as a
+fixture — the previous shortest run was two steps from 0, and even a one-step
+version at 0 could not reproduce the hang, which needs `min + incr == min` and
+`0 + 1e-16` is not `0` while `1 + 1e-16` is. Open it after any chart change; the
+shape that broke things is cheaper to keep than to rediscover.
 
 ```bash
 cd dashboard/frontend
@@ -428,6 +436,31 @@ http://localhost:5273/#/compare?run=20260801-101500-libero_10_ppo_baseline&run=2
   different things are never silently put on one axis — the overlay would look
   meaningful and not be.
 - The table carries a **Step semantics** column for the same reason.
+
+### 7b. Zoom, and the axis that grows
+
+On any metrics page, drag horizontally across one chart. Every chart in the run
+zooms together — they share one x axis, which is the point of the cursor group —
+and each grows a **`ZOOMED · RESET`** badge. Clicking it on any one of them
+returns all of them.
+
+Both halves are worth checking, because both were broken:
+
+- A zoomed chart used to be dragged back to the full range by the next SSE push,
+  about a second after releasing the mouse. uPlot calls `hideSelect()` as soon as
+  the drag sets the scale, so the `select.width > 0` test that was guarding
+  against this was always false. Zoom is now recorded in the `setSelect` hook.
+- The badge exists because a chart that has stopped following the run looks
+  exactly like a chart of a run that stopped producing data, and those call for
+  opposite reactions.
+
+The y axis grows to admit a value that exceeds it and never shrinks. Live pushes
+use `setData(data, false)`, which does not recompute scales, so before this a
+loss explosion arriving after the chart was drawn landed outside the plot area
+and the curve looked flat. `npm run check:scales` asserts the property directly,
+including that growing lands on the same bounds a chart freshly built from that
+data would have — otherwise reloading would visibly shift every axis that had
+grown, and the reader could not tell which view was honest.
 
 ### 8. Geometry must not shift when an SSE update lands
 
