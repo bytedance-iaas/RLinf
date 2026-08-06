@@ -183,9 +183,23 @@ Check, in order:
 Then the failure paths, which are the ones worth trusting:
 
 ```bash
-kill -9 <driver_pid>     # health -> unreachable, state stays "running"
+kill -9 <driver_pid>     # health -> unreachable within ~25s, state stays "running"
 kill -STOP <driver_pid>  # health -> unreachable or degraded; see below
 ```
+
+**~25s regardless of how slow the run's steps are**, which is worth checking on a
+VLA job specifically. Liveness is judged against the heartbeat's own tick period
+(five missed 5s ticks, floored at 15s), not against step time — the heartbeat is
+a daemon thread that does not slow down when a step does. Scaling the two
+together is what used to give a 428s/step run a `5 × max(428, 30) = 2140s`
+budget, so a killed driver read as `healthy` for over half an hour.
+
+Progress staleness *does* scale with step time, and should: one step is how long
+a working run may legitimately go without advancing. If a deployment raises
+`runner.run_state.heartbeat_interval_s`, raise
+`RLINF_DASHBOARD_HEARTBEAT_INTERVAL_S` to match — the v2 snapshot has no field
+for the writer's period, so the reader cannot discover it, and a mismatch makes
+every run read as unreachable.
 
 `SIGSTOP` freezes the heartbeat thread too, so it reads as the process being gone.
 The `degraded` verdict is for the case a stopped process cannot produce: heartbeat
@@ -214,7 +228,22 @@ give each its own.
 ```bash
 /tmp/rlinf-dash/bin/python -m pytest dashboard/tests -q
 bash dashboard/tests/smoke_server.sh /tmp/rlinf-dash/bin/python
+bash dashboard/tests/smoke_wheel.sh /tmp/rlinf-dash/bin/python   # needs npm
 ```
+
+The third one builds the artifact a user actually installs. `frontend/dist` is a
+*sibling* of the `rlinf_dashboard` package rather than part of it, so it was never
+wheel data: `pip install rlinf-dashboard` served the API with no UI and said so
+only at debug level. Nothing else catches that, because the suite and the smoke
+server both run against the source tree, where the sibling path resolves — the
+packaged artifact was the only broken thing.
+
+`scripts/bundle_frontend.py` is what fixes it, copying `frontend/dist` into
+`rlinf_dashboard/static/` (gitignored; `package-data` carries it). Run it after
+`npm run build` and before building a wheel, or `--check` to verify the bundled
+copy is current. The smoke test does both, then installs the wheel into a fresh
+venv and asserts the root page returns the app shell and every asset it
+references returns 200.
 
 `dashboard/tests/conftest.py` reads the JSON Schema and the run fixtures from the
 repository root rather than keeping copies. `tests/unit_tests/` on the training

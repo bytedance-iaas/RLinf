@@ -61,15 +61,30 @@ class Settings(BaseSettings):
     #: would make ``/runs`` latency depend on unrelated data.
     scan_max_depth: int = 6
 
-    #: Multiples of ``max(step_time_p50, timeout_floor_s)``. Kept identical to
-    #: the values in ``tests/unit_tests/test_run_state_contract.py``; the shared
-    #: fixtures fail if the two drift.
+    #: Missed heartbeats tolerated before a run is called unreachable. Multiplies
+    #: ``heartbeat_interval_s``, *not* step time: the heartbeat is a fixed-period
+    #: tick that does not slow down when a step does. Scaling it by step time is
+    #: what used to give a 428 s/step VLA run a 36-minute detection window.
     heartbeat_timeout_k: float = 5.0
+
+    #: Multiples of ``max(step_time_p50, timeout_floor_s)`` before a live process
+    #: with no step advance is called degraded. This one *should* scale with step
+    #: time -- one step is how long a working run may go without advancing.
+    #: Kept identical to the values in
+    #: ``tests/unit_tests/test_run_state_contract.py``; the shared fixtures fail
+    #: if the two drift.
     progress_timeout_k: float = 10.0
 
-    #: Lower bound on the timeout budget, for runs with no step-time samples yet
-    #: (startup can take minutes: sglang warmup, simulator boot).
+    #: Lower bound on the *step-time* budget, for runs with no step-time samples
+    #: yet (startup can take minutes: sglang warmup, simulator boot).
     timeout_floor_s: float = 30.0
+
+    #: The writer's heartbeat period. Mirrors
+    #: ``rlinf.utils.run_state.DEFAULT_HEARTBEAT_INTERVAL_S``. The v2 snapshot has
+    #: no field for it, so this is an assumption the reader makes: raise it to
+    #: match if a deployment raises ``runner.run_state.heartbeat_interval_s``, or
+    #: its runs will all read as unreachable.
+    heartbeat_interval_s: float = 5.0
 
     #: SSE push period. The training side heartbeats every 5s by default, so
     #: polling faster than this only costs syscalls.

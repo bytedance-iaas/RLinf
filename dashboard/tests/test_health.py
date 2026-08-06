@@ -72,7 +72,7 @@ def test_missing_snapshot_is_unknown():
 
 
 def test_dead_heartbeat_is_unreachable():
-    """No heartbeat for 5x the step-time budget means the process is gone.
+    """Enough missed ticks means the process is gone.
 
     This is the case ``state`` cannot express: a ``kill -9``'d writer leaves
     ``state: running`` behind forever, because a dead process cannot record its
@@ -158,41 +158,98 @@ def test_running_without_a_heartbeat_is_unknown():
 
 
 def test_budget_floor_protects_slow_startup():
-    """With no step-time samples, the floor -- not zero -- is the budget.
+    """With no step-time samples, the floor -- not zero -- is the *step* budget.
 
     Startup legitimately takes minutes (sglang warmup, simulator boot), and a
-    zero budget would flag every run as unreachable within a second of launch.
+    zero budget would flag every run as hung within a second of launch. This is
+    about progress, not liveness: a run this new has a fresh heartbeat.
     """
     starting = snapshot(
-        heartbeat_at=NOW - timedelta(seconds=100),
+        heartbeat_at=NOW - timedelta(seconds=2),
         last_progress_at=None,
         last_metric_at=None,
         timing={"started_at": NOW - timedelta(seconds=100), "elapsed_s": 100.0},
     )
     verdict = derive_health(starting, NOW, timeout_floor_s=30.0)
     assert verdict.budget_s == 30.0
-    assert verdict.health == Health.HEALTHY  # 100s < 5 * 30s
+    assert verdict.health == Health.HEALTHY
 
 
-def test_budget_scales_with_the_run_s_own_step_time():
-    """A fixed threshold cannot work across RLinf.
+def test_progress_staleness_scales_with_the_run_s_own_step_time():
+    """A fixed progress threshold cannot work across RLinf.
 
     Verified step times span two orders of magnitude: seconds for reasoning,
-    428s for Pi0.5 on 4xH20. The same 300s of silence is a hang in one and one
-    normal step in the other -- which is why the budget is a multiple of the
-    run's own p50.
+    428s for Pi0.5 on 4xH20. The same 300s without a completed step is a hang in
+    one and less than one normal step in the other -- which is why *this* budget
+    is a multiple of the run's own p50.
     """
-    silence = timedelta(seconds=300)
+    stalled = timedelta(seconds=3000)
     fast = snapshot(
-        heartbeat_at=NOW - silence,
+        heartbeat_at=NOW - timedelta(seconds=2),
+        last_progress_at=NOW - stalled,
         timing={"started_at": NOW, "elapsed_s": 1.0, "step_time_p50": 2.0},
     )
     slow = snapshot(
-        heartbeat_at=NOW - silence,
+        heartbeat_at=NOW - timedelta(seconds=2),
+        last_progress_at=NOW - stalled,
         timing={"started_at": NOW, "elapsed_s": 1.0, "step_time_p50": 428.0},
     )
-    assert derive_health(fast, NOW).health == Health.UNREACHABLE
+    assert derive_health(fast, NOW).health == Health.DEGRADED
     assert derive_health(slow, NOW).health == Health.HEALTHY
+
+
+def test_liveness_does_not_scale_with_step_time():
+    """A dead driver must be called dead on the same schedule for every run.
+
+    This is the one behaviour in this file that was deliberately reversed. It
+    used to assert that a run with a 428s step could go 300s without a heartbeat
+    and still read `healthy`, on the theory that a slow run deserves a slow
+    timeout. It does not: the heartbeat is a fixed 5s tick from a daemon thread
+    that does not wait for a step, so 300s of silence is 60 missed ticks whatever
+    the step time is. At the old `5 x max(p50, 30)`, killing the driver of a
+    428s/step VLA job left it reading `healthy` for 36 minutes -- and "is the
+    process alive" is the single question this page exists to answer.
+    """
+    silence = timedelta(seconds=300)
+    for p50 in (2.0, 428.0):
+        wedged = snapshot(
+            heartbeat_at=NOW - silence,
+            timing={"started_at": NOW, "elapsed_s": 1.0, "step_time_p50": p50},
+        )
+        verdict = derive_health(wedged, NOW)
+        assert verdict.health == Health.UNREACHABLE, (
+            f"a driver silent for {silence.seconds}s reads as {verdict.health} "
+            f"when p50={p50}s; step time must not buy a dead process more time"
+        )
+
+
+def test_a_killed_driver_is_detected_within_about_half_a_minute():
+    """The window a user actually experiences, stated as a number.
+
+    Five missed 5s ticks, floored at 15s: the run flips well inside a minute
+    rather than inside an hour.
+    """
+    slow_steps = {"started_at": NOW, "elapsed_s": 1.0, "step_time_p50": 428.0}
+    still_ok = snapshot(heartbeat_at=NOW - timedelta(seconds=20), timing=slow_steps)
+    assert derive_health(still_ok, NOW).health == Health.HEALTHY
+
+    gone = snapshot(heartbeat_at=NOW - timedelta(seconds=45), timing=slow_steps)
+    assert derive_health(gone, NOW).health == Health.UNREACHABLE
+
+
+def test_a_slower_configured_heartbeat_widens_only_the_liveness_budget():
+    """A deployment that ticks slower must be judged against its own period.
+
+    The v2 snapshot has no field for the writer's interval, so this is the
+    reader's setting -- and it has to be honoured, or raising the training-side
+    interval would make every run read as unreachable.
+    """
+    quiet = snapshot(
+        heartbeat_at=NOW - timedelta(seconds=100),
+        timing={"started_at": NOW, "elapsed_s": 1.0, "step_time_p50": 2.0},
+    )
+    assert derive_health(quiet, NOW).health == Health.UNREACHABLE
+    assert derive_health(quiet, NOW, heartbeat_interval_s=60.0).health == Health.HEALTHY
 
 
 def test_verdict_carries_its_evidence():

@@ -104,6 +104,7 @@ class StateStore:
             heartbeat_timeout_k=self._settings.heartbeat_timeout_k,
             progress_timeout_k=self._settings.progress_timeout_k,
             timeout_floor_s=self._settings.timeout_floor_s,
+            heartbeat_interval_s=self._settings.heartbeat_interval_s,
         )
         verdict = self._refine_with_heartbeat_file(run.run_root, verdict, now)
 
