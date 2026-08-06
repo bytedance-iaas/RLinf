@@ -71,18 +71,30 @@ class OfflineRunner:
         self.log_thread.start()
 
     def _log_worker(self):
-        """Background thread for processing log messages."""
+        """Background thread for processing log messages.
+
+        Kept byte-for-byte in step with ``EmbodiedRunner._log_worker``; the two
+        runners own separate copies of this machinery, and the copies drifting is
+        how the deadlock below survived in one of them after being fixed in the
+        other. A future cleanup should share it the way ``AsyncWeightSyncMixin``
+        shares weight-sync state.
+
+        Every successful ``get`` is matched by exactly one ``task_done`` in a
+        ``finally``. A backend that raises would otherwise leave the item
+        outstanding forever, and the drain in ``_finish_run`` waits on that count.
+        """
         while not self.stop_logging:
             try:
                 # Wait for log message with timeout
                 log_func, args = self.log_queue.get(timeout=0.1)
-                log_func(*args)
-                self.log_queue.task_done()
             except queue.Empty:
                 continue
-            except Exception as e:
-                self.logger.error("Logging error: %s", e)
-                continue
+            try:
+                log_func(*args)
+            except Exception as e:  # noqa: BLE001 - logging must not end a run
+                self.logger.warning("Metric logging failed, continuing: %s", e)
+            finally:
+                self.log_queue.task_done()
 
     def print_metrics_table_async(
         self,
@@ -381,11 +393,38 @@ class OfflineRunner:
         # Stop logging thread. Drain the queue *before* setting the stop flag:
         # ``_log_worker`` re-checks ``stop_logging`` between items, so raising the
         # flag first lets the loop exit with entries still pending, and those
-        # entries never get their ``task_done()`` -- leaving ``log_queue.join()``
+        # entries never get their ``task_done()`` -- leaving the drain below
         # blocked forever.
-        self.log_queue.join()  # Wait for all queued logs to be processed
+        self._drain_log_queue(timeout_s=self.LOG_DRAIN_TIMEOUT_S)
         self.stop_logging = True
         self.log_thread.join(timeout=1.0)
+
+    #: See ``EmbodiedRunner.LOG_DRAIN_TIMEOUT_S``. Kept equal to it deliberately:
+    #: two runners waiting different amounts of time for the same kind of work
+    #: would be a difference nobody could justify when asked.
+    LOG_DRAIN_TIMEOUT_S = 60.0
+
+    def _drain_log_queue(self, timeout_s: float) -> None:
+        """Wait for queued log entries, but never forever.
+
+        ``queue.Queue.join()`` takes no timeout, so this polls the same condition
+        it waits on. A backend that *hangs* inside ``log_func`` keeps its item
+        outstanding without ever raising, and an unbounded join would hold the
+        run in ``running`` forever with the training already over.
+        """
+        deadline = time.monotonic() + timeout_s
+        with self.log_queue.all_tasks_done:
+            while self.log_queue.unfinished_tasks:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.logger.warning(
+                        "Gave up waiting for %d queued metric log(s) after %.0fs; "
+                        "finishing the run anyway.",
+                        self.log_queue.unfinished_tasks,
+                        timeout_s,
+                    )
+                    return
+                self.log_queue.all_tasks_done.wait(remaining)
 
     def _save_checkpoint(self, metrics: dict | None = None):
         self.logger.info(f"Saving checkpoint at step {self.global_step}.")

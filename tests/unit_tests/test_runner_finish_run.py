@@ -21,6 +21,7 @@ still pending, those entries never get their ``task_done()``, and the
 ``log_queue.join()`` inside teardown blocks forever.
 """
 
+import logging
 import queue
 import threading
 import time
@@ -51,17 +52,26 @@ class _FakeMetricLogger:
 
 
 def _make_stub(runner_cls):
-    """Build a stub carrying the real ``_finish_run`` and ``_log_worker``."""
+    """Build a stub carrying the real teardown methods.
+
+    ``_drain_log_queue`` and ``LOG_DRAIN_TIMEOUT_S`` are taken from the real
+    class too, not stubbed: the property under test is that teardown terminates,
+    and substituting the thing that does the waiting would test nothing.
+    """
 
     class _Stub:
         _finish_run = runner_cls._finish_run
         _log_worker = runner_cls._log_worker
+        _drain_log_queue = runner_cls._drain_log_queue
+        LOG_DRAIN_TIMEOUT_S = runner_cls.LOG_DRAIN_TIMEOUT_S
 
         def __init__(self):
             self.metric_logger = _FakeMetricLogger()
             self.stop_logging = False
             self.log_queue = queue.Queue()
             self.drained = []
+            # The drain and the worker both log on the failure paths.
+            self.logger = logging.getLogger("test-finish-run")
             self.log_thread = threading.Thread(target=self._log_worker, daemon=True)
             self.log_thread.start()
 
