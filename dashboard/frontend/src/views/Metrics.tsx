@@ -9,9 +9,15 @@
  * server and nothing here changes -- which is the whole point, since the four
  * shipped templates differ only in data.
  *
- * `unmatched` is rendered, in a collapsed group. A metric the server found but no
- * chart claimed would otherwise vanish, and a dropped metric looks like a missing
- * feature rather than like an unclaimed key.
+ * `unmatched` is rendered, in a collapsed group titled "Other keys". A metric the
+ * server found but no chart claimed would otherwise vanish, and a dropped metric
+ * looks like a missing feature rather than like an unclaimed key. The title says
+ * what the group holds rather than why it exists: "unmatched" is a fact about the
+ * template, and nobody reading a run wants to be told about the template.
+ *
+ * Groups render a title and a chart count, and no prose. Standing subtitles like
+ * "Is the update stable?" are read once and then sit there costing vertical space
+ * on every visit, pushing the charts -- the thing being looked at -- down the page.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -228,9 +234,7 @@ export function Metrics(props: MetricsProps) {
       {unmatched.length > 0 && (
         <Group
           group={{
-            title: "Unmatched keys",
-            description:
-              "Logged by this run but claimed by no chart in the template. Shown so a metric cannot silently disappear.",
+            title: "Other keys",
             charts: unmatched.map((key) => ({ keys: [key], title: key })),
           }}
           series={series}
@@ -269,7 +273,6 @@ function Group(props: {
       <button className="group-head" onClick={props.onToggle} type="button" aria-expanded={!folded}>
         <span className="group-caret">{folded ? "▸" : "▾"}</span>
         <span className="group-title">{group.title ?? "Metrics"}</span>
-        {group.description && <span className="group-desc">{group.description}</span>}
         <span className="group-count">{group.charts.length}</span>
       </button>
       {/* Folded groups are unmounted, not hidden. A collapsed group holding twenty

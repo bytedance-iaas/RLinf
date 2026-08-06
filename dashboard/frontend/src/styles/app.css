@@ -577,11 +577,6 @@ a:hover {
   font-weight: var(--type-headline-md-weight);
 }
 
-.group-desc {
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-muted);
-}
-
 .group-count {
   margin-left: auto;
   font-family: var(--font-jetbrains-mono);

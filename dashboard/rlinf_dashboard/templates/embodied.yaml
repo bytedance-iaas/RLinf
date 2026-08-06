@@ -28,7 +28,6 @@ north_star:
 
 groups:
   - title: Task performance
-    description: Is the policy getting better at the task?
     charts:
       - keys: [env/success_once]
         title: Success rate
@@ -52,7 +51,6 @@ groups:
         # dropped, and a run logs only one of them.
 
   - title: Policy optimization
-    description: Is the update stable?
     charts:
       - keys:
           - train/actor/policy_loss
@@ -96,7 +94,6 @@ groups:
   # here rather than in a separate template that would have to duplicate the
   # other six groups.
   - title: Off-policy lag
-    description: How stale is the data the actor is training on?
     charts:
       - keys: [train/actor/current_version, train/actor/average_version]
         title: Policy version
@@ -137,7 +134,6 @@ groups:
         # threshold, not the optimizer, is what is limiting the run.
 
   - title: Value function
-    description: Is the critic tracking returns?
     charts:
       - keys: [train/critic/value_loss, train/critic/loss]
         title: Critic loss
@@ -153,7 +149,6 @@ groups:
         scale: log
 
   - title: Rollout
-    description: What the actor was trained on.
     charts:
       - keys: [rollout/rewards, rollout/reward, rollout/mean_reward]
         title: Rollout reward
@@ -168,7 +163,6 @@ groups:
         # spread collapsing toward it means the batch stopped carrying signal.
 
   - title: Throughput
-    description: Where iteration time goes.
     charts:
       - keys:
           - time/generate_rollouts

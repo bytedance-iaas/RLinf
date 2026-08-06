@@ -86,7 +86,7 @@ groups:
 
   - title: Value and reward heads
     collapsed: true
-    description: Value / reward / progress SFT workers only.
+    # Value / reward / progress SFT workers only.
     charts:
       - keys: [train/predicted_value_mean, eval/predicted_value_mean]
         title: Predicted value

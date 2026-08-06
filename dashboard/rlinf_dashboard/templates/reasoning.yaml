@@ -58,7 +58,6 @@ north_star:
 
 groups:
   - title: Task performance
-    description: Is the model producing better answers?
     charts:
       - keys:
           - rollout/reward_scores
@@ -82,7 +81,6 @@ groups:
         # this falling means the model is being cut off, not answering better.
 
   - title: Policy optimization
-    description: Is the update stable?
     charts:
       # Doubled spelling first: reasoning_runner is the runner this template is
       # named for. The clean spelling follows for the three agent-style runners,
@@ -125,7 +123,7 @@ groups:
         scale: log
 
   - title: Value function
-    description: Only present when a critic is configured.
+    # Only present when a critic is configured.
     charts:
       # reasoning_runner is the only runner in this family that has a critic, so
       # the doubled spelling is the one that will bind in practice.
@@ -209,7 +207,7 @@ groups:
 
   - title: Agent
     collapsed: true
-    description: Multi-agent and tool-use runs only.
+    # Multi-agent and tool-use runs only.
     charts:
       - keys: [agent/count/n_rollouts, agent/count/n_rollouts_w_reward]
         title: Rollouts

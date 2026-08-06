@@ -273,7 +273,6 @@ export interface TemplateChart {
 
 export interface TemplateGroup {
   title?: string;
-  description?: string;
   /** Start folded. Used for eval and for the auto-binned "Other" bucket. */
   collapsed?: boolean;
   unit?: string;
