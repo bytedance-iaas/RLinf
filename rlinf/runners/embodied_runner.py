@@ -129,18 +129,27 @@ class EmbodiedRunner:
         self.log_thread.start()
 
     def _log_worker(self):
-        """Background thread for processing log messages."""
+        """Background thread for processing log messages.
+
+        Every successful ``get`` is matched by exactly one ``task_done`` in a
+        ``finally``. A logging backend that raises -- a closed wandb run, a full
+        disk -- would otherwise leave the item outstanding forever, and
+        ``_finish_run``'s ``log_queue.join()`` waits on that count: one failed
+        table render would hang the end of a multi-hour training job. The
+        ordering fix in ``_finish_run`` closes the same hole from the other side.
+        """
         while not self.stop_logging:
             try:
                 # Wait for log message with timeout
                 log_func, args = self.log_queue.get(timeout=0.1)
-                log_func(*args)
-                self.log_queue.task_done()
             except queue.Empty:
                 continue
-            except Exception as e:
-                print(f"Logging error: {e}")
-                continue
+            try:
+                log_func(*args)
+            except Exception as e:  # noqa: BLE001 - logging must not end a run
+                self.logger.warning(f"Metric logging failed, continuing: {e}")
+            finally:
+                self.log_queue.task_done()
 
     def print_metrics_table_async(
         self,
@@ -472,11 +481,39 @@ class EmbodiedRunner:
         # Stop logging thread. Drain the queue *before* setting the stop flag:
         # ``_log_worker`` re-checks ``stop_logging`` between items, so raising the
         # flag first lets the loop exit with entries still pending, and those
-        # entries never get their ``task_done()`` -- leaving ``log_queue.join()``
+        # entries never get their ``task_done()`` -- leaving the drain below
         # blocked forever.
-        self.log_queue.join()  # Wait for all queued logs to be processed
+        self._drain_log_queue(timeout_s=self.LOG_DRAIN_TIMEOUT_S)
         self.stop_logging = True
         self.log_thread.join(timeout=1.0)
+
+    #: How long ``_finish_run`` waits for queued metric logging to complete.
+    #: Generous, because the last flush of a long run is real work; bounded,
+    #: because it is the last thing between a finished run and its terminal
+    #: state, and diagnostics must never be what stops a run from finishing.
+    LOG_DRAIN_TIMEOUT_S = 60.0
+
+    def _drain_log_queue(self, timeout_s: float) -> None:
+        """Wait for queued log entries, but never forever.
+
+        ``queue.Queue.join()`` takes no timeout, so this polls the same condition
+        it waits on. A backend that *hangs* inside ``log_func`` -- an unreachable
+        wandb endpoint, a stuck NFS write -- keeps its item outstanding without
+        ever raising, and an unbounded join would hold the run in ``running``
+        forever with the training already over.
+        """
+        deadline = time.monotonic() + timeout_s
+        with self.log_queue.all_tasks_done:
+            while self.log_queue.unfinished_tasks:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.logger.warning(
+                        f"Gave up waiting for {self.log_queue.unfinished_tasks} "
+                        f"queued metric log(s) after {timeout_s:.0f}s; "
+                        "finishing the run anyway."
+                    )
+                    return
+                self.log_queue.all_tasks_done.wait(remaining)
 
     def _advance_env_step(self) -> None:
         """Tell the env workers which step upcoming videos belong to.

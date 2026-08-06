@@ -113,42 +113,72 @@ class _TensorboardLogger(_BaseBackend):
 
 
 class _WandbBackend(_BaseBackend):
+    """One wandb run, addressed by the handle ``wandb.init`` returned.
+
+    Module-level ``wandb.log`` writes to whichever run is *currently active*, and
+    ``wandb.init`` makes the run it creates active. With
+    ``runner.per_worker_log: true`` this class is instantiated once for the
+    aggregate and once per (worker group, rank), so every later ``init`` steals
+    the module-level target from the ones before it: the aggregate's metrics land
+    in whichever rank initialised last, and ``wandb.finish()`` closes that rank's
+    run rather than the one this object owns.
+
+    Nothing errors when that happens -- the data is simply attributed to the
+    wrong run -- so the handle is held explicitly. The module is still kept for
+    the ``Table`` and ``Video`` constructors, which are module-level by design.
+    """
+
     name = "wandb"
 
-    def __init__(self, wandb_module):
+    def __init__(self, wandb_module, run=None):
         self._wandb = wandb_module
+        # `wandb.run` is the current global run; used only when no handle was
+        # passed, which keeps a caller that predates the handle working.
+        self._run = run if run is not None else getattr(wandb_module, "run", None)
         self._finished = False
 
+    @property
+    def _target(self):
+        """The run to write to, falling back to the module if there is none."""
+        return self._run if self._run is not None else self._wandb
+
     def log(self, data: dict, step: int) -> None:
-        self._wandb.log(data=data, step=step)
+        self._target.log(data=data, step=step)
 
     def log_table(self, df_data, name: str, step: int) -> None:
         table = self._wandb.Table(dataframe=df_data)
-        self._wandb.log({name: table}, step=step)
+        self._target.log({name: table}, step=step)
 
     def log_media(self, path: str, name: str, step: int, **kwargs) -> None:
-        self._wandb.log({name: self._wandb.Video(path, **kwargs)}, step=step)
+        self._target.log({name: self._wandb.Video(path, **kwargs)}, step=step)
 
     def finish(self) -> None:
         if not self._finished:
             self._finished = True
-            self._wandb.finish()
+            self._target.finish()
 
 
 class _SwanlabBackend(_BaseBackend):
+    """One swanlab run. Same handle-versus-module hazard as :class:`_WandbBackend`."""
+
     name = "swanlab"
 
-    def __init__(self, swanlab_module):
+    def __init__(self, swanlab_module, run=None):
         self._swanlab = swanlab_module
+        self._run = run
         self._finished = False
 
+    @property
+    def _target(self):
+        return self._run if self._run is not None else self._swanlab
+
     def log(self, data: dict, step: int) -> None:
-        self._swanlab.log(data=data, step=step)
+        self._target.log(data=data, step=step)
 
     def finish(self) -> None:
         if not self._finished:
             self._finished = True
-            self._swanlab.finish()
+            self._target.finish()
 
 
 class MetricLogger:
@@ -231,7 +261,10 @@ class MetricLogger:
             settings = None
             if self.wandb_proxy:
                 settings = wandb.Settings(https_proxy=self.wandb_proxy)
-            wandb.init(
+            # The returned handle is what this bundle logs through. Discarding it
+            # and calling `wandb.log` would send this bundle's metrics to
+            # whichever run was initialised most recently -- see _WandbBackend.
+            run = wandb.init(
                 entity=self.wandb_entity,
                 project=self.project_name,
                 name=experiment_name,
@@ -240,7 +273,7 @@ class MetricLogger:
                 dir=wandb_log_path,
                 reinit=True,
             )
-            logger["wandb"] = _WandbBackend(wandb)
+            logger["wandb"] = _WandbBackend(wandb, run)
 
         if "swanlab" in self.logger_backends:
             import swanlab
@@ -248,14 +281,14 @@ class MetricLogger:
             swanlab_log_path = os.path.join(log_path, "swanlab", log_path_suffix)
             os.makedirs(swanlab_log_path, exist_ok=True)
 
-            swanlab.init(
+            run = swanlab.init(
                 project=self.project_name,
                 experiment_name=experiment_name,
                 config=self.config,
                 logdir=swanlab_log_path,
                 mode=self.swanlab_mode,
             )
-            logger["swanlab"] = _SwanlabBackend(swanlab)
+            logger["swanlab"] = _SwanlabBackend(swanlab, run)
 
         if "tensorboard" in self.logger_backends:
             tensorboard_log_path = os.path.join(
