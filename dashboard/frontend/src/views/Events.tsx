@@ -8,7 +8,7 @@
  * a shape the runner is free to change would make a wrong reading look authoritative.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { useFetch } from "../api/useLive";
 import type { CheckpointEntry, EventKind, RunEvent, RunStatus } from "../api/types";
@@ -24,6 +24,19 @@ export interface EventsProps {
 /** Kinds the "problems only" filter keeps. */
 const PROBLEM_KINDS: ReadonlySet<string> = new Set<EventKind>(["warn", "error"]);
 
+/** Rows per page. */
+const PAGE_SIZE = 50;
+
+/**
+ * How many events are fetched.
+ *
+ * The endpoint returns the *tail* of `events.jsonl`, so a run with more than
+ * this has already lost its oldest entries before the page sees them. That is
+ * worth stating rather than hiding behind pagination: paging to the last page
+ * of a truncated log looks exactly like reaching the start of the run.
+ */
+const FETCH_LIMIT = 500;
+
 export function Events(props: EventsProps) {
   const runId = props.status.run_id;
   const stepUnit = semanticsShort(
@@ -33,7 +46,7 @@ export function Events(props: EventsProps) {
   const [problemsOnly, setProblemsOnly] = useState(false);
 
   const eventsQuery = useFetch<RunEvent[]>(
-    useCallback((signal) => api.events(runId, 500, signal), [runId]),
+    useCallback((signal) => api.events(runId, FETCH_LIMIT, signal), [runId]),
     [runId, props.dataVersion],
   );
   const checkpointsQuery = useFetch<CheckpointEntry[]>(
@@ -52,6 +65,23 @@ export function Events(props: EventsProps) {
   const problemCount = (eventsQuery.data ?? []).filter((event) =>
     PROBLEM_KINDS.has(event.kind),
   ).length;
+
+  const [page, setPage] = useState(0);
+  // Back to the first page whenever the set of rows changes meaning. Staying on
+  // page 4 of a filter that now has one page reads as an empty log.
+  useEffect(() => setPage(0), [runId, problemsOnly]);
+
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  // Clamped rather than stored back: a live run can shrink the filtered set
+  // between renders, and writing the correction into state would re-render to
+  // fix a number the user never saw.
+  const current = Math.min(page, pageCount - 1);
+  const start = current * PAGE_SIZE;
+  const pageRows = rows.slice(start, start + PAGE_SIZE);
+
+  // The tail was full, so `events.jsonl` had at least this many lines and the
+  // oldest are not on this page or any other.
+  const truncated = (eventsQuery.data ?? []).length >= FETCH_LIMIT;
 
   const exit = props.status.snapshot?.exit ?? null;
   const checkpoints = checkpointsQuery.data ?? [];
@@ -81,12 +111,61 @@ export function Events(props: EventsProps) {
           </div>
         </div>
         <span className="control-value faint">
-          {rows.length} of {(eventsQuery.data ?? []).length}
+          {rows.length === 0
+            ? `0 of ${(eventsQuery.data ?? []).length}`
+            : `${start + 1}–${start + pageRows.length} of ${rows.length}`}
+          {problemsOnly && ` (filtered from ${(eventsQuery.data ?? []).length})`}
         </span>
         {problemCount > 0 && (
           <span className="chip">
             {problemCount} warn/error
           </span>
+        )}
+        {pageCount > 1 && (
+          <div className="control">
+            <span>Page</span>
+            <div className="control-group">
+              <button
+                className="btn"
+                type="button"
+                onClick={() => setPage(0)}
+                disabled={current === 0}
+                aria-label="First page"
+              >
+                ‹‹
+              </button>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => setPage(current - 1)}
+                disabled={current === 0}
+                aria-label="Previous page"
+              >
+                ‹
+              </button>
+              <span className="control-value" aria-live="polite">
+                {current + 1} / {pageCount}
+              </span>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => setPage(current + 1)}
+                disabled={current >= pageCount - 1}
+                aria-label="Next page"
+              >
+                ›
+              </button>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => setPage(pageCount - 1)}
+                disabled={current >= pageCount - 1}
+                aria-label="Last page"
+              >
+                ››
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
@@ -115,8 +194,8 @@ export function Events(props: EventsProps) {
       )}
 
       <div className="events">
-        {rows.map((event, index) => (
-          <div className="event" data-kind={event.kind} key={`${event.ts}-${index}`}>
+        {pageRows.map((event, index) => (
+          <div className="event" data-kind={event.kind} key={`${event.ts}-${start + index}`}>
             <span className="event-time" title={timestamp(event.ts)}>
               {clockTime(event.ts)}
             </span>
@@ -128,6 +207,18 @@ export function Events(props: EventsProps) {
           </div>
         ))}
       </div>
+
+      {/* Said on the last page only, where "no more rows" would otherwise read as
+          "this is where the run began". The server returns the tail of the file,
+          so what is missing is the oldest entries -- the launch and early phases,
+          which is exactly what someone paging backwards is looking for. */}
+      {truncated && current === pageCount - 1 && (
+        <Note title="Older events not shown">
+          This log is the most recent {FETCH_LIMIT} entries. The run wrote more
+          before them, including its start, and they are in{" "}
+          <Code>events.jsonl</Code> under the run root.
+        </Note>
+      )}
 
       {/* The checkpoint index, on the same page: "when did it last save" and "what
           happened" are the same question during an incident, and the resume path is
