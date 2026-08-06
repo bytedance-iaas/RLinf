@@ -168,16 +168,23 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
                     training_metrics = actor_training_handle.wait()
 
                 self.global_step += 1
-                self.reporter.set_progress(
-                    step=self.global_step,
-                    epoch=self.epoch,
-                    step_duration_s=time.time() - step_started,
-                )
                 self.actor.set_global_step(self.global_step).wait()
                 with self.timer("update_rollout_weights"):
                     self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
                 self.rollout.set_global_step(self.global_step).wait()
                 self._advance_env_step()
+                # Reported last, so the recorded duration covers the whole
+                # iteration. Reporting it before the weight sync left
+                # `progress.step_duration_s` short by that sync -- real per-step
+                # work, not the eval and save the synchronous runner excludes on
+                # purpose -- so the dashboard's step time and ETA read faster
+                # than the run actually was, and `time/step` in TensorBoard
+                # disagreed with them.
+                self.reporter.set_progress(
+                    step=self.global_step,
+                    epoch=self.epoch,
+                    step_duration_s=time.time() - step_started,
+                )
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}

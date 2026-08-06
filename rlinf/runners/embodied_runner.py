@@ -518,20 +518,29 @@ class EmbodiedRunner:
     def _advance_env_step(self) -> None:
         """Tell the env workers which step upcoming videos belong to.
 
-        Only the media index reads this, so it must never hold up training. The
-        synchronous runner sets it inline with the actor and rollout because the
-        env group is idle at that point in its loop; the async runners cannot,
-        since ``interact`` is a long-running call that owns the env workers for
-        the whole run. There the update lands between rollout chunks, so a clip
-        flushed mid-step can still carry the previous step -- off by at most one,
-        against a row that otherwise carries no step at all.
+        **Deliberately not waited on.** Only the media index reads this, so it
+        must never hold up training -- and an earlier version of this method
+        said exactly that while calling ``.wait()``, putting a synchronous
+        round-trip to the whole env group into the step loop of every async
+        runner. Diagnostics that block the thing they are describing are worse
+        than absent diagnostics, because the cost is invisible in the numbers
+        they report.
+
+        Fire-and-forget matches what the synchronous runner already does with
+        the same call. The label can therefore land a moment late: a clip
+        flushed while the request is still in flight carries the previous step
+        -- off by at most one, against a row that would otherwise carry no step
+        at all.
 
         Failure is logged and swallowed: an env group that cannot take the call
         (already draining, or a runner whose env workers do not implement it)
-        would otherwise kill a training run over a video label.
+        would otherwise kill a training run over a video label. Dispatch is what
+        is guarded here; a failure raised on the worker afterwards is not
+        observed, which is the price of not waiting and is the right trade for
+        a video label.
         """
         try:
-            self.env.set_global_step(self.global_step).wait()
+            self.env.set_global_step(self.global_step)
         except Exception as exc:  # noqa: BLE001 - a video label is never fatal
             self.logger.warning(
                 f"Could not set the env step for media indexing: {exc}. "

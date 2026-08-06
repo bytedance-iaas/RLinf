@@ -179,14 +179,19 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
 
                 if not skip_step:
                     self.global_step += 1
+                    self._advance_env_step()
+                    if self.global_step % self.weight_sync_interval == 0:
+                        self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
+                    # Reported after the weight sync so the recorded duration
+                    # covers the whole iteration; see the note in
+                    # ``AsyncPPOEmbodiedRunner._run_impl``. On the steps that do
+                    # not sync this changes nothing, which is why the difference
+                    # was easy to miss.
                     self.reporter.set_progress(
                         step=self.global_step,
                         epoch=self.epoch,
                         step_duration_s=time.time() - step_started,
                     )
-                    self._advance_env_step()
-                    if self.global_step % self.weight_sync_interval == 0:
-                        self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
 
                     training_metrics = {
                         f"train/{k}": v
