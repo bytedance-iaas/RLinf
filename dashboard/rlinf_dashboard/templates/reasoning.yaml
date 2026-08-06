@@ -113,6 +113,14 @@ groups:
           - train/actor/actor/dual_cliped_ratio
           - train/actor/dual_cliped_ratio
         title: Clipped ratio
+      - keys: [train/actor/actor/ratio, train/actor/ratio]
+        title: Importance ratio
+        # The unclipped ratio, which the actor emits as `actor/ratio`
+        # (megatron_actor_worker.py) and this template did not chart -- the run
+        # that found it reported the key as unmatched. Only the clipped forms
+        # above were listed, and those say how often the trust region bound the
+        # update, not how far the update wanted to move. The embodied template
+        # has charted this since it was written; reasoning had the gap.
       - keys: [train/actor/actor/entropy_loss, train/actor/entropy_loss]
         title: Entropy loss
         # Entropy collapsing toward zero while reward is still climbing is the
