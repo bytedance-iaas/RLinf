@@ -18,12 +18,43 @@
  *   empty plot instead.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import type { PlotData } from "../lib/series";
-import { resolveColor, xExtent } from "../lib/series";
+import { resolveColor, xExtent, yGrowth } from "../lib/series";
 import { metric as formatMetric } from "../lib/format";
+
+/**
+ * Charts that share a cursor group also share a zoom, so they share its reset.
+ *
+ * uPlot syncs a drag-zoom across every plot in a `cursor.sync` group -- that is
+ * the point of the group, since the whole page reads one x axis. Reset therefore
+ * has to be group-wide too. Left per-chart, dragging would zoom twenty-five
+ * panels and a reset would return one of them, leaving the rest zoomed and
+ * still, correctly, saying so.
+ *
+ * A module-level registry rather than context: `Chart` is used from three views
+ * that have no common provider, and the only shared state is this one callback
+ * per group.
+ */
+const zoomResetGroups = new Map<string, Set<() => void>>();
+
+function joinZoomGroup(group: string | undefined, reset: () => void): () => void {
+  if (!group) return () => {};
+  const members = zoomResetGroups.get(group) ?? new Set();
+  members.add(reset);
+  zoomResetGroups.set(group, members);
+  return () => {
+    members.delete(reset);
+    if (members.size === 0) zoomResetGroups.delete(group);
+  };
+}
+
+function broadcastZoomReset(group: string | undefined): void {
+  if (!group) return;
+  for (const reset of zoomResetGroups.get(group) ?? []) reset();
+}
 
 export interface ChartSeriesSpec {
   /** Legend label. The full metric key goes in `title`. */
@@ -118,6 +149,14 @@ export function Chart(props: ChartProps) {
   const plotRef = useRef<uPlot | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [hover, setHover] = useState<{ left: number; idx: number } | null>(null);
+  /**
+   * True once the reader has drag-zoomed, until they reset.
+   *
+   * State rather than a ref because it is shown: a chart that has stopped
+   * following the run looks identical to one that is following a run which
+   * stopped, and those call for opposite reactions. The badge is the difference.
+   */
+  const [zoomed, setZoomed] = useState(false);
 
   const pointCount = countPoints(data);
   const useLog = logScale === true && logIsUsable(data);
@@ -268,6 +307,18 @@ export function Chart(props: ChartProps) {
             setHover(idx === null || idx === undefined || left < 0 ? null : { left, idx });
           },
         ],
+        // A drag-zoom is the only way the user pins the view, and it has to be
+        // recorded here rather than read back off the plot afterwards: uPlot
+        // calls `hideSelect()` immediately after the drag sets the scale, so
+        // `select.width` is 0 by the time any later code looks at it. Testing
+        // that was the previous way of asking "is this zoomed", and it was
+        // always false -- so every push dragged a zoomed reader back to the full
+        // range one second after they let go of the mouse.
+        setSelect: [
+          (self) => {
+            if (self.select.width > 0) setZoomed(true);
+          },
+        ],
       },
     };
     // `series` identity changes on every toggle; the effect below applies show/hide
@@ -312,14 +363,25 @@ export function Chart(props: ChartProps) {
     const plot = plotRef.current;
     if (!plot) return;
     plot.setData(data as unknown as uPlot.AlignedData, false);
+    // A zoomed reader chose their window; nothing below may move it under them.
+    if (zoomed) return;
     // The x extent does have to follow a growing run, or new points land off the
     // right edge and the chart appears frozen. Only x, and only when not zoomed.
     // `xExtent` is what keeps a one-step run from pinning a zero-width range,
     // which hangs uPlot's axis-split loop hard enough to kill the tab.
     const extent = xExtent(data[0]);
-    const zoomed = plot.select.width > 0;
-    if (!zoomed && extent !== null) plot.setScale("x", extent);
-  }, [data]);
+    if (extent !== null) plot.setScale("x", extent);
+    // y grows to admit a new extreme, and never shrinks. Without this a loss
+    // explosion that arrives after the chart was built is drawn outside the plot
+    // area and the curve looks flat -- see `yGrowth`. Percent scales are pinned
+    // to [0, 1] on purpose and are left alone.
+    if (percent) return;
+    const grown = yGrowth(data.slice(1), plot.scales.y as { min: number; max: number }, {
+      positiveOnly: useLog,
+      stacked,
+    });
+    if (grown !== null) plot.setScale("y", grown);
+  }, [data, percent, useLog, stacked, zoomed]);
 
   // Visibility toggles, applied in place for the same reason.
   useEffect(() => {
@@ -330,6 +392,26 @@ export function Chart(props: ChartProps) {
       if (plot.series[index + 1]?.show !== wanted) plot.setSeries(index + 1, { show: wanted });
     });
   }, [series]);
+
+  /**
+   * Return this chart to following the run.
+   *
+   * Restores the full x extent immediately rather than waiting for the next
+   * push: on a finished run there is no next push, and a reset that appeared to
+   * do nothing would be worse than no reset at all.
+   */
+  const resetOwnZoom = useCallback(() => {
+    setZoomed(false);
+    const plot = plotRef.current;
+    const extent = plot ? xExtent(plot.data[0] as unknown as number[]) : null;
+    if (plot && extent !== null) plot.setScale("x", extent);
+  }, []);
+
+  // Register with the cursor group so any chart's reset clears all of them.
+  useEffect(() => joinZoomGroup(cursorGroup, resetOwnZoom), [cursorGroup, resetOwnZoom]);
+
+  const resetZoom = () =>
+    cursorGroup ? broadcastZoomReset(cursorGroup) : resetOwnZoom();
 
   // `cursor: { show: false }` means a spark never sets `hover`, so this is already
   // null there; the explicit guard is so the invariant survives a future edit to
@@ -360,6 +442,16 @@ export function Chart(props: ChartProps) {
         <div className="chart-tooltip" style={tooltipStyle}>
           {tooltip}
         </div>
+      )}
+      {/* Shown only while zoomed. A chart that is following the run needs no
+          badge saying so -- that is the default and labelling it would put a
+          permanent control on every panel. But a zoomed chart has silently
+          stopped tracking, and looks exactly like a chart of a run that stopped
+          producing data, so that state says what it is and offers the way out. */}
+      {zoomed && !spark && (
+        <button className="chart-zoom-reset" type="button" onClick={resetZoom}>
+          Zoomed · reset
+        </button>
       )}
     </div>
   );

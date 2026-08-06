@@ -719,6 +719,30 @@ a:hover {
   color: var(--color-text-faint);
 }
 
+/* Sits inside the plot box, top-right, only while the chart is zoomed. Absolute
+ * so that appearing and disappearing cannot change the panel's height — the same
+ * no-reflow rule the rest of the page follows. */
+.chart-zoom-reset {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-raised);
+  color: var(--color-text-muted);
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.chart-zoom-reset:hover {
+  color: var(--color-text);
+  border-color: var(--color-text-faint);
+}
+
 .chart-note {
   font-size: var(--type-label-sm-size);
   letter-spacing: var(--type-label-sm-tracking);

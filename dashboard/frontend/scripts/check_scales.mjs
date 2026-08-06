@@ -16,7 +16,7 @@
 // The import is a .ts file read directly, so this asserts against the shipped
 // source rather than a copy of its logic.
 
-import { xExtent } from "../src/lib/series.ts";
+import { xExtent, yGrowth } from "../src/lib/series.ts";
 
 // uPlot's x-axis default `space` over a plausible plot width (`xAxisOpts.space`
 // is 50). `findIncr` picks the smallest tabulated increment with
@@ -89,16 +89,124 @@ for (const xs of [
 console.log("xExtent: nothing to pin");
 check("empty data -> null", xExtent([]) === null);
 
-// Negative control. Without this the checks above pass against a `walk` that
-// cannot fail, and the guard is decoration: this asserts the unpadded extent --
-// exactly what the code did before -- still does not terminate, so the loop being
-// walked is the one that took the tab down.
+// ---------------------------------------------------------------- y growth
+//
+// Same class of defect as the one above and equally invisible to the compiler:
+// `setData(data, false)` never recomputes the y scale, so a value that arrives
+// after the chart was built and exceeds its range is drawn outside the plot area.
+// The curve then looks flat exactly when a loss exploded. What is asserted here
+// is the property, not the pixels: any incoming value ends up inside the range.
+
+console.log("yGrowth: a new extreme always ends up inside the range");
+
+const contains = (range, value) => value >= range.min && value <= range.max;
+
+for (const [current, spike] of [
+  [{ min: 0, max: 1 }, 5000],       // loss explosion
+  [{ min: 0, max: 1 }, -5000],      // reward collapse
+  [{ min: -1, max: 1 }, 1.0001],    // barely over
+  [{ min: 100, max: 200 }, 1e12],   // orders of magnitude out
+  [{ min: 0, max: 1 }, 1e-9],       // inside; must not move
+]) {
+  const columns = [[0.5, 0.5, spike]];
+  const grown = yGrowth(columns, current);
+  const range = grown ?? current;
+  check(
+    `value ${spike} against [${current.min}, ${current.max}] -> [${range.min}, ${range.max}]`,
+    contains(range, spike),
+    "the value would be drawn outside the plot area and read as a flat curve",
+  );
+}
+
+console.log("yGrowth: the axis only ever grows");
+{
+  const current = { min: -10, max: 10 };
+  // Data well inside the current range must not pull the axis in: a range that
+  // tracked the data downward too would rescale on nearly every push, which is
+  // the walking-gridlines problem `resetScales: false` exists to prevent.
+  check("data inside the range returns null", yGrowth([[0, 1, 2]], current) === null);
+  const grown = yGrowth([[0, 1, 50]], current);
+  check(
+    "growing upward keeps the old lower bound",
+    grown !== null && grown.min === current.min && grown.max > 50,
+    JSON.stringify(grown),
+  );
+}
+
+console.log("yGrowth: growing lands where a fresh render would");
+{
+  // Chart.tsx's initial y `range` callback, restated. If these two ever disagree,
+  // reloading the page shifts every axis that had grown during the session, and
+  // the reader cannot tell which of the two views was the honest one.
+  const initialRange = (min, max) => {
+    const pad = min === max ? (Math.abs(min) > 0 ? Math.abs(min) * 0.15 : 1) : (max - min) * 0.08;
+    return { min: min - pad, max: max + pad };
+  };
+  for (const values of [
+    [0.5, 0.5, 1e12],
+    [-3, 7, 200],
+    [0.001, 0.002, 0.5],
+  ]) {
+    const low = Math.min(...values);
+    const high = Math.max(...values);
+    // A current range strictly inside the data forces both bounds to move.
+    const current = { min: low + (high - low) * 0.4, max: low + (high - low) * 0.6 };
+    const grown = yGrowth([values], current);
+    const fresh = initialRange(low, high);
+    check(
+      `[${values.join(", ")}] grows to the fresh bounds`,
+      grown !== null && grown.min === fresh.min && grown.max === fresh.max,
+      `grown=${JSON.stringify(grown)} fresh=${JSON.stringify(fresh)}`,
+    );
+  }
+}
+
+console.log("yGrowth: a stacked chart keeps zero on the axis");
+{
+  // Stacking asserts the bands sum to a total, and a baseline that is not zero
+  // misstates every band's share of it. The columns arriving here are already
+  // cumulative, so the maximum is the top of the stack.
+  const grown = yGrowth([[3, 4, 900]], { min: 0, max: 10 }, { stacked: true });
+  check(
+    "growth admits the new top without lifting the baseline",
+    grown !== null && grown.min === 0 && contains(grown, 900),
+    JSON.stringify(grown),
+  );
+}
+
+console.log("yGrowth: values with no place on an axis are ignored");
+{
+  const current = { min: 0, max: 1 };
+  check("all-null column returns null", yGrowth([[null, null]], current) === null);
+  check(
+    "NaN and Infinity do not move the axis",
+    yGrowth([[NaN, Infinity, -Infinity, 0.5]], current) === null,
+  );
+  // A log scale cannot render <= 0; admitting one would produce a range uPlot
+  // refuses to draw, which is a blank panel rather than a clipped one.
+  const logGrown = yGrowth([[-5, 0, 900]], current, { positiveOnly: true });
+  check(
+    "log scale ignores non-positive values but still admits the spike",
+    logGrown !== null && logGrown.min === current.min && contains(logGrown, 900),
+    JSON.stringify(logGrown),
+  );
+}
+
+// Negative controls. Without these the checks above pass against helpers that
+// cannot fail, and the guards are decoration.
 console.log("negative control: the unfixed pin still hangs");
 const unfixed = walk(1, 1);
 check(
   "pinning [xs[0], xs[last]] on a one-step run at 1 does not advance",
   unfixed.advances === false,
   "the split walk terminated, so this check no longer proves anything",
+);
+
+console.log("negative control: leaving the scale alone still hides the spike");
+check(
+  "a spike of 5000 is outside the untouched range [0, 1]",
+  contains({ min: 0, max: 1 }, 5000) === false,
+  "`contains` accepts anything, so the yGrowth checks prove nothing",
 );
 
 if (failures > 0) {

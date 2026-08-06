@@ -268,6 +268,71 @@ export function xExtent(xs: number[]): { min: number; max: number } | null {
 }
 
 /**
+ * A widened y range when new data falls outside the current one, else `null`.
+ *
+ * Live updates go through `setData(data, false)`, which deliberately does not
+ * recompute scales — that is what stops the gridlines walking every two seconds
+ * and the page reflowing under the reader. The cost is that the y axis keeps the
+ * extent it was built with, so a value arriving *later* that exceeds it is drawn
+ * outside the plot area: clipped, invisible, and indistinguishable from the run
+ * being flat. A loss explosion or a reward collapse is exactly the value that
+ * arrives late and exceeds the range, which made this the one push the chart
+ * could not show.
+ *
+ * Growth only, never shrink. A range that tracked the data in both directions
+ * would rescale on almost every push and bring back the walking gridlines; one
+ * that only grows changes rarely, and only when something happened that the
+ * reader needs to see. The axis therefore records the run's worst excursion
+ * rather than its current window, which is the more useful of the two.
+ *
+ * @param columns Series columns (`data[1..]`), y values with `null` gaps. For a
+ *   stacked chart these are already cumulative, so the maximum is the top of the
+ *   stack — which is the bound that has to be admitted.
+ * @param current The scale's present bounds, from `plot.scales.y`.
+ * @param opts `positiveOnly` for log scales, which cannot render `<= 0` and
+ *   would be handed a range uPlot refuses to draw; `stacked` to keep zero on the
+ *   axis, since a stack whose baseline is not zero misstates every band's share.
+ */
+export function yGrowth(
+  columns: (number | null)[][],
+  current: { min: number; max: number } | null | undefined,
+  opts: { positiveOnly?: boolean; stacked?: boolean } = {},
+): { min: number; max: number } | null {
+  const { positiveOnly = false, stacked = false } = opts;
+  if (!current || !Number.isFinite(current.min) || !Number.isFinite(current.max)) return null;
+
+  let low = Infinity;
+  let high = -Infinity;
+  for (const column of columns) {
+    for (const value of column) {
+      // Non-finite values are the divergence signal, but they have no position
+      // on an axis; `nonFiniteSignal` reports them, the scale ignores them.
+      if (value === null || !Number.isFinite(value)) continue;
+      if (positiveOnly && value <= 0) continue;
+      if (value < low) low = value;
+      if (value > high) high = value;
+    }
+  }
+  if (low === Infinity) return null;
+
+  const belowBy = current.min - low;
+  const aboveBy = high - current.max;
+  if (belowBy <= 0 && aboveBy <= 0) return null;
+
+  // The same padding `Chart.tsx`'s initial `range` callback applies, so that a
+  // chart which grew into a range and one freshly built from the same data land
+  // on identical bounds. Without that, reloading the page would visibly shift
+  // every axis that had grown — the reader would learn to distrust whichever one
+  // they were not looking at. `check:scales` asserts the two agree.
+  const pad = low === high ? (Math.abs(low) > 0 ? Math.abs(low) * 0.15 : 1) : (high - low) * 0.08;
+  const lowBound = stacked ? Math.min(0, low) : low - pad;
+  return {
+    min: belowBy > 0 ? lowBound : current.min,
+    max: aboveBy > 0 ? high + pad : current.max,
+  };
+}
+
+/**
  * Exponential moving average with a window expressed in points.
  *
  * EMA rather than a boxcar mean because it needs no lookahead: a live run's most
