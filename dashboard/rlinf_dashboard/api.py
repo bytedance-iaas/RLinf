@@ -109,6 +109,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
+#: Where the built frontend lives, most-installed first.
+#:
+#: ``static/`` is inside the package, so it is the only one that survives being
+#: built into a wheel -- ``pip install rlinf-dashboard`` used to yield an API
+#: with no UI and say so only at debug level, because the sole candidate was a
+#: sibling of the package rather than part of it. ``scripts/bundle_frontend.py``
+#: is what puts it there, and the wheel smoke test asserts it did.
+#:
+#: The source-tree path stays for development, where ``npm run build`` writes to
+#: ``frontend/dist`` and nobody wants a copy step between that and a reload.
+_DIST_CANDIDATES = (
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "static"),
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "frontend",
+        "dist",
+    ),
+)
+
+
+def _find_frontend_dist() -> str | None:
+    """First candidate directory that holds a real build, or ``None``."""
+    for candidate in _DIST_CANDIDATES:
+        if os.path.isfile(os.path.join(candidate, "index.html")):
+            return candidate
+    return None
+
+
 def _mount_frontend(app: FastAPI, settings: Settings) -> None:
     """Serve the built frontend from the same origin as the API, if it exists.
 
@@ -123,14 +151,10 @@ def _mount_frontend(app: FastAPI, settings: Settings) -> None:
     build is present, which is also what keeps the isolation CI job (no rlinf,
     no npm) passing.
     """
-    dist = settings.frontend_dist or os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "frontend",
-        "dist",
-    )
-    index = os.path.join(dist, "index.html")
-    if not os.path.isfile(index):
-        logger.debug("No frontend build at %s; serving the API only.", dist)
+    dist = settings.frontend_dist or _find_frontend_dist()
+    index = os.path.join(dist, "index.html") if dist else ""
+    if not index or not os.path.isfile(index):
+        logger.debug("No frontend build found; serving the API only.")
         return
 
     from fastapi.staticfiles import StaticFiles

@@ -177,3 +177,33 @@ jobs:
           assert not missing, f"index.html references files the build did not emit: {missing}"
           print(f"OK: {len(refs)} asset references, all present")
           PY
+
+  # A built wheel is what a user installs, and until this job existed nobody
+  # checked it: `frontend/dist` sits beside the package rather than inside it, so
+  # `pip install rlinf-dashboard` produced an API with no UI and logged that only
+  # at debug level. Every other job passed throughout -- the test suite and the
+  # smoke server both run against the source tree, where the sibling path
+  # resolves. Only the packaged artifact was broken, so only a job that builds
+  # and installs one can see it.
+  wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/frontend/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install from the lockfile
+        working-directory: dashboard/frontend
+        run: npm ci
+
+      - name: Build a wheel and check the page it serves
+        run: bash dashboard/tests/smoke_wheel.sh python

@@ -50,12 +50,29 @@ test = ["pytest>=8.0", "jsonschema>=4.0"]
 [project.scripts]
 rlinf-dashboard = "rlinf_dashboard.__main__:main"
 
+[tool.setuptools]
+# Stated rather than left to the default, which is already `true` for a
+# pyproject-only build. Both the templates and the bundled frontend ride on this
+# flag -- setting it to `false` drops *both* from the wheel -- and a silent
+# default deciding whether the shipped artifact has a UI is too much to leave
+# implicit. `dashboard/tests/smoke_wheel.sh` is the actual guard.
+include-package-data = true
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["rlinf_dashboard*"]
 
 [tool.setuptools.package-data]
-rlinf_dashboard = ["templates/*.yaml"]
+# `static/**` is the built frontend, put there by scripts/bundle_frontend.py
+# after `npm run build`. It is a build artifact and is gitignored, so a plain
+# source checkout has only the templates; the wheel smoke test builds the
+# frontend itself rather than trusting whatever is in the tree.
+#
+# Listed explicitly even though `include-package-data` already covers it: being
+# gitignored, `static/` is exactly the kind of directory a future inclusion rule
+# (a MANIFEST.in, or an scm plugin that filters by tracked files) would drop
+# without anyone noticing.
+rlinf_dashboard = ["templates/*.yaml", "static/**"]
 
 [tool.ruff]
 line-length = 88
