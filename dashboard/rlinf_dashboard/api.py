@@ -109,23 +109,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
-#: Where the built frontend lives, most-installed first.
+#: Where the built frontend lives, checked in order.
 #:
-#: ``static/`` is inside the package, so it is the only one that survives being
-#: built into a wheel -- ``pip install rlinf-dashboard`` used to yield an API
-#: with no UI and say so only at debug level, because the sole candidate was a
-#: sibling of the package rather than part of it. ``scripts/bundle_frontend.py``
-#: is what puts it there, and the wheel smoke test asserts it did.
+#: ``frontend/dist`` is a sibling of the package and exists only in a source
+#: checkout, where it is what ``npm run build`` just wrote. ``static/`` is inside
+#: the package and is the only one that survives into a wheel --
+#: ``pip install rlinf-dashboard`` used to yield an API with no UI, and say so
+#: only at debug level, because the sibling was the sole candidate.
+#: ``scripts/bundle_frontend.py`` puts the copy there and the wheel smoke test
+#: asserts it arrived.
 #:
-#: The source-tree path stays for development, where ``npm run build`` writes to
-#: ``frontend/dist`` and nobody wants a copy step between that and a reload.
+#: The source tree wins where both exist, and that order is load-bearing rather
+#: than arbitrary: ``static/`` is a build artifact left behind by the last wheel
+#: build, so preferring it means an ordinary ``npm run build`` silently has no
+#: effect and the developer debugs a bundle they did not build. In an installed
+#: wheel the sibling path resolves inside ``site-packages`` and never exists, so
+#: nothing is given up by looking there first.
 _DIST_CANDIDATES = (
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "static"),
     os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "frontend",
         "dist",
     ),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "static"),
 )
 
 

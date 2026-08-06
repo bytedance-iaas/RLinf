@@ -187,8 +187,18 @@ def _parse(raw: str | None) -> datetime | None:
         return None
 
 
-def _write_scalars(log_dir: str, series: dict[str, list[float]], t0: float) -> None:
-    """Write one event file containing every series, one point per step."""
+def _write_scalars(
+    log_dir: str, series: dict[str, list[float]], t0: float, step_offset: int = 0
+) -> None:
+    """Write one event file containing every series, one point per step.
+
+    ``step_offset`` shifts the step numbers the events carry. It exists because
+    step *0* is not a representative first step: a one-point run at 0 cannot
+    reproduce the axis-split hang that killed the Metrics tab, since the hang
+    needs ``min + incr == min`` and ``0 + 1e-16`` is not ``0``. Real runners log
+    their first point at 1, so a fixture that wants to stand in for one has to
+    say so.
+    """
     os.makedirs(log_dir, exist_ok=True)
     writer = EventFileWriter(log_dir)
     steps = max(len(values) for values in series.values())
@@ -198,7 +208,7 @@ def _write_scalars(log_dir: str, series: dict[str, list[float]], t0: float) -> N
                 continue
             event = event_pb2.Event(
                 wall_time=t0 + step * 30.0,
-                step=step,
+                step=step + step_offset,
                 summary=summary_pb2.Summary(
                     value=[
                         summary_pb2.Summary.Value(tag=tag, simple_value=values[step])
@@ -488,6 +498,7 @@ def make_run(
     semantics: str = "rl_iteration",
     drop_critic: bool = False,
     per_worker_ranks: int = 0,
+    step_offset: int = 0,
 ) -> None:
     """Write one run tree: manifest, snapshot, events, checkpoints, media, scalars."""
     log_path = os.path.join(root, experiment)
@@ -518,7 +529,10 @@ def make_run(
         drop_critic=drop_critic,
     )
     _write_scalars(
-        tb_dir, {k: v for k, v in series.items() if not k.startswith("eval/")}, t0
+        tb_dir,
+        {k: v for k, v in series.items() if not k.startswith("eval/")},
+        t0,
+        step_offset,
     )
     _write_eval_sparse(tb_dir, series, steps, t0)
     if worker_root is not None:
@@ -625,7 +639,9 @@ def make_run(
         "last_progress_at": _iso(progress),
         "last_metric_at": _iso(progress),
         "progress": {
-            "step": steps,
+            # Offset with the events, or the header's step and the curve's last
+            # point disagree and the page looks like it lost an iteration.
+            "step": steps + step_offset,
             "max_steps": max_steps,
             "epoch": 1,
             "step_semantics": semantics,
@@ -984,6 +1000,31 @@ def main() -> int:
         seed=43,
         state="pending",
         max_steps=200,
+        components=False,
+        with_media=False,
+    )
+    # The shape that killed the browser, kept as a fixture because it took a real
+    # run to find it.
+    #
+    # One logged point pins the x scale to a zero-width range; uPlot only rejects
+    # those when `dataLen > 1`, so a single point walks straight past the guard
+    # into an axis-split loop that never terminates. Chrome killed the renderer
+    # ("Error code: 5") and Safari stopped responding.
+    #
+    # `step_offset=1` is the whole point. Before this, the shortest fixture was
+    # two steps starting at 0, and even a one-step version at step 0 would not
+    # have reproduced it: the hang needs `min + incr == min`, and `0 + 1e-16` is
+    # not `0` while `1 + 1e-16` is. The fixture that looked like the degenerate
+    # case was the one value that could not fail.
+    make_run(
+        args.root,
+        "20260804-081500-libero_10_ppo_onestep",
+        "libero_10_ppo_onestep",
+        steps=1,
+        step_offset=1,
+        seed=47,
+        state="finished",
+        max_steps=1,
         components=False,
         with_media=False,
     )
