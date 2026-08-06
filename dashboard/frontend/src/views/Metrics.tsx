@@ -439,6 +439,24 @@ export function ChartPanel(props: {
             </span>
           )}
           {percent && <span className="chart-flag" title="Displayed as a percentage">%</span>}
+          {/* Per panel, not just on the control at the top of the page. The
+              control scrolls out of view, the setting survives navigating into a
+              run and back, and a smoothed curve is a different shape from the
+              data — so a panel that does not say so is showing something the
+              reader did not ask for and cannot see they are getting. The compare
+              view has always carried this flag; the metrics view had not. */}
+          {smoothing > 0 && (
+            <span
+              className="chart-flag"
+              title={
+                `Exponential moving average over ${smoothing} points, applied for display ` +
+                `only — the underlying values are unchanged. Smoothing flattens and delays ` +
+                `spikes, so set it to off before reading this chart for anomalies.`
+              }
+            >
+              smoothed {smoothing}pt
+            </span>
+          )}
         </span>
       </div>
 
