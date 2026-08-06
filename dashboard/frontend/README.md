@@ -312,10 +312,10 @@ last thing that happened at the top:
 - Payloads render as compact `key=value` pairs, never interpreted. The runner is free
   to change the payload shape, and a wrong reading presented confidently is worse
   than a raw one.
-- Below the log, the checkpoint table plus a **Resume from the latest checkpoint**
-  hint assembled from the recorded `entry_script` / `config_name` / `resume_dir`
-  fields, not from a stored command string — a baked command goes stale the moment
-  the launch changes.
+- Below the log, the checkpoint table: step, saved-at, size, duration, path, with
+  a `best` chip where the writer set one. No prose above it and no resume-command
+  card — the `resume_dir` is still in `/api/runs/{id}/checkpoints` for anything
+  that wants to build a command from it.
 
 ### 5. Expand to ranks — and the card that is holding the job up
 
@@ -402,9 +402,26 @@ One mp4 tiles N environments, so an outcome is a **count**:
   failure marker.
 - Header chips keep the two apart: `42/196 ENVS SUCCEEDED` and `4 NOT RECORDED`.
 - Split (`all`/`train`/`eval`) and step filters narrow the grid.
-- Generated with `--sample-clip`, 32 `<video>` elements reach `readyState 4` at
-  `640x480`. Without it, every card reads "This clip could not be decoded" — the
-  error path, distinct from "not recorded".
+- Generated with `--sample-clip`, a clip reaches `readyState 4` at `640x480`
+  **once you press play on it**. Without `--sample-clip`, that card reads "This
+  clip could not be decoded" — the error path, distinct from "not recorded".
+
+**Nothing is fetched until it is looked at.** Cards mount a player only when they
+scroll near the viewport, and mount it with `preload="none"`, so opening the tab
+issues no video requests at all. Check that: on a twenty-clip run the DOM has
+twenty `.media-card`s, about four `video` elements and the rest
+`.media-frame-idle`, and the network panel shows no `/media/file` request until
+you press play.
+
+This is a correctness property of the page, not a nicety. Every card used to
+render `<video preload="metadata">` on mount, so opening the tab asked for every
+clip in the run — ~76 MB for a twenty-clip LIBERO run. The browser allows only a
+handful of connections per origin, so two saturating video streams left every
+other request on the page queued behind them, and switching tabs did not help
+because the new tab waited on the same connections. Measured over a
+`kubectl port-forward`: an API call during the load went from **9.7 s back to
+0.31 s**, and the two permanently-stalled video requests became zero. The server
+was never implicated — in-pod it serves a whole 3.8 MB clip in 9 ms.
 
 ### 7. Compare — across runs that do not agree
 
