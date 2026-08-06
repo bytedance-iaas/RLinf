@@ -136,10 +136,6 @@ export function Events(props: EventsProps) {
         <section className="section">
           <div className="section-head">
             <span className="section-title">Checkpoints</span>
-            <span className="section-desc">
-              Appended only after a save completes, so a half-written checkpoint is never
-              listed.
-            </span>
             <span className="section-meta">{checkpoints.length}</span>
           </div>
           <table className="table">
@@ -169,9 +165,6 @@ export function Events(props: EventsProps) {
               ))}
             </tbody>
           </table>
-          {/* Assembled from the recorded fields rather than from a stored command
-              string: a baked command goes stale the moment the launch changes. */}
-          {resumeHint(checkpoints)}
         </section>
       )}
     </div>
@@ -188,17 +181,3 @@ function payloadText(payload: Record<string, unknown>): string {
   return parts.join("  ");
 }
 
-function resumeHint(checkpoints: CheckpointEntry[]) {
-  const latest = [...checkpoints].reverse().find((entry) => entry.resume_dir !== null);
-  if (!latest?.resume_dir) return null;
-  const script = latest.entry_script ?? "python examples/<task>/train_*.py";
-  const config = latest.config_name ? ` --config-name ${latest.config_name}` : "";
-  return (
-    <Note title="Resume from the latest checkpoint">
-      <code className="code-block">
-        {script}
-        {config} runner.resume_dir={latest.resume_dir}
-      </code>
-    </Note>
-  );
-}
