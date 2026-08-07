@@ -1318,10 +1318,32 @@ class ScopedTimer:
                     measurement using consume_durations().
     """
 
-    def __init__(self, *args, trace: bool = True, **kwargs):
+    def __init__(self, *args, trace: bool = True, observer=None, **kwargs):
         self._timer = NamedTimer(*args, **kwargs)
         self._duration_log = {}
         self._trace = trace
+        self._observer = observer
+
+    def set_observer(self, observer) -> None:
+        """Attach an observer notified on scope entry and exit.
+
+        The observer must provide ``enter_scope(name)`` and ``exit_scope(name)``.
+        It exists so run-state phase reporting rides on the scopes the runners
+        already declare, instead of requiring a second set of annotations that
+        could drift from the timers.
+
+        Observer failures are swallowed at the call site: an observability hook
+        must never break the code it observes.
+        """
+        self._observer = observer
+
+    def _notify(self, event: str, name: str) -> None:
+        if self._observer is None:
+            return
+        try:
+            getattr(self._observer, event)(name)
+        except Exception:  # noqa: BLE001 - never let a hook break timing
+            pass
 
     def consume_durations(self) -> dict[str, float]:
         durations = self._duration_log
@@ -1334,11 +1356,13 @@ class ScopedTimer:
         """Time a section of code, also emitting a trace event if the tracer is initialized."""
         if self._trace:
             Tracer.trace_begin(name, cat="runner", args=trace_args)
+        self._notify("enter_scope", name)
         try:
             self._timer.start(name=name)
             yield
         finally:
             self._timer.stop(name=name)
+            self._notify("exit_scope", name)
             if self._trace:
                 Tracer.trace_end(name, cat="runner")
             if name in self._duration_log:
