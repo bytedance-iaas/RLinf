@@ -30,9 +30,8 @@ dependencies = [
     "starlette>=0.45",
     "uvicorn>=0.30",
     "pydantic>=2.7",
-    # >=2.3 for `NoDecode`. Below that, list-typed settings are JSON-decoded
-    # before validators run and RLINF_DASHBOARD_SCAN_ROOTS=/logs is a startup
-    # error -- see settings.py.
+    # >=2.3 for `NoDecode`. Below that, list-typed settings such as a
+    # comma-separated CORS origin list are JSON-decoded before validators run.
     "pydantic-settings>=2.3",
     "httpx>=0.27",
     "PyYAML>=6.0",
