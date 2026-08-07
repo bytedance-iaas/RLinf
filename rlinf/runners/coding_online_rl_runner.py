@@ -14,6 +14,7 @@
 
 import logging
 import os
+import time
 from typing import Optional
 
 import pandas as pd
@@ -25,6 +26,7 @@ from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.placement import ModelParallelComponentPlacement
+from rlinf.utils.run_state import attach_reporter
 from rlinf.utils.runner_utils import check_progress
 from rlinf.utils.timers import Timer
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
@@ -91,6 +93,8 @@ class CodingOnlineRLRunner:
         self.run_timer = Timer(None)  # Timer that checks if we should stop training
 
         self.metric_logger = MetricLogger(cfg)
+        # Control plane: run state, heartbeat, phase, progress, checkpoints.
+        self.reporter = attach_reporter(self, cfg)
 
     def init_workers(self):
         # Must be done before actor init
@@ -167,7 +171,7 @@ class CodingOnlineRLRunner:
 
         return flops_metrics
 
-    def _save_checkpoint(self):
+    def _save_checkpoint(self, metrics: Optional[dict] = None):
         base_output_dir = os.path.join(
             self.cfg.runner.output_dir,
             self.cfg.runner.experiment_name,
@@ -175,8 +179,19 @@ class CodingOnlineRLRunner:
         )
         actor_save_path = os.path.join(base_output_dir, "actor")
 
-        # actor
-        self.actor.save_checkpoint(actor_save_path, self.global_steps).wait()
+        save_started = time.time()
+        with self.reporter.phase("save_ckpt"):
+            # actor
+            self.actor.save_checkpoint(actor_save_path, self.global_steps).wait()
+
+        # Appended only after the save returns, so a reader of checkpoints.jsonl
+        # never sees a half-written checkpoint.
+        self.reporter.record_checkpoint(
+            step=self.global_steps,
+            path=base_output_dir,
+            duration_s=time.time() - save_started,
+            metrics=metrics,
+        )
 
     def _sync_weights(self):
         self.online_router.sync_model_start()
@@ -190,6 +205,15 @@ class CodingOnlineRLRunner:
         self.online_router.sync_model_end()
 
     def run(self):
+        """Run training, always recording a terminal run state.
+
+        A thin shell so that every ``runner.run()`` entry script gets a
+        ``finished``/``failed``/``stopped`` state without being changed.
+        """
+        with self.reporter.run_lifecycle():
+            return self._run_impl()
+
+    def _run_impl(self):
         global_pbar = tqdm(
             initial=0,
             total=self.cfg.runner.max_epochs,
@@ -201,6 +225,7 @@ class CodingOnlineRLRunner:
         self.server_rollout.server_start()
         self.run_timer.start_time()
         for _ in range(self.cfg.runner.max_epochs):
+            step_started = time.time()
             with self.timer("step"):
                 with self.timer("sync_weights"):
                     self._sync_weights()
@@ -230,6 +255,12 @@ class CodingOnlineRLRunner:
                 actor_rollout_metrics = metrics[0][0]
                 actor_training_metrics = metrics[0][1]
                 self.global_steps += 1
+                # Reported before eval/save so that `step_duration_s` stays the
+                # net step time and the ETA buckets remain independent.
+                self.reporter.set_progress(
+                    step=self.global_steps,
+                    step_duration_s=time.time() - step_started,
+                )
 
                 run_time_exceeded = self.run_timer.is_finished()
                 _, save_model, is_train_end = check_progress(
@@ -242,7 +273,7 @@ class CodingOnlineRLRunner:
                 )
 
                 if save_model:
-                    self._save_checkpoint()
+                    self._save_checkpoint(metrics=actor_training_metrics[-1])
 
                 if is_train_end:
                     logging.info(
