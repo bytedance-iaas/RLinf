@@ -26,6 +26,7 @@ jobs:
       offline_rl_filter: ${{ steps.filter.outputs.offline_rl_filter }}
       unit_test_filter: ${{ steps.filter.outputs.unit_test_filter }}
       scheduler_test_filter: ${{ steps.filter.outputs.scheduler_test_filter }}
+      dashboard_filter: ${{ steps.filter.outputs.dashboard_filter }}
 
       checked_files_filter: ${{ steps.filter.outputs.checked_files_filter }}
       all_changes_filter: ${{ steps.filter.outputs.all_changes_filter }}
@@ -170,6 +171,16 @@ jobs:
               - 'tests/e2e_tests/auto_placement/**'
               - 'tests/e2e_tests/dynamic_scheduler/**'
               - '.github/workflows/scheduler-tests.yml'
+            # The dashboard is a separate distribution and does not import
+            # rlinf. Producer contract and license changes still run its parity
+            # gate because the dashboard vendors immutable copies.
+            dashboard_filter: &dashboard
+              - 'dashboard/**'
+              - 'docs/schemas/run.v2.schema.json'
+              - 'tests/fixtures/run_state/**'
+              - 'tests/unit_tests/test_dashboard_contract_parity.py'
+              - 'LICENSE'
+              - '.github/workflows/dashboard-tests.yml'
             checked_files_filter:
               - *install
               - *docker
@@ -180,6 +191,7 @@ jobs:
               - *offline_rl
               - *unit
               - *scheduler
+              - *dashboard
               - *toolkits_no_ci
               - 'tests/parity_tests/**'
               - '.pre-commit-config.yaml'
@@ -285,6 +297,13 @@ jobs:
     if: needs.check-changes.outputs.scheduler_test_filter == 'true'
     uses: ./.github/workflows/scheduler-tests.yml
 
+  # =============================================== dashboard tests ====================================================
+
+  dashboard-tests:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.dashboard_filter == 'true'
+    uses: ./.github/workflows/dashboard-tests.yml
+
   # =============================================== finale ====================================================
 
   ci-test-finish:
@@ -297,7 +316,8 @@ jobs:
       embodied-e2e-tests,
       sft-e2e-tests,
       offline-rl-e2e-tests,
-      scheduler-tests
+      scheduler-tests,
+      dashboard-tests
     ]
     if: always()
     runs-on: ubuntu-latest

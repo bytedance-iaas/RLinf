@@ -156,6 +156,13 @@ jobs:
         working-directory: dashboard/frontend
         run: npm run check:scales
 
+      # Showing one run's numbers under another run's URL is invisible to a type
+      # check and to the bundle assertion below: the page renders, it is just
+      # wrong, and only for as long as a fetch takes.
+      - name: Check a payload cannot be read under another identity
+        working-directory: dashboard/frontend
+        run: npm run check:identity
+
       # The server mounts dist/ when it exists (api.py), so an index.html that
       # references assets the build did not emit is a blank page in production and
       # nothing else would catch it.
