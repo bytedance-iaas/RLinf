@@ -28,6 +28,7 @@ from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics, print_metrics_table
+from rlinf.utils.run_state import attach_reporter
 from rlinf.utils.runner_utils import check_progress
 from rlinf.utils.timers import Timer
 
@@ -117,6 +118,10 @@ class EmbodiedRunner:
             self.cfg.runner.get("per_worker_log", False)
         )
 
+        # Control plane: run state, heartbeat, phase, progress, checkpoints.
+        # Phase reporting rides on the timer scopes the loop already declares.
+        self.reporter = attach_reporter(self, cfg)
+
         # Async logging setup
         self.stop_logging = False
         self.log_queue = queue.Queue()
@@ -124,18 +129,23 @@ class EmbodiedRunner:
         self.log_thread.start()
 
     def _log_worker(self):
-        """Background thread for processing log messages."""
+        """Background thread for processing log messages.
+
+        Every successful ``get`` is matched by exactly one ``task_done`` in a
+        ``finally`` so a backend failure cannot block queue teardown.
+        """
         while not self.stop_logging:
             try:
                 # Wait for log message with timeout
                 log_func, args = self.log_queue.get(timeout=0.1)
-                log_func(*args)
-                self.log_queue.task_done()
             except queue.Empty:
                 continue
-            except Exception as e:
-                print(f"Logging error: {e}")
-                continue
+            try:
+                log_func(*args)
+            except Exception as e:  # noqa: BLE001 - logging must not end a run
+                self.logger.warning(f"Metric logging failed, continuing: {e}")
+            finally:
+                self.log_queue.task_done()
 
     def print_metrics_table_async(
         self,
@@ -145,7 +155,15 @@ class EmbodiedRunner:
         metrics: dict,
         start_step: int = 0,
     ):
-        """Async version that puts table printing in queue."""
+        """Async version that puts table printing in queue.
+
+        The ETA comes from the reporter's :class:`ProgressEstimator`, which
+        separates plain-step, eval and save costs. Computed here rather than in
+        the worker thread so the estimate reflects this step, and passed as None
+        when no step has been timed yet so the table falls back to its own
+        whole-run average.
+        """
+        eta_seconds = self.reporter.progress.eta_s(step + 1)
         self.log_queue.put(
             (
                 print_metrics_table,
@@ -156,6 +174,7 @@ class EmbodiedRunner:
                     metrics,
                     start_step,
                     self.metric_logger.log_path,
+                    eta_seconds,
                 ),
             )
         )
@@ -317,14 +336,18 @@ class EmbodiedRunner:
 
         eval_metrics = {}
         if run_val:
+            eval_started = time.time()
             with self.timer("eval"):
                 self.update_rollout_weights()
                 eval_metrics = self.evaluate()
                 eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
                 self.metric_logger.log(data=eval_metrics, step=step)
+            # Eval is periodic and far more expensive than a plain step, so it
+            # is timed separately and projected separately in the ETA.
+            self.reporter.record_eval_duration(time.time() - eval_started)
 
         if save_model:
-            self._save_checkpoint()
+            self._save_checkpoint(metrics=eval_metrics)
 
         return eval_metrics
 
@@ -451,10 +474,57 @@ class EmbodiedRunner:
     def _finish_run(self) -> None:
         self.metric_logger.finish()
 
-        # Stop logging thread
+        # Stop logging thread. Drain the queue *before* setting the stop flag:
+        # ``_log_worker`` re-checks ``stop_logging`` between items, so raising the
+        # flag first lets the loop exit with entries still pending, and those
+        # entries never get their ``task_done()`` -- leaving the drain below
+        # blocked forever.
+        self._drain_log_queue(timeout_s=self.LOG_DRAIN_TIMEOUT_S)
         self.stop_logging = True
-        self.log_queue.join()  # Wait for all queued logs to be processed
         self.log_thread.join(timeout=1.0)
+
+    #: How long ``_finish_run`` waits for queued metric logging to complete.
+    #: Generous, because the last flush of a long run is real work; bounded,
+    #: because it is the last thing between a finished run and its terminal
+    #: state, and diagnostics must never be what stops a run from finishing.
+    LOG_DRAIN_TIMEOUT_S = 60.0
+
+    def _drain_log_queue(self, timeout_s: float) -> None:
+        """Wait for queued log entries, but never forever.
+
+        ``queue.Queue.join()`` takes no timeout, so this polls the same condition
+        it waits on. A backend that *hangs* inside ``log_func`` -- an unreachable
+        wandb endpoint, a stuck NFS write -- keeps its item outstanding without
+        ever raising, and an unbounded join would hold the run in ``running``
+        forever with the training already over.
+        """
+        deadline = time.monotonic() + timeout_s
+        with self.log_queue.all_tasks_done:
+            while self.log_queue.unfinished_tasks:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.logger.warning(
+                        f"Gave up waiting for {self.log_queue.unfinished_tasks} "
+                        f"queued metric log(s) after {timeout_s:.0f}s; "
+                        "finishing the run anyway."
+                    )
+                    return
+                self.log_queue.all_tasks_done.wait(remaining)
+
+    def _advance_env_step(self) -> None:
+        """Tell the env workers which step upcoming videos belong to.
+
+        Dispatch is fire-and-forget because media metadata must not block the
+        training loop. A clip flushed while the request is in flight may carry
+        the previous step. Dispatch failures are non-fatal to training.
+        """
+        try:
+            self.env.set_global_step(self.global_step)
+        except Exception as exc:  # noqa: BLE001 - a video label is never fatal
+            self.logger.warning(
+                f"Could not set the env step for media indexing: {exc}. "
+                "Videos will be indexed without a step."
+            )
 
     def _should_profile_step(self, step_idx: int) -> bool:
         return self._profile_all_steps or (
@@ -476,6 +546,17 @@ class EmbodiedRunner:
         self.logger.info(f"Closed profiling window at step {step_idx}")
 
     def run(self):
+        """Run training, always recording a terminal run state.
+
+        The loop body lives in ``_run_impl`` so this shell stays the single
+        place a terminal state is written. Entry scripts call bare
+        ``runner.run()`` with no try/finally of their own, so without this
+        wrapper a crashed run would leave nothing on disk saying it failed.
+        """
+        with self.reporter.run_lifecycle():
+            return self._run_impl()
+
+    def _run_impl(self):
         if self.cfg.runner.get("use_training_pipeline", False):
             return self.run_pipeline()
 
@@ -485,6 +566,9 @@ class EmbodiedRunner:
             # set global step
             self.actor.set_global_step(self.global_step).wait()
             self.rollout.set_global_step(self.global_step).wait()
+            # Env workers need it too, so recorded videos land in the media
+            # index against the step that produced them.
+            self.env.set_global_step(self.global_step)
 
             profiled_step = (
                 self.global_step
@@ -494,6 +578,7 @@ class EmbodiedRunner:
             if profiled_step is not None:
                 self._open_profiling_window(profiled_step)
 
+            step_started = time.time()
             with self.timer("step", trace_args={"step_idx": _step}):
                 with self.timer("sync_weights"):
                     if _step % self.weight_sync_interval == 0:
@@ -542,6 +627,13 @@ class EmbodiedRunner:
                         env_bootstrap_handle.wait()
 
                 self.global_step += 1
+                # Reported before eval and save so the recorded duration is the
+                # net step time; those two are projected separately in the ETA.
+                self.reporter.set_progress(
+                    step=self.global_step,
+                    epoch=self.epoch,
+                    step_duration_s=time.time() - step_started,
+                )
                 eval_metrics = self._maybe_eval_and_checkpoint(_step)
 
             if profiled_step is not None:
@@ -569,6 +661,9 @@ class EmbodiedRunner:
             # set global step
             self.actor.set_global_step(self.global_step).wait()
             self.rollout.set_global_step(self.global_step).wait()
+            # Env workers need it too, so recorded videos land in the media
+            # index against the step that produced them.
+            self.env.set_global_step(self.global_step)
 
             profiled_step = (
                 self.global_step
@@ -578,10 +673,15 @@ class EmbodiedRunner:
             if profiled_step is not None:
                 self._open_profiling_window(profiled_step)
 
+            step_started = time.time()
             with self.timer("step", trace_args={"step_idx": _step}):
                 with self.timer("sync_weights"):
                     if _step % self.weight_sync_interval == 0:
                         self.update_rollout_weights()
+                # Env is not joined anywhere inside the step: `_log_step_metrics`
+                # is what finally waits on this handle, so it stays live across
+                # everything below.
+                self.reporter.component_enter("env")
                 env_handle: Handle = self.env.interact(
                     input_channel=self.env_channel,
                     rollout_channel=self.rollout_channel,
@@ -598,14 +698,22 @@ class EmbodiedRunner:
                         input_channel=self.reward_channel,
                         output_channel=self.env_channel,
                     )
-                # actor training.
+                # Actor training runs *concurrently* with rollout here -- that is
+                # what makes this the pipelined loop. So it gets a component mark
+                # rather than a timer scope: a scope would nest
+                # `generate_rollouts` inside it and report the same wall-clock
+                # twice, which is the one thing the phase durations chart must
+                # not do.
+                self.reporter.component_enter("actor")
                 actor_training_handle: Handle = self.actor.run_training(
                     input_channel=self.actor_channel
                 )
+                self.reporter.component_enter("rollout")
                 with self.timer("generate_rollouts"):
                     rollout_handle.wait()
                     if self.reward is not None:
                         reward_handle.wait()
+                self.reporter.component_exit("rollout")
 
                 env_bootstrap_handle: Handle | None = None
                 if self.overlap_env_bootstrap and _step + 1 < self.max_steps:
@@ -614,6 +722,7 @@ class EmbodiedRunner:
                     )
 
                 actor_results = actor_training_handle.wait()
+                self.reporter.component_exit("actor")
                 actor_rollout_metrics, actor_training_metrics = (
                     self._split_pipeline_actor_results(actor_results)
                 )
@@ -621,6 +730,11 @@ class EmbodiedRunner:
                     env_bootstrap_handle.wait()
 
                 self.global_step += 1
+                self.reporter.set_progress(
+                    step=self.global_step,
+                    epoch=self.epoch,
+                    step_duration_s=time.time() - step_started,
+                )
                 eval_metrics = self._maybe_eval_and_checkpoint(_step)
 
             if profiled_step is not None:
@@ -638,10 +752,12 @@ class EmbodiedRunner:
                 actor_training_metrics=actor_training_metrics,
                 eval_metrics=eval_metrics,
             )
+            # `_log_step_metrics` joined env_handle, so the component is done.
+            self.reporter.component_exit("env")
 
         self._finish_run()
 
-    def _save_checkpoint(self):
+    def _save_checkpoint(self, metrics: dict | None = None):
         self.logger.info(f"Saving checkpoint at step {self.global_step}.")
         base_output_dir = os.path.join(
             self.cfg.runner.logger.log_path,
@@ -650,7 +766,19 @@ class EmbodiedRunner:
         )
         actor_save_path = os.path.join(base_output_dir, "actor")
         os.makedirs(actor_save_path, exist_ok=True)
-        self.actor.save_checkpoint(actor_save_path, self.global_step).wait()
+        # Saving has no timer scope: recording the same scope twice before
+        # `consume_durations()` raises, and a step can save more than once.
+        save_started = time.time()
+        with self.reporter.phase("save_ckpt"):
+            self.actor.save_checkpoint(actor_save_path, self.global_step).wait()
+        # Indexed only after the save returns, so a reader trusting
+        # checkpoints.jsonl never sees a half-written checkpoint.
+        self.reporter.record_checkpoint(
+            step=self.global_step,
+            path=base_output_dir,
+            duration_s=time.time() - save_started,
+            metrics=metrics or {},
+        )
 
     def set_max_steps(self):
         self.num_steps_per_epoch = 1
