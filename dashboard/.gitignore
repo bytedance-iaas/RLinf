@@ -1,0 +1,5 @@
+# The built frontend, copied here by scripts/bundle_frontend.py so that
+# `package-data` can carry it into a wheel. It is a build artifact of
+# frontend/dist -- committing it would put a 300 kB bundle in every diff and let
+# the checked-in copy drift from the source it was built from.
+rlinf_dashboard/static/
