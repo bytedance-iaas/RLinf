@@ -104,6 +104,11 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         )
 
     def run(self) -> None:
+        """Run training, always recording a terminal run state."""
+        with self.reporter.run_lifecycle():
+            return self._run_impl()
+
+    def _run_impl(self) -> None:
         start_step = self.global_step
         start_time = time.time()
 
@@ -128,6 +133,11 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         actor_handle: Handle = self.actor.recv_rollout_trajectories(
             input_channel=self.actor_channel
         )
+        # All three handles are live from here until the joins below, so the
+        # components map -- not the scalar phase -- is what describes this run.
+        self.reporter.component_enter("env")
+        self.reporter.component_enter("rollout")
+        self.reporter.component_enter("actor")
 
         while self.global_step < self.max_steps:
             # Use the step we're ABOUT to run as the profiling key, mirroring
@@ -139,6 +149,7 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
             )
             if profiled_step is not None:
                 self._open_profiling_window(profiled_step)
+            step_started = time.time()
             with self.timer("step"):
                 with self.timer("construct_rollout_batch"):
                     rollout_data_metrics = self.actor.construct_rollout_batch().wait()
@@ -162,6 +173,14 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
                 # sets it from the version they carry, which is this same step.
                 # Setting it from the runner would claim the new step before a
                 # non-blocking sync has landed.
+                self._advance_env_step()
+                # Report after weight sync so the duration covers the full
+                # iteration while still excluding eval and checkpoint work.
+                self.reporter.set_progress(
+                    step=self.global_step,
+                    epoch=self.epoch,
+                    step_duration_s=time.time() - step_started,
+                )
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
@@ -281,3 +300,6 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         env_handle.wait()
         rollout_handle.wait()
         actor_handle.wait()
+        self.reporter.component_exit("env")
+        self.reporter.component_exit("rollout")
+        self.reporter.component_exit("actor")
