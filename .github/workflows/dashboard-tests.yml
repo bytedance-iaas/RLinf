@@ -1,0 +1,213 @@
+name: Dashboard Tests
+
+# The dashboard is a separate distribution with a separate dependency set, and
+# its defining constraint is that it must run where `rlinf` is not installed.
+# That is what this workflow asserts: every step below runs in a plain venv that
+# has never seen rlinf or torch, so an accidental `import rlinf` fails here even
+# though it would pass on a developer machine with the repo on sys.path.
+
+on:
+  workflow_call:
+
+jobs:
+  # The hard gate. If this job passes, the dashboard is installable and testable
+  # by someone who does not have a training environment.
+  dashboard-isolated:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor declared in dashboard/pyproject.toml and a current release.
+        # The floor is the one that matters: it is what a cluster login node
+        # tends to have, and `requires-python = ">=3.10"` is a promise.
+        python-version: ["3.10", "3.13"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install the dashboard alone
+        working-directory: dashboard
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/dashvenv
+          /tmp/dashvenv/bin/python -m pip install --upgrade pip
+          /tmp/dashvenv/bin/pip install -e '.[test]'
+
+      # Runs from /tmp, not from the repo root. At the repo root the sibling
+      # `rlinf/` directory is importable via sys.path[0], so `import rlinf`
+      # would half-succeed and fail later on `torch` -- which proves nothing
+      # about isolation. From /tmp the answer is unambiguous.
+      - name: Assert rlinf is genuinely unavailable
+        working-directory: /tmp
+        run: |
+          set -euo pipefail
+          /tmp/dashvenv/bin/python - <<'PY'
+          import sys
+
+          try:
+              import rlinf  # noqa: F401
+          except ModuleNotFoundError as exc:
+              assert exc.name == "rlinf", f"expected rlinf to be missing, got {exc.name}"
+              print("OK: import rlinf ->", exc)
+          else:
+              sys.exit("rlinf is importable in this venv; the isolation gate is vacuous")
+          PY
+
+      - name: Assert the dashboard imports without rlinf or torch
+        working-directory: /tmp
+        run: |
+          set -euo pipefail
+          /tmp/dashvenv/bin/python - <<'PY'
+          import sys
+
+          import rlinf_dashboard
+          import rlinf_dashboard.api  # noqa: F401
+          import rlinf_dashboard.metrics  # noqa: F401
+          import rlinf_dashboard.registry  # noqa: F401
+
+          print("dashboard", rlinf_dashboard.__version__, "imported from", sys.prefix)
+          # Reading TensorBoard event files needs protobuf, not a DL framework.
+          # If torch ever appears here, the dependency set has drifted and the
+          # install is minutes slower for every user.
+          for module in ("rlinf", "torch"):
+              assert module not in sys.modules, f"{module} was imported transitively"
+          PY
+
+      - name: Run the test suite in the isolated venv
+        working-directory: dashboard
+        run: /tmp/dashvenv/bin/python -m pytest tests -q
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+
+      - name: Assert the vendored contract matches RLinf
+        run: >-
+          /tmp/dashvenv/bin/python -m pytest
+          tests/unit_tests/test_dashboard_contract_parity.py -q
+
+      # The SSE tests drive the route handlers directly: TestClient's
+      # synchronous portal waits for an infinite generator even on close, so it
+      # cannot exercise a stream. This is where the real transport gets covered.
+      - name: Serve a fixture run and check the HTTP surface
+        working-directory: dashboard
+        run: bash tests/smoke_server.sh /tmp/dashvenv/bin/python
+
+  # DESIGN.md is the normative source for the frontend's tokens, and
+  # src/styles/tokens.css is generated from it. Nothing stops someone editing the
+  # CSS directly, and a design system whose prose and pixels disagree is worse
+  # than none -- so the generated file is checked, not trusted.
+  #
+  # Both scripts are plain Python in this repo rather than `npx @google/design.md`
+  # so a repo check never depends on fetching an npm package at CI time.
+  design-system:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install PyYAML
+        run: python -m pip install --quiet pyyaml
+
+      - name: Validate DESIGN.md against the spec
+        working-directory: dashboard/frontend
+        run: python scripts/lint_design_md.py DESIGN.md
+
+      - name: Assert tokens.css is current with DESIGN.md
+        working-directory: dashboard/frontend
+        run: python scripts/gen_tokens.py --check
+
+  # Static correctness gates for the operator console.
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          # package-lock.json is committed, so the cache key is exact and `ci`
+          # installs the resolved tree rather than re-solving it.
+          cache: npm
+          cache-dependency-path: dashboard/frontend/package-lock.json
+
+      - name: Install from the lockfile
+        working-directory: dashboard/frontend
+        run: npm ci
+
+      # `npm run build` runs tsc itself, but as one step a type error and a bundle
+      # error are indistinguishable in the log. Split so the failure names itself.
+      - name: Typecheck
+        working-directory: dashboard/frontend
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: dashboard/frontend
+        run: npm run build
+
+      - name: Check chart scales stay walkable
+        working-directory: dashboard/frontend
+        run: npm run check:scales
+
+      # The server mounts dist/ when it exists (api.py), so an index.html that
+      # references assets the build did not emit is a blank page in production and
+      # nothing else would catch it.
+      - name: Assert the bundle is self-consistent
+        working-directory: dashboard/frontend
+        run: |
+          set -euo pipefail
+          test -f dist/index.html
+          python - <<'PY'
+          import os
+          import re
+
+          html = open("dist/index.html", encoding="utf-8").read()
+          refs = re.findall(r'(?:src|href)="/(assets/[^"]+)"', html)
+          assert refs, "dist/index.html references no built assets"
+          missing = [ref for ref in refs if not os.path.exists(os.path.join("dist", ref))]
+          assert not missing, f"index.html references files the build did not emit: {missing}"
+          print(f"OK: {len(refs)} asset references, all present")
+          PY
+
+  # Build and install the artifact users receive, including its frontend,
+  # contract schema and license.
+  wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/frontend/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install from the lockfile
+        working-directory: dashboard/frontend
+        run: npm ci
+
+      - name: Build a wheel and check the page it serves
+        working-directory: dashboard
+        run: bash tests/smoke_wheel.sh python
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Build and smoke-test the standalone image
+        working-directory: dashboard
+        run: bash tests/smoke_container.sh
