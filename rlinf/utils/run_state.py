@@ -64,6 +64,21 @@ DEFAULT_HEARTBEAT_INTERVAL_S = 5.0
 #: without turning the snapshot into a log file.
 TRACEBACK_TAIL_CHARS = 4000
 
+
+def _is_clean_exit(exc: SystemExit) -> bool:
+    """Whether a ``SystemExit`` means "finished" rather than "died".
+
+    ``sys.exit()`` and ``sys.exit(0)`` are a deliberate, successful shutdown.
+    Anything else -- ``sys.exit(1)``, ``sys.exit("message")`` -- is a failure
+    being converted into an exit on the way out, which is what a launcher does
+    after its workers die.
+
+    A string code is treated as a failure because that is what Python does with
+    it: the interpreter prints it to stderr and exits non-zero.
+    """
+    code = exc.code
+    return code is None or code == 0
+
 #: Timer scope -> contract phase. Scope names differ across runners for the
 #: same activity, so they are normalized here rather than leaked to readers.
 #: Unmapped scopes pass through verbatim, so a scope added later shows up as
@@ -812,8 +827,21 @@ class RunStateReporter:
         try:
             try:
                 yield self
-            except (KeyboardInterrupt, SystemExit) as exc:
+            except KeyboardInterrupt as exc:
                 self.mark_stopped(reason=f"{type(exc).__name__}")
+                raise
+            except SystemExit as exc:
+                # `SystemExit` carries an exit code, and the code is the whole
+                # question: `sys.exit(0)` is a clean shutdown, `sys.exit(1)` is a
+                # crash on its way out. Classifying both as `stopped` reports a
+                # run whose workers died as one somebody stopped on purpose --
+                # observed on a LIBERO run whose env subprocess segfaulted, which
+                # reached the dashboard as "stopped, reason: SystemExit" with no
+                # traceback and nothing to suggest anything had gone wrong.
+                if _is_clean_exit(exc):
+                    self.mark_stopped(reason=f"{type(exc).__name__}")
+                else:
+                    self.mark_failed(exc)
                 raise
             except BaseException as exc:
                 self.mark_failed(exc)

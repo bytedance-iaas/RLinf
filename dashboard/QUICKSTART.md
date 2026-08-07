@@ -109,6 +109,30 @@ PORT=8433 bash dashboard/tests/smoke_server.sh /workspace/dashvenv/bin/python
 
 ### 3.2 端到端：跑两步真实训练
 
+> **已知问题（2026-08-07，镜像 `rlinf:d6841eed…`）：这一步跑不通，且与
+> dashboard 无关。**
+>
+> LIBERO 的 env 子进程在第一次 rollout 时静默退出，父进程收到 `EOFError`，
+> `TRAIN_EXIT=255`：
+>
+> ```text
+> rlinf/envs/libero/libero_env.py  step
+>   -> rlinf/envs/venv/venv.py  recv
+>   -> multiprocessing/connection.py:399  raise EOFError
+> Exception occurred while running AsyncEnvWorker's function interact
+> ```
+>
+> **在 `origin/dev` 上用同一个脚本、同一个配置复现，失败点完全相同**，所以这不是
+> dashboard 分支引入的。已排除：内存（1839 GB 可用）、`/dev/shm`（256 GB）、
+> LIBERO 资源与 EGL（单独建环境并渲染一帧正常）、`SubprocVectorEnv`（2 个环境
+> 单独跑正常）、numpy 2.x ABI（实为 1.26.4）。
+>
+> 剩下最可疑的是镜像本身：这一版是 **torch 2.11.0+cu130**，而更早跑通过同一配置
+> 的镜像不是。子进程没有留下任何错误信息，符合段错误的特征。
+>
+> 第 2 步和第 3.1 步都已验证通过，dashboard 本身可用；下面这个脚本留在这里，是
+> 因为等环境修好之后它就是可用的，命令本身已经逐条核对过。
+
 写一个脚本，每次训练一个独立的 `experiment_name`：
 
 ```bash
@@ -226,6 +250,7 @@ curl -s "localhost:8420/api/runs/<RUN_ID>/template" | python3 -c \
 | run 列表空 | scan root 路径不对。`curl localhost:8420/api/health` 看 `scan_roots` 的 `exists` |
 | run 显示 `state: null` / `health: unknown` | **初始化期间的正常状态**。reporter 在构造时就写了 `manifest.json`，所以 run 在 worker 起来之前就可见；`run.json` 要等训练循环真正开始才写。模型加载 + LIBERO 初始化期间会停在这个状态几分钟。一直不变就去看 `smoke_train.log`——加载阶段崩掉的话不会写终态 |
 | 终态 run 显示 `unreachable` | 正常。心跳停了就是停了，终态 run 不会因此变红——若变红说明 state 没写成终态 |
+| run 是 `failed`，想看原因 | Events 页顶部的 **Exit** 卡片有 reason 和 traceback 末段；完整日志在 `smoke_train.log` |
 | 列表顶部红色「run id 撞车」 | 不同 run 用了同一个 run id。**点进去看到的可能不是你点的那个**，给每个 run 独立 id |
 | `[Errno 48] address already in use` | 8421 被 port-forward 占了，smoke 用 `PORT=8433` |
 

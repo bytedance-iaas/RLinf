@@ -811,12 +811,44 @@ def test_lifecycle_marks_stopped_on_interrupt(reporter):
     assert snapshot["exit"]["traceback_tail"] is None
 
 
-def test_lifecycle_marks_stopped_on_system_exit(reporter):
+def test_lifecycle_marks_stopped_on_a_clean_system_exit(reporter):
+    """`sys.exit()` and `sys.exit(0)` are a deliberate, successful shutdown."""
+    for code in (None, 0):
+        with pytest.raises(SystemExit):
+            with reporter.run_lifecycle():
+                raise SystemExit(code)
+
+        snapshot = _read(reporter)
+        assert snapshot["state"] == "stopped", f"exit code {code!r}"
+        assert snapshot["exit"]["traceback_tail"] is None
+
+
+@pytest.mark.parametrize("code", [1, 2, 255, "boom"])
+def test_lifecycle_marks_failed_on_a_non_zero_system_exit(reporter, code):
+    """A non-zero exit is a crash on its way out, not a stop.
+
+    This assertion is deliberately the reverse of what it used to be: the test
+    required `SystemExit(1)` to record `stopped`. That is what a launcher raises
+    after its workers die, and it reached the dashboard as "stopped, reason:
+    SystemExit" with no traceback -- a run whose env subprocess had segfaulted,
+    presented as one somebody had stopped on purpose. Observed on a real LIBERO
+    run; `stopped` and `failed` call for opposite reactions, so the exit code has
+    to decide which one it was.
+
+    A string code counts as a failure for the same reason Python does: the
+    interpreter prints it to stderr and exits non-zero.
+    """
     with pytest.raises(SystemExit):
         with reporter.run_lifecycle():
-            raise SystemExit(1)
+            raise SystemExit(code)
 
-    assert _read(reporter)["state"] == "stopped"
+    snapshot = _read(reporter)
+    assert snapshot["state"] == "failed"
+    assert "SystemExit" in snapshot["exit"]["reason"]
+    assert snapshot["exit"]["traceback_tail"], (
+        "a failed run must carry a traceback; without one the page shows a "
+        "terminal state and no way to find out why"
+    )
 
 
 def test_lifecycle_records_run_end_event(reporter):
