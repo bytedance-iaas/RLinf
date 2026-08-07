@@ -11,6 +11,9 @@ The service does not import `rlinf`. Training environments can keep their own
 heavy and sometimes incompatible dependencies while the dashboard runs in a
 small, independent Python environment.
 
+For a copy-paste source, wheel, container, and live-run workflow, see
+[`QUICKSTART.md`](QUICKSTART.md).
+
 ## Architecture
 
 The training process writes run metadata under:
@@ -58,26 +61,35 @@ read-only root filesystem.
 ## Run
 
 ```bash
-.venv/bin/rlinf-dashboard /path/to/logs
-# Multiple roots are accepted:
-.venv/bin/rlinf-dashboard /mnt/team-a/runs /mnt/team-b/runs --port 8420
+.venv/bin/rlinf-dashboard /path/to/logs --port 8420
 ```
 
-Each positional path can be a `runner.logger.log_path` or an ancestor of
-several log paths. Discovery searches for `_rlinf/runs/*/manifest.json` within a
-bounded depth.
+One directory, which can be a `runner.logger.log_path` or an ancestor of
+several. Discovery searches for `_rlinf/runs/*/manifest.json` within a bounded
+depth, so runs that already share an ancestor are covered by naming it:
+
+```
+/mnt/runs                        <- the scan root
+├── experiment-a/<run>/_rlinf/…
+└── experiment-b/<run>/_rlinf/…
+```
+
+Gathering runs that do *not* share a filesystem — from several machines — is a
+separate problem with its own questions about identity and freshness, and is not
+what a second local path would solve.
 
 Configuration can also be supplied with `RLINF_DASHBOARD_` environment
 variables:
 
 | Variable | Default | Meaning |
 | --- | ---: | --- |
-| `RLINF_DASHBOARD_SCAN_ROOTS` | `./logs` | One path, comma-separated paths, or a JSON array |
+| `RLINF_DASHBOARD_SCAN_ROOT` | `./logs` | One directory. Point it at the common ancestor when runs live in several |
 | `RLINF_DASHBOARD_SCAN_MAX_DEPTH` | `6` | Maximum discovery depth below each root |
 | `RLINF_DASHBOARD_HEARTBEAT_TIMEOUT_K` | `5.0` | Missed heartbeat intervals before `unreachable` |
 | `RLINF_DASHBOARD_HEARTBEAT_INTERVAL_S` | `5.0` | Fallback interval for older manifests |
 | `RLINF_DASHBOARD_PROGRESS_TIMEOUT_K` | `10.0` | Step-time budgets before `degraded` |
 | `RLINF_DASHBOARD_TIMEOUT_FLOOR_S` | `30.0` | Minimum progress budget during startup |
+| `RLINF_DASHBOARD_STARTUP_GRACE_S` | `600.0` | Grace period for a manifest-only run to publish its first snapshot |
 | `RLINF_DASHBOARD_SSE_INTERVAL_S` | `2.0` | Live update interval |
 | `RLINF_DASHBOARD_DISCOVERY_CACHE_TTL_S` | `5.0` | Run discovery cache lifetime |
 | `RLINF_DASHBOARD_MAX_SERIES_POINTS` | `4000` | Per-series response budget |
@@ -87,7 +99,7 @@ variables:
 For example:
 
 ```bash
-RLINF_DASHBOARD_SCAN_ROOTS=/mnt/runs \
+RLINF_DASHBOARD_SCAN_ROOT=/mnt/runs \
   .venv/bin/rlinf-dashboard --host 0.0.0.0 --port 8420
 ```
 
@@ -147,6 +159,7 @@ cd frontend
 npm install
 npm run typecheck
 npm run check:scales
+npm run check:identity
 npm run dev
 ```
 
@@ -176,3 +189,8 @@ synthetic run tree read-only and checks both API and browser shell.
 Use a separate `runner.logger.log_path` for concurrent launches. TensorBoard and
 per-worker metric paths are not yet run-scoped, so reusing one log path can merge
 time series even though control-plane run IDs remain distinct.
+
+`run.v2.schema.json` versions the `run.json` snapshot. The manifest and JSONL
+index formats are not yet covered by versioned schemas; they must be frozen
+before producer and consumer can make an independent cross-repository
+compatibility promise.
