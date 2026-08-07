@@ -14,6 +14,7 @@
 
 import itertools
 import logging
+import time
 import typing
 from typing import Optional, Union
 
@@ -126,6 +127,16 @@ class AgentEvalRunner(ReasoningEvalRunner):
         ).wait()
 
     def run(self):
+        """Evaluate, always recording a terminal run state.
+
+        The body is in ``_run_impl`` so this shell is the single place a terminal
+        state is written. Entry scripts call bare ``runner.run()``, so without it
+        a crashed evaluation leaves nothing on disk saying it failed.
+        """
+        with self.reporter.run_lifecycle():
+            return self._run_impl()
+
+    def _run_impl(self):
         """Run evaluation on validation dataset.
 
         This function:
@@ -162,6 +173,7 @@ class AgentEvalRunner(ReasoningEvalRunner):
                     f"\nProcessing batch {batch_idx + 1}/{len(self.val_dataloader)}"
                 )
 
+                step_started = time.time()
                 with self.timer("step"):
                     with self.timer("prepare_data"):
                         self._put_batch(batch, self.batch_split_num)
@@ -205,6 +217,11 @@ class AgentEvalRunner(ReasoningEvalRunner):
                 self.update_batch(context, eval_pbar, time_metrics)
 
                 self.global_steps += 1
+                self.reporter.set_progress(
+                    step=self.global_steps,
+                    epoch=self.epoch,
+                    step_duration_s=time.time() - step_started,
+                )
 
         finally:
             for tool_worker in self.tool_workers:

@@ -78,6 +78,11 @@ class RecordVideo(gym.Wrapper):
         self._num_envs = getattr(env, "num_envs", 1)
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._save_futures: list[Future] = []
+        # Control-plane media index. Set by the env worker via
+        # `set_media_index()`; None means "do not index", which is the default
+        # so this wrapper stays usable standalone.
+        self._media_index = None
+        self._global_step: Optional[int] = None
 
         if fps is not None:
             self._fps = fps
@@ -435,7 +440,28 @@ class RecordVideo(gym.Wrapper):
         self.record_video_in_result(result)
         return result
 
-    def flush_video(self, video_sub_dir: Optional[str] = None):
+    def set_media_index(self, media_index, shard: int = 0) -> None:
+        """Attach a media index so written MP4s become discoverable.
+
+        Args:
+            media_index: Object with an ``append(record)`` method, normally a
+                :class:`~rlinf.utils.run_state.MediaIndexWriter`.
+            shard: Writer index recorded in each row, normally the worker rank.
+        """
+        self._media_index = media_index
+        self._media_shard = shard
+
+    def set_global_step(self, step: Optional[int]) -> None:
+        """Record which training step the next video belongs to.
+
+        Optional: with no step the index row carries ``null`` and a reader falls
+        back to ordering by file mtime.
+        """
+        self._global_step = step
+
+    def flush_video(
+        self, video_sub_dir: Optional[str] = None, split: Optional[str] = None
+    ):
         """Write buffered frames to an MP4 file.
 
         The encode happens on the background thread pool, but we wait for the
@@ -445,6 +471,16 @@ class RecordVideo(gym.Wrapper):
         threads that get killed mid-task at interpreter exit (no ``atexit``
         handler is run under Ray actor shutdown either). Without this wait,
         eval videos end at ``mdat`` and no player can open them.
+
+        Args:
+            video_sub_dir: Extra directory component under ``seed_<n>/``. Also
+                the default index label, since callers that separate videos by
+                directory are naming the split.
+            split: Index label when it must not change the output directory.
+                Train and eval already write to different ``video_base_dir``
+                roots, so labelling them costs no path change -- and passing
+                ``video_sub_dir`` for that purpose would silently relocate every
+                existing run's videos.
         """
         if not self.render_images:
             return
@@ -458,12 +494,69 @@ class RecordVideo(gym.Wrapper):
         os.makedirs(output_dir, exist_ok=True)
         mp4_path = os.path.join(output_dir, f"{self.video_cnt}.mp4")
         frames = list(self.render_images)
+        num_frames = len(frames)
         self.render_images = []
         self.video_cnt += 1
         future = self._submit_save(frames, mp4_path)
         # Block until the encode + writer.close() returns so the MP4 is valid
         # on disk before the rollout loop continues (or the process exits).
         future.result()
+        self._index_video(mp4_path, split or video_sub_dir, num_frames)
+
+    def _read_success_once(self) -> Optional[np.ndarray]:
+        """Read the wrapped env's cumulative per-env success flags, if it has any.
+
+        Every embodied env that tracks episode metrics keeps a ``success_once``
+        array (LIBERO, ManiSkill, Behavior, RoboVerse); envs without a success
+        notion, and any env with ``record_metrics`` off, have no attribute and
+        this returns ``None``. Read at flush time rather than accumulated per
+        frame because ``success_once`` is monotone within an episode -- its value
+        when the buffer is written already covers every frame in the buffer.
+        """
+        value = getattr(self.env, "success_once", None)
+        if value is None:
+            return None
+        try:
+            flags = self._to_numpy(value).reshape(-1)
+        except Exception:  # noqa: BLE001 - an unreadable metric must not cost a row
+            return None
+        return flags.astype(bool) if flags.size else None
+
+    def _index_video(
+        self, mp4_path: str, video_sub_dir: Optional[str], num_frames: int
+    ) -> None:
+        """Append one row to the media index, after the MP4 is complete on disk.
+
+        Same append-after-completion rule as the checkpoint index: a reader of
+        the index never sees a file it cannot open.
+        """
+        if self._media_index is None:
+            return
+        try:
+            record = {
+                "path": mp4_path,
+                "step": self._global_step,
+                "split": video_sub_dir or "train",
+                "seed": getattr(self.env, "seed", None),
+                "num_frames": num_frames,
+                "fps": self._fps,
+                "shard": getattr(self, "_media_shard", 0),
+            }
+            # One MP4 is a tiled grid of every env in this worker (see
+            # `_append_frame`), so a single `success` boolean would be a lie
+            # whenever envs disagree. Counts describe the file honestly and let a
+            # reader ask either question: `num_success > 0` for "anything worked
+            # here", `num_success == num_envs` for "a clean sweep".
+            flags = self._read_success_once()
+            if flags is not None:
+                record["num_success"] = int(flags.sum())
+                record["num_envs"] = int(flags.size)
+                # Retained for the single-env case, where the grid is one frame
+                # and a scalar is what a reader actually wants.
+                record["success"] = bool(flags[0]) if flags.size == 1 else None
+            self._media_index.append(record)
+        except Exception as exc:  # noqa: BLE001 - indexing must not break recording
+            warnings.warn(f"Failed to index video {mp4_path}: {exc}")
 
     def _submit_save(self, frames: list[np.ndarray], mp4_path: str) -> Future:
         """Submit a background job to save the video, return its Future."""
