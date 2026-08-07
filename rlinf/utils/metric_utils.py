@@ -473,11 +473,25 @@ def print_metrics_table(
     metrics: dict,
     start_step: int = 0,
     log_path: str | None = None,
+    eta_seconds: float | None = None,
 ):
     """Print training metrics in a simple, fast formatted table.
 
     The rendered table is written to stdout and, when ``log_path`` is given,
     also appended to ``<log_path>/metrics.log``.
+
+    Args:
+        step: Zero-based index of the step just completed.
+        total_steps: Total steps planned.
+        start_time: ``time.time()`` when the run started.
+        metrics: Metrics to tabulate.
+        start_step: Step the run resumed from, so rate excludes prior steps.
+        log_path: If given, the table is also appended to ``metrics.log`` there.
+        eta_seconds: Precomputed estimate, normally from
+            :class:`~rlinf.utils.progress.ProgressEstimator`. When omitted the
+            whole-run average below is used, which for RL is dragged upward by
+            however many evals and saves happened to run. Layout is identical
+            either way -- only the number changes.
     """
     # Accumulate the table into lines so the exact same rendering goes to both
     # stdout and the log file.
@@ -490,9 +504,12 @@ def print_metrics_table(
     progress = (step + 1) / total_steps * 100
     elapsed_time = time.time() - start_time
     steps_done = step + 1 - start_step
-    eta_seconds = (
-        elapsed_time / steps_done * (total_steps - step - 1) if steps_done > 0 else 0
-    )
+    if eta_seconds is None:
+        eta_seconds = (
+            elapsed_time / steps_done * (total_steps - step - 1)
+            if steps_done > 0
+            else 0
+        )
 
     def format_time(seconds):
         hours, remainder = divmod(int(seconds), 3600)

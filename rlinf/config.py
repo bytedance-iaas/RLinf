@@ -16,6 +16,8 @@ import dataclasses
 import importlib.util
 import logging
 import os
+import time
+import uuid
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Callable, ClassVar, Optional, Union
 
@@ -1395,6 +1397,17 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         if cfg.runner.per_worker_log:
             cfg.runner.per_worker_log_path = os.path.join(
                 cfg.runner.logger.log_path, "worker_logs"
+            )
+
+        # `run_id` identifies one launch and anchors the control-plane directory
+        # `<log_path>/_rlinf/runs/<run_id>/`. Derived here rather than in YAML
+        # because config files hold static values only, and derived here rather
+        # than in the runner so it exists before any worker is launched.
+        if not cfg.runner.get("run_id", None):
+            cfg.runner.run_id = "{}-{}-{}".format(
+                time.strftime("%Y%m%d-%H%M%S"),
+                cfg.runner.logger.get("experiment_name", "run"),
+                uuid.uuid4().hex[:8],
             )
         profiling_cfg = cfg.cluster.get("profiling", None)
         if profiling_cfg is not None and bool(profiling_cfg.get("enabled", True)):
