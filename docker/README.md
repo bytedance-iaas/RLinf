@@ -20,7 +20,28 @@ Each `BUILD_TARGET` maps to a build stage in [`Dockerfile`](Dockerfile). To see 
 
 - `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), or `ascend` (CANN). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image. The `embodied-franka` target ignores `PLATFORM` and always uses a plain `ubuntu:20.04` base.
 - Per-platform runtime versions: `CUDA_VER`, `ROCM_VER`, `ROCM_ARCHS`, `CANN_VER`, `UBUNTU_VER`. Override any of these to bump versions without changing the rest of the build. For a fully custom base, set `NVIDIA_BASE_IMAGE`, `AMD_BASE_IMAGE`, or `ASCEND_BASE_IMAGE` directly.
-- `NO_MIRROR` — set to `1` to skip the USTC apt/pypi mirror rewrites (recommended outside of mainland China).
+- `NO_MIRROR` — set to `1` to skip the USTC apt/pypi mirror rewrites (recommended outside of mainland China). Also switches the dashboard's npm install back to `registry.npmjs.org`.
+- `NODE_BASE_IMAGE` (default `node:22-bookworm-slim`) — the image used by the `dashboard-frontend-build` stage. Point it at a registry mirror if Docker Hub is slow or unreachable.
+
+### The dashboard frontend
+
+Every image builds the dashboard's web bundle in a `dashboard-frontend-build`
+stage and copies the result to `/opt/rlinf-dashboard/dist`, and into
+`/root/RLinf/dashboard/frontend/dist` when the source is baked in
+(`SCM_COMMIT_ID`). So inside a container:
+
+```bash
+python -m rlinf_dashboard /path/to/log-root    # serves the UI, no npm needed
+```
+
+Node is only in the build stage — the runtime image gets `dist/` and nothing
+else. Without this the server still starts and serves its API, but every
+container would have a dashboard with no UI, reported only as a debug log line.
+
+If you rebuild the frontend inside a container (`npm run build`), the fresh
+`dist/` wins: the server looks at the source tree before any baked copy, and
+this build deliberately does not set `RLINF_DASHBOARD_FRONTEND_DIST`, which
+would override that order.
 
 Example with non-default args:
 

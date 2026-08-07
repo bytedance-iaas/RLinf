@@ -12,6 +12,49 @@ ARG UBUNTU_VER=22.04
 ARG NVIDIA_BASE_IMAGE=nvidia/cuda:${CUDA_VER}-cudnn-devel-ubuntu${UBUNTU_VER}
 ARG AMD_BASE_IMAGE=rocm/dev-ubuntu-${UBUNTU_VER}:${ROCM_VER}-complete
 ARG ASCEND_BASE_IMAGE=swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:${CANN_VER}-ubuntu${UBUNTU_VER}-py3.11
+# Node for the dashboard frontend build only. Pinned to the major the CI job
+# uses (.github/workflows/dashboard-tests.yml) so the image and CI cannot build
+# the bundle with different toolchains. Overridable for a registry mirror.
+ARG NODE_BASE_IMAGE=node:22-bookworm-slim
+
+
+##################################################################################################
+# Dashboard frontend build
+##################################################################################################
+#
+# The dashboard serves a built bundle from disk and runs API-only when there
+# isn't one, so an image without this stage gives every container a dashboard
+# with no UI and no error -- the failure is a debug log line. Building here
+# means the image ships the same asset CI checked, and nobody needs npm inside a
+# training container to look at a run.
+#
+# A separate stage on a node base rather than apt-installing node into the
+# runtime image: this is build-time tooling, and node plus a node_modules tree is
+# ~200 MB that no training job has a use for. Only `dist/` crosses over.
+FROM ${NODE_BASE_IMAGE} AS dashboard-frontend-build
+ARG NO_MIRROR
+WORKDIR /build
+
+# npmmirror for speed, not reachability: measured from the Volcengine network,
+# registry.npmjs.org answers in 4.17s against npmmirror's 0.27s, and this stage
+# fetches ~32 MB. Upstream does work, so a build that has to avoid the mirror
+# only gets slower, never broken. Gated on NO_MIRROR like apt and pip below, so
+# public GitHub builds stay on the upstream registry.
+RUN if [ "$NO_MIRROR" != "1" ]; then \
+        npm config set registry https://registry.npmmirror.com; \
+    fi
+
+# Manifest first, so a source-only change reuses the cached install layer. `npm
+# ci` rather than `npm install`: it installs the resolved tree from the lockfile
+# and fails if the two disagree, which is what makes the image's bundle the same
+# one the lockfile pins.
+COPY dashboard/frontend/package.json dashboard/frontend/package-lock.json ./
+RUN npm ci
+
+COPY dashboard/frontend/ ./
+# `npm run build` runs tsc first, so a type error fails the image build rather
+# than shipping a stale or partial bundle.
+RUN npm run build && test -f dist/index.html
 
 
 ##################################################################################################
@@ -518,6 +561,34 @@ RUN if [ -n "$SCM_COMMIT_ID" ]; then \
         git clone "${GITHUB_PREFIX}https://github.com/bytedance-iaas/RLinf.git" /root/RLinf && \
         git -C /root/RLinf checkout "$SCM_COMMIT_ID"; \
     fi
+
+
+##################################################################################################
+# Dashboard frontend
+##################################################################################################
+#
+# The bundle built in the stage at the top, kept at a fixed path so it survives
+# whatever happens to the source tree, and then placed where the server looks by
+# default.
+COPY --from=dashboard-frontend-build /build/dist /opt/rlinf-dashboard/dist
+
+# `rlinf_dashboard.api` resolves the bundle as `<package>/../frontend/dist` and
+# then `<package>/static`, so dropping it into the baked checkout is what makes
+# `python -m rlinf_dashboard <log-root>` serve a UI with no further steps.
+#
+# Deliberately not exported as RLINF_DASHBOARD_FRONTEND_DIST: that setting
+# overrides the search, so a container where someone edits the frontend and runs
+# `npm run build` would keep serving this baked copy and they would debug a
+# bundle they did not build. Copying into the tree leaves the normal precedence
+# intact -- a rebuilt `dist/` simply replaces it.
+#
+# `|| true` because the clone above is skipped when SCM_COMMIT_ID is empty, and
+# an image without the baked source is a valid build, not a failure. The bundle
+# is still at /opt for anyone who wants to point a checkout at it.
+RUN if [ -d /root/RLinf/dashboard/frontend ]; then \
+        rm -rf /root/RLinf/dashboard/frontend/dist && \
+        cp -r /opt/rlinf-dashboard/dist /root/RLinf/dashboard/frontend/dist; \
+    fi || true
 
 # Run everything under tini as PID 1 so orphaned children (e.g. Ray workers
 # killed by `ray stop`) are reaped instead of piling up as <defunct> zombies.

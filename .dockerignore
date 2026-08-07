@@ -1,0 +1,31 @@
+# Build context exclusions.
+#
+# Everything here is either a build artifact that the image rebuilds itself or a
+# local-only tree that costs upload time for nothing. `dashboard/frontend` is the
+# reason this file exists: the image builds the bundle in its own stage, and
+# without these two lines a developer's 66 MB `node_modules` is uploaded with
+# every build and then copied *over* the one `npm ci` just installed from the
+# lockfile -- so the image would ship whatever happened to be on that laptop.
+
+dashboard/frontend/node_modules/
+dashboard/frontend/dist/
+dashboard/frontend/.vite/
+
+# Written by scripts/bundle_frontend.py for wheel builds; the image has no use
+# for a stale copy.
+dashboard/rlinf_dashboard/static/
+
+# Python build and test artifacts.
+**/__pycache__/
+**/*.pyc
+**/*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Local environments and editor state.
+.venv/
+venv/
+.idea/
+.vscode/
