@@ -1,0 +1,12 @@
+# The repo root ignores `dist` but not `node_modules`, and this is the only npm
+# project in the tree -- so the rule belongs here rather than in the root file,
+# where it would be dead weight for every Python-only checkout.
+node_modules/
+
+# Vite's build output. Also matched by the root .gitignore's `dist`; repeated here
+# so this directory is self-describing if it is ever vendored elsewhere.
+dist/
+
+# Vite's dep-optimizer cache, which lives outside node_modules when the cache dir
+# is overridden.
+.vite/
