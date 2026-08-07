@@ -14,6 +14,10 @@ on its own — `curl` and `/docs` are a complete interface to it), and
 mounts the built frontend when `frontend/dist/` exists and works fine when it does
 not.
 
+**Just want it running on the cluster?** [`QUICKSTART.md`](QUICKSTART.md) is the
+copy-paste path for the `rlinf-0` container: install, serve, smoke test, and a
+two-step training run to look at. This file is the reference behind it.
+
 ## Why it does not import `rlinf`
 
 RLinf training environments are many and heavy — isaac-sim, omnigibson and sglang
