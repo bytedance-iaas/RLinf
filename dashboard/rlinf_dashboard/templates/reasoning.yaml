@@ -1,0 +1,235 @@
+# Template for reasoning / agent / coding RL runs.
+#
+# `task_type: reasoning` covers runner families that spell training keys
+# differently, so both spellings are listed everywhere it matters:
+#
+#   * reasoning_runner.py composes `actor/training/{k}` where k is *already*
+#     `actor/policy_loss` (:690), so the canonical key is `train/actor/actor/*`
+#     -- doubled. Its critic is `train/critic/critic/*` (:693).
+#   * agent_runner.py / coding_online_rl_runner.py / agentlightning_runner.py
+#     compose `train/{k}` directly (agent_runner.py:321), giving the clean
+#     `train/actor/*`.
+#
+# Both come from the same worker, so the doubled and clean spellings mean the
+# same quantity. `bind_keys` drops the absent ones and collapses alias twins to a
+# single canonical key, so listing every spelling costs nothing while guessing
+# one costs the chart. (The `train/` forms exist because metric_naming.dual_write
+# aliases `actor/training/` -> `train/actor/` and `critic/training/` ->
+# `train/critic/`. The legacy spellings are still written too, and must stay
+# listed: a manifest predating `metric_aliases` carries an empty alias map, and
+# with no aliases neither the gateway nor bind_keys can resolve a canonical
+# request against legacy-stored data -- the chart would just be absent.)
+#
+# Note the x-axis label. reasoning_runner logs at
+# `logging_steps = (global_steps - 1) * n_minibatches` and then again at
+# `logging_steps + i` within one real step, so its x-axis is a minibatch index,
+# not an RL iteration. progress.step_semantics reports this as `minibatch`, and
+# the label here says so, so nobody reads a reasoning curve as if its steps were
+# comparable to an embodied run's.
+name: reasoning
+task_types: [reasoning, coding_online_rl]
+step_axis_label: Minibatch
+
+# No video: these runs have no environment in the embodied sense. Their rollouts
+# are token sequences, which belong in a text view, not a video grid.
+has_media_view: false
+
+north_star:
+  # One candidate, four spellings: every one of these is a mean reward that
+  # should go up, so they genuinely share `label`/`goal` -- which is the only
+  # situation where one candidate may cover several keys.
+  #
+  # `reward_scores` comes from compute_rollout_metrics (distributed.py:297), used
+  # by reasoning_runner and coding_online_rl_runner. The agent runners use
+  # compute_rollout_metrics_dynamic instead (distributed.py:175-176), which
+  # splits reward per trajectory and per turn -- trajectory-level is the one
+  # comparable to a single-turn run's reward, so it comes first.
+  candidates:
+    - keys:
+        - rollout/reward_scores
+        - rollout/reward_scores_traj
+        - rollout/reward_scores_turn
+        - agent/mean/reward
+      label: Mean reward
+      goal: maximize
+
+groups:
+  - title: Task performance
+    charts:
+      - keys:
+          - rollout/reward_scores
+          - rollout/reward_scores_traj
+          - rollout/reward_scores_turn
+          - agent/mean/reward
+        title: Reward
+      - keys: [rollout/response_length, rollout/average_response_length]
+        title: Response length
+        unit: tokens
+        # Reward that climbs together with response length is often length
+        # gaming rather than better reasoning, which is why these belong side by
+        # side.
+      - keys: [rollout/prompt_length, rollout/total_length]
+        title: Prompt and total length
+        unit: tokens
+      - keys: [rollout/fraction_of_samples_properly_ended]
+        title: Properly ended
+        format: percent
+        # The inverse of a truncation rate: a reward gain that coincides with
+        # this falling means the model is being cut off, not answering better.
+
+  - title: Policy optimization
+    charts:
+      # Doubled spelling first: reasoning_runner is the runner this template is
+      # named for. The clean spelling follows for the three agent-style runners,
+      # then the legacy one. Order only decides the legend on a run that writes
+      # unrelated spellings; alias twins are collapsed to canonical regardless.
+      - keys:
+          - train/actor/actor/policy_loss
+          - train/actor/policy_loss
+          - actor/training/actor/policy_loss
+        title: Actor policy loss
+      - keys:
+          - train/actor/actor/final_loss
+          - train/actor/final_loss
+        title: Actor total loss
+      - keys: [train/actor/actor/approx_kl, train/actor/approx_kl]
+        title: Approx KL
+        # The first thing to check when reward moves but quality does not: a KL
+        # that runs away means the policy left the reference behind.
+      - keys: [train/actor/actor/clip_fraction, train/actor/clip_fraction]
+        title: Clip fraction
+        format: percent
+      - keys:
+          - train/actor/actor/clipped_ratio
+          - train/actor/clipped_ratio
+          - train/actor/actor/dual_cliped_ratio
+          - train/actor/dual_cliped_ratio
+        title: Clipped ratio
+      - keys: [train/actor/actor/ratio, train/actor/ratio]
+        title: Importance ratio
+        # The unclipped ratio shows how far the update wanted to move; clipped
+        # ratios show how often the trust region bounded that update.
+      - keys: [train/actor/actor/entropy_loss, train/actor/entropy_loss]
+        title: Entropy loss
+        # Entropy collapsing toward zero while reward is still climbing is the
+        # signature of a policy that has stopped exploring and is about to stop
+        # improving.
+      - keys: [train/actor/actor/kl_loss, train/actor/kl_loss]
+        title: KL loss
+      - keys: [train/actor/actor/grad_norm, train/actor/grad_norm]
+        title: Gradient norm
+        scale: log
+      - keys: [train/actor/actor/lr, train/actor/lr]
+        title: Learning rate
+        scale: log
+
+  - title: Value function
+    # Only present when a critic is configured.
+    charts:
+      # reasoning_runner is the only runner in this family that has a critic, so
+      # the doubled spelling is the one that will bind in practice.
+      - keys:
+          - train/critic/critic/value_loss
+          - train/critic/value_loss
+          - critic/training/critic/value_loss
+        title: Value loss
+      - keys:
+          - train/critic/critic/final_value_loss
+          - train/critic/final_value_loss
+        title: Total value loss
+      - keys:
+          - train/critic/critic/explained_variance
+          - train/actor/critic/explained_variance
+        title: Explained variance
+        # <= 0 means the value head is no better than predicting the mean, so
+        # every advantage derived from it is noise. The most diagnostic single
+        # number a critic produces.
+      - keys:
+          - train/critic/critic/value_clip_ratio
+          - train/critic/value_clip_ratio
+        title: Value clip ratio
+      - keys: [train/critic/critic/grad_norm, train/critic/grad_norm]
+        title: Critic gradient norm
+        scale: log
+      - keys: [train/critic/critic/lr, train/critic/lr]
+        title: Critic learning rate
+        scale: log
+
+  - title: Rollout
+    charts:
+      - keys: [rollout/total_num_sequence]
+        title: Sequences per step
+      - keys:
+          - rollout/advantages_mean
+          - rollout/advantages_min
+          - rollout/advantages_max
+        title: Advantages
+      - keys: [rollout/values_mean, rollout/values_min, rollout/values_max]
+        title: Values
+      - keys: [rollout/avg_turns_per_traj]
+        title: Turns per trajectory
+        # Agent runners only; a multi-turn run's reward is per trajectory, so
+        # this is what makes the per-turn reward readable.
+
+  - title: Throughput
+    charts:
+      - keys: [time/step]
+        title: Step time
+        unit: s
+      - keys:
+          - flops/rollout_tflops_per_gpu
+          - flops/inference_tflops_per_gpu
+          - flops/training_tflops_per_gpu
+        title: TFLOPs per GPU
+        # Only when `actor.calculate_flops` is set. There is no MFU metric: the
+        # runners report achieved TFLOPs and leave the peak-relative division to
+        # whoever knows the accelerator.
+      - keys:
+          - time/rollout
+          - time/actor/training
+          - time/training
+          - time/reward
+          - time/prepare_data
+          - time/sync_weights
+        title: Phase durations
+        unit: s
+        stacked: true
+        # Driver-level scopes only. `time/actor/inference`, `time/critic/*` and
+        # the worker sub-scopes overlap these in wall-clock time, so stacking
+        # them together would double-count. reasoning_runner spells the actor's
+        # training time `actor/training` (:654) while the three agent-style
+        # runners spell it `training` (agent_runner.py:294); only one is ever
+        # present, so listing both does not double-count either.
+      - keys: [time/actor/inference, time/inference, time/critic/inference]
+        title: Inference time
+        unit: s
+        # Separate chart, not stacked above: logprob recomputation overlaps the
+        # phases it is measured alongside.
+
+  - title: Agent
+    collapsed: true
+    # Multi-agent and tool-use runs only.
+    charts:
+      - keys: [agent/count/n_rollouts, agent/count/n_rollouts_w_reward]
+        title: Rollouts
+      - keys: [agent/mean/turn_count_per_rollout, agent/sum/turn_count]
+        title: Turns
+      - keys:
+          - agent/mean/tool_calls_per_rollout
+          - agent/mean/tool_calls_per_turn
+          - agent/sum/total_tool_calls
+        title: Tool calls
+      - keys: [agent/p90/response_length, agent/mean_top10p/response_length]
+        title: Response length tail
+        unit: tokens
+        # The tail, not the mean: truncation and runaway generation both live
+        # in the top decile and are invisible in an average.
+
+# No eval group. None of the four runners in this family logs eval metrics:
+# reasoning_runner never calls run_eval, and reasoning_eval_runner builds a
+# MetricLogger it never logs to. An `eval/pass@1` chart here would render empty
+# on every run, which reads as a broken run rather than as a metric nobody
+# writes. The pass@1 computed in agents/wideseek_r1/eval_runner.py never reaches
+# a logger.
+caveats:
+  - No eval metrics are logged by any reasoning-family runner.

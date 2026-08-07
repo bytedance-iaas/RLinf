@@ -1,0 +1,35 @@
+{
+  "schema_version": 2,
+  "run_id": "20260803-150000-grpo_1.5b",
+  "task_type": "reasoning",
+  "algorithm": {"loss_type": "grpo", "adv_type": "grpo"},
+  "state": "running",
+  "phase": "prepare_data",
+  "phase_since": "2026-08-03T15:18:44Z",
+  "components": {},
+  "heartbeat_at": "2026-08-03T15:18:49Z",
+  "heartbeat_seq": 226,
+  "last_progress_at": "2026-08-03T15:18:44Z",
+  "last_metric_at": "2026-08-03T15:18:44Z",
+  "progress": {
+    "step": 384,
+    "max_steps": 6400,
+    "epoch": null,
+    "step_semantics": "minibatch"
+  },
+  "timing": {
+    "started_at": "2026-08-03T15:00:00Z",
+    "elapsed_s": 1129.0,
+    "step_time_p50": 2.9,
+    "step_time_recent": [2.8, 3.0, 2.9],
+    "eta_s": 17446.0,
+    "eta_confidence": "high"
+  },
+  "latest_checkpoint": null,
+  "paths": {
+    "tensorboard": "/logs/grpo_1.5b/tensorboard",
+    "video_root": null
+  },
+  "cluster": {"num_nodes": 1, "component_placement": {}},
+  "exit": null
+}
