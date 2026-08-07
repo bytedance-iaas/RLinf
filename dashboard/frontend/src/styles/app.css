@@ -1,0 +1,1315 @@
+/* Application styles. Every value is a token from tokens.css, which is generated
+ * from DESIGN.md -- there are no literal colours, radii or type sizes below
+ * except where a token is composed (a 60% black scrim, a stripe pattern).
+ *
+ * One stylesheet rather than CSS modules or CSS-in-JS: this ships into air-gapped
+ * clusters, and the whole app is small enough that a flat, greppable sheet with a
+ * naming convention beats a build-time abstraction. Classes are prefixed by the
+ * component they belong to.
+ */
+
+/* ------------------------------------------------------------------- reset */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-inter);
+  font-size: var(--type-body-md-size);
+  line-height: var(--type-body-md-leading);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Every number in this console is monospaced with tabular figures. Setting it
+ * once here means a live value that ticks from 9 to 10 cannot reflow its own
+ * column, which is the mechanism behind "page geometry must not shift". */
+.num {
+  font-family: var(--font-jetbrains-mono);
+  font-feature-settings: var(--type-numeric-md-feature);
+  font-variant-numeric: tabular-nums;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+a {
+  color: var(--color-tertiary);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-border-strong);
+  outline-offset: 2px;
+}
+
+/* Screen-reader-only, for the status word behind an icon-free colour cue. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ layout */
+
+.app {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.app-main {
+  /* Capped and centred: beyond this an eight-card row stretches into a shape
+   * where scanning left to right costs a head turn. */
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: var(--space-xl) var(--space-xl) var(--space-3xl);
+}
+
+/* ------------------------------------------------------------------ header */
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: var(--space-md) var(--space-xl);
+}
+
+.header-brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  font-size: var(--type-headline-lg-size);
+  font-weight: var(--type-headline-lg-weight);
+  letter-spacing: var(--type-headline-lg-tracking);
+  color: var(--color-text);
+}
+
+.header-brand-mark {
+  background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.header-crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  flex: 1;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-muted);
+}
+
+.header-crumb-sep {
+  color: var(--color-text-faint);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-left: auto;
+}
+
+.header-live {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+/* A 6px square, not a pulsing dot. Anything that animates forever becomes
+ * something you learn to ignore, and this one carries information. */
+.header-live-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--color-text-faint);
+}
+
+.header-live[data-state="live"] .header-live-dot {
+  background: var(--color-healthy);
+}
+
+.header-live[data-state="reconnecting"] .header-live-dot {
+  background: var(--color-degraded);
+}
+
+.header-live[data-state="error"] .header-live-dot {
+  background: var(--color-unreachable);
+}
+
+/* ---------------------------------------------------------------- health bar */
+
+/* 4px full-bleed strip in the health colour, on every page. Peripheral vision
+ * resolves a colour band before the eye finds a badge. It never animates. */
+.healthbar {
+  height: var(--health-bar-height);
+  border-radius: var(--health-bar-radius);
+  background: var(--color-unknown);
+}
+
+.healthbar[data-health="healthy"] {
+  background: var(--color-healthy);
+}
+.healthbar[data-health="degraded"] {
+  background: var(--color-degraded);
+}
+.healthbar[data-health="unreachable"] {
+  background: var(--color-unreachable);
+}
+.healthbar[data-health="unknown"] {
+  background: var(--color-unknown);
+}
+
+.healthbar-reason {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: var(--space-sm) var(--space-xl) 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-muted);
+}
+
+.healthbar-reason-label {
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.healthbar-reason[data-health="degraded"] .healthbar-reason-label {
+  color: var(--color-degraded);
+}
+.healthbar-reason[data-health="unreachable"] .healthbar-reason-label {
+  color: var(--color-unreachable);
+}
+.healthbar-reason[data-health="unknown"] .healthbar-reason-label {
+  color: var(--color-unknown);
+}
+
+/* ------------------------------------------------------------------ badges */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--badge-healthy-pad) var(--space-sm);
+  border-radius: var(--badge-healthy-radius);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: var(--badge-unknown-bg);
+  color: var(--badge-unknown-fg);
+}
+
+.badge[data-tone="healthy"],
+.badge[data-tone="running"],
+.badge[data-tone="finished"] {
+  background: var(--badge-healthy-bg);
+  color: var(--badge-healthy-fg);
+}
+
+.badge[data-tone="degraded"],
+.badge[data-tone="pending"],
+.badge[data-tone="stopped"] {
+  background: var(--badge-degraded-bg);
+  color: var(--badge-degraded-fg);
+}
+
+.badge[data-tone="unreachable"],
+.badge[data-tone="failed"] {
+  background: var(--badge-unreachable-bg);
+  color: var(--badge-unreachable-fg);
+}
+
+.badge[data-tone="unknown"] {
+  background: var(--badge-unknown-bg);
+  color: var(--badge-unknown-fg);
+}
+
+/* ------------------------------------------------------------------- cards */
+
+/* Two rows of four on desktop. The card order is the reading order, so the
+ * two-column and one-column reflows degrade without per-breakpoint rules. */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(var(--space-overview-columns), minmax(0, 1fr));
+  gap: var(--space-card-gap);
+}
+
+@media (max-width: 1200px) {
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-main,
+  .header-inner,
+  .healthbar-reason {
+    padding-left: var(--space-lg);
+    padding-right: var(--space-lg);
+  }
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  /* Height is reserved so a card cannot resize when an SSE update lands. The
+   * value is the tallest content any of the eight cards holds. */
+  min-height: 124px;
+  padding: var(--card-pad);
+  background: var(--card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--card-radius);
+  color: var(--card-fg);
+}
+
+.card-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  line-height: var(--type-label-sm-leading);
+  text-transform: uppercase;
+  color: var(--card-label-fg);
+}
+
+.card-value {
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-lg-size);
+  font-weight: var(--type-numeric-lg-weight);
+  line-height: var(--type-numeric-lg-leading);
+  font-feature-settings: var(--type-numeric-lg-feature);
+  font-variant-numeric: tabular-nums;
+  color: var(--card-value-fg);
+  /* Long enough values (a path, a phase name) must wrap inside the card rather
+   * than widen it and push the grid. */
+  overflow-wrap: anywhere;
+}
+
+.card-value[data-empty="true"] {
+  color: var(--color-text-faint);
+}
+
+.card-value-sm {
+  font-size: var(--type-headline-lg-size);
+}
+
+.card-hint {
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-leading);
+  color: var(--card-hint-fg);
+  overflow-wrap: anywhere;
+}
+
+.card-hint-strong {
+  color: var(--color-text);
+}
+
+.card-foot {
+  margin-top: auto;
+}
+
+.card-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.card-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-muted);
+}
+
+.card-row-value {
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+  font-feature-settings: var(--type-numeric-sm-feature);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- progress */
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.progress-track {
+  position: relative;
+  height: var(--progress-track-height);
+  overflow: hidden;
+  background: var(--progress-track-bg);
+  border-radius: var(--progress-track-radius);
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--progress-fill-bg);
+  border-radius: var(--progress-fill-radius);
+}
+
+/* No horizon reported: a static stripe, never a fake percentage and never an
+ * animated barber pole (a forever-repeating animation is dead pixels). */
+.progress-track[data-indeterminate="true"] .progress-fill {
+  width: 100%;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-border-strong) 0,
+    var(--color-border-strong) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
+.progress-legend {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+/* --------------------------------------------------------- component strip */
+
+/* Async runners have env, rollout and actor all live at once, so the phase card
+ * shows a strip of components instead of one scalar phase. */
+.components {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.component {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--type-body-sm-size);
+}
+
+.component-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  background: var(--color-unknown);
+}
+
+.component[data-active="true"] .component-dot {
+  background: var(--color-healthy);
+}
+
+.component-name {
+  color: var(--color-text);
+}
+
+.component-since {
+  margin-left: auto;
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+  font-feature-settings: var(--type-numeric-sm-feature);
+  color: var(--color-text-faint);
+  white-space: nowrap;
+}
+
+/* ----------------------------------------------------------------- signals */
+
+.signal {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-leading);
+  color: var(--color-text-muted);
+}
+
+.signal-mark {
+  flex: none;
+  width: 3px;
+  align-self: stretch;
+  min-height: 1.2em;
+  background: var(--color-degraded);
+}
+
+.signal[data-level="red"] .signal-mark {
+  background: var(--color-unreachable);
+}
+
+.signal-title {
+  color: var(--color-text);
+  font-weight: 550;
+}
+
+.signal-body {
+  min-width: 0;
+}
+
+/* --------------------------------------------------------------- sections */
+
+.section {
+  margin-top: var(--space-xl);
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.section-title {
+  font-size: var(--type-headline-md-size);
+  font-weight: var(--type-headline-md-weight);
+  line-height: var(--type-headline-md-leading);
+  color: var(--color-text);
+}
+
+.section-desc {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-muted);
+}
+
+.section-meta {
+  margin-left: auto;
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+/* -------------------------------------------------------------- disclosure */
+
+.group {
+  margin-top: var(--space-xl);
+  border-top: 1px solid var(--color-border);
+}
+
+.group-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-md);
+  width: 100%;
+  padding: var(--space-md) 0;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  color: var(--color-text);
+}
+
+.group-head:hover .group-title {
+  color: var(--color-tertiary);
+}
+
+.group-caret {
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+  color: var(--color-text-faint);
+}
+
+.group-title {
+  font-size: var(--type-headline-md-size);
+  font-weight: var(--type-headline-md-weight);
+}
+
+.group-count {
+  margin-left: auto;
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+  font-feature-settings: var(--type-numeric-sm-feature);
+  color: var(--color-text-faint);
+}
+
+/* ------------------------------------------------------------------ charts */
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-card-gap);
+  padding-bottom: var(--space-md);
+}
+
+.chart-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--chart-panel-pad);
+  background: var(--chart-panel-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--chart-panel-radius);
+}
+
+.chart-panel[data-tall="true"] {
+  grid-column: 1 / -1;
+}
+
+.chart-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+.chart-title {
+  font-size: var(--type-headline-md-size);
+  font-weight: var(--type-headline-md-weight);
+  color: var(--color-text);
+}
+
+.chart-unit {
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+  color: var(--color-text-faint);
+}
+
+.chart-flags {
+  display: flex;
+  gap: var(--space-xs);
+  margin-left: auto;
+}
+
+.chart-flag {
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+/* Legends sit above the plot, not beside it, so plot width does not depend on
+ * how long a metric key is. */
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
+  min-height: 1.4em;
+}
+
+.chart-legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+  font-feature-settings: var(--type-numeric-sm-feature);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+
+.chart-legend-item[data-off="true"] {
+  color: var(--color-text-faint);
+  text-decoration: line-through;
+}
+
+.chart-legend-swatch {
+  flex: none;
+  width: 10px;
+  height: 3px;
+}
+
+.chart-legend-value {
+  color: var(--color-text);
+}
+
+.chart-legend-item[data-off="true"] .chart-legend-value {
+  color: var(--color-text-faint);
+}
+
+/* The plot area keeps its height whether or not there is data: a chart that
+ * collapses to nothing while loading makes the whole page jump when it arrives. */
+.chart-plot {
+  position: relative;
+  height: var(--space-chart-height);
+}
+
+.chart-panel[data-tall="true"] .chart-plot {
+  height: var(--space-chart-height-tall);
+}
+
+/* The in-card sparkline. Selected by variant rather than by an inline height on
+ * a wrapper: a wrapper does not constrain a child that sets its own height, so
+ * the 180px default won and the canvas drew through the bottom of the card.
+ *
+ * It clips, which the full-size variants must not: their tooltip is absolutely
+ * positioned inside this box and an eight-series tooltip is taller than a 180px
+ * plot. The spark has no tooltip (see `Chart`), so here there is nothing to clip
+ * but the canvas itself. */
+.chart-plot[data-variant="spark"] {
+  height: var(--space-chart-height-spark);
+  overflow: hidden;
+}
+
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-faint);
+}
+
+/* Sits inside the plot box, top-right, only while the chart is zoomed. Absolute
+ * so that appearing and disappearing cannot change the panel's height — the same
+ * no-reflow rule the rest of the page follows. */
+.chart-zoom-reset {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-raised);
+  color: var(--color-text-muted);
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.chart-zoom-reset:hover {
+  color: var(--color-text);
+  border-color: var(--color-text-faint);
+}
+
+.chart-note {
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+.chart-note[data-level="red"] {
+  color: var(--color-unreachable);
+}
+
+/* --------------------------------------------------------------- uPlot skin */
+
+/* uPlot ships a stylesheet built for a light page. These override its defaults
+ * with tokens rather than restyling per instance. */
+.uplot,
+.uplot *,
+.uplot *::before,
+.uplot *::after {
+  box-sizing: border-box;
+}
+
+.uplot .u-legend {
+  /* The legend is rendered in React above the plot; uPlot's own is redundant. */
+  display: none;
+}
+
+.uplot .u-cursor-x,
+.uplot .u-cursor-y {
+  border-color: var(--color-border-strong);
+}
+
+.uplot .u-cursor-pt {
+  border-color: var(--color-bg);
+}
+
+.uplot .u-select {
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+}
+
+.chart-tooltip {
+  position: absolute;
+  z-index: 10;
+  min-width: 160px;
+  padding: var(--space-sm);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--type-numeric-sm-size);
+  pointer-events: none;
+}
+
+.chart-tooltip-step {
+  margin-bottom: var(--space-xs);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+.chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-family: var(--font-jetbrains-mono);
+  font-feature-settings: var(--type-numeric-sm-feature);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+
+.chart-tooltip-row-value {
+  margin-left: auto;
+  color: var(--color-text);
+}
+
+/* ------------------------------------------------------------------ tables */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th {
+  padding: var(--space-sm) var(--space-md);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--table-header-fg);
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.table td {
+  height: 36px;
+  padding: 0 var(--space-md);
+  font-size: var(--type-body-sm-size);
+  color: var(--table-row-fg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.table tbody tr {
+  background: var(--table-row-bg);
+}
+
+.table tbody tr:hover {
+  background: var(--table-row-hover-bg);
+}
+
+.table tbody tr[data-selected="true"] {
+  background: var(--color-surface-raised);
+  box-shadow: inset 2px 0 0 0 var(--color-primary);
+}
+
+.table .col-num {
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+  font-feature-settings: var(--type-numeric-sm-feature);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.table th.col-num {
+  text-align: right;
+}
+
+.table-link {
+  color: var(--color-text);
+  font-weight: 550;
+}
+
+.table-link:hover {
+  color: var(--color-tertiary);
+}
+
+/* -------------------------------------------------------------- code & chips */
+
+.code {
+  padding: 2px var(--code-inline-pad);
+  background: var(--code-inline-bg);
+  border-radius: var(--code-inline-radius);
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+  font-feature-settings: var(--type-numeric-sm-feature);
+  color: var(--code-inline-fg);
+  overflow-wrap: anywhere;
+}
+
+.code-block {
+  display: block;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--code-inline-bg);
+  border-radius: var(--radius-md);
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+  color: var(--color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 2px var(--space-sm);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-border);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+/* ----------------------------------------------------------------- buttons */
+
+.btn {
+  padding: var(--space-xs) var(--button-ghost-pad);
+  background: var(--button-ghost-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--button-ghost-radius);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  color: var(--button-ghost-fg);
+}
+
+.btn:hover {
+  background: var(--button-ghost-hover-bg);
+  color: var(--button-ghost-hover-fg);
+}
+
+.btn[data-active="true"] {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+}
+
+.btn-primary {
+  background: var(--button-primary-bg);
+  border-color: var(--button-primary-bg);
+  color: var(--button-primary-fg);
+}
+
+.btn-primary:hover {
+  background: var(--button-primary-hover-bg);
+  border-color: var(--button-primary-hover-bg);
+  color: var(--color-bg);
+}
+
+.btn[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Series toggle: a coloured swatch plus the run or key name. Colour is never the
+ * only cue -- the label is always present and struck through when off. */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text);
+}
+
+.toggle:hover {
+  background: var(--color-surface-raised);
+}
+
+.toggle[data-off="true"] {
+  color: var(--color-text-faint);
+}
+
+.toggle[data-off="true"] .toggle-label {
+  text-decoration: line-through;
+}
+
+.toggle-swatch {
+  flex: none;
+  width: 12px;
+  height: 3px;
+}
+
+.toggle[data-off="true"] .toggle-swatch {
+  background: var(--color-border-strong) !important;
+}
+
+.toggle-meta {
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+  font-feature-settings: var(--type-numeric-sm-feature);
+  color: var(--color-text-faint);
+}
+
+/* ------------------------------------------------------------------ controls */
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+.control-group {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+select,
+input[type="search"],
+input[type="text"] {
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-inter);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text);
+}
+
+input[type="range"] {
+  width: 120px;
+  accent-color: var(--color-primary);
+}
+
+/* The browser default is a light box with a blue tick, which on a dark surface is
+ * the brightest thing on the page. Tokenised so a control is never louder than the
+ * data it controls. */
+input[type="checkbox"] {
+  accent-color: var(--color-primary);
+}
+
+.control-value {
+  min-width: 3.5ch;
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+  font-feature-settings: var(--type-numeric-sm-feature);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+/* -------------------------------------------------------------------- tabs */
+
+.tabs {
+  display: flex;
+  gap: var(--space-xs);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tab {
+  padding: var(--space-sm) var(--space-md);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: var(--type-label-md-tracking);
+  color: var(--color-text-muted);
+}
+
+.tab:hover {
+  color: var(--color-text);
+}
+
+.tab[data-active="true"] {
+  border-bottom-color: var(--color-primary);
+  color: var(--color-text);
+}
+
+/* ------------------------------------------------------------------- media */
+
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-card-gap);
+}
+
+.media-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--chart-panel-pad);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.media-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--color-surface-sunken);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.media-frame video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--color-surface-sunken);
+  display: block;
+}
+
+/* Stands in for a player that has not been mounted yet, so the grid has its
+ * final geometry from the first paint and cards do not shift as they scroll
+ * into view. Deliberately blank: a spinner here would animate twenty times on
+ * one screen and imply the page is waiting on something, when nothing has been
+ * requested. */
+.media-frame-idle {
+  position: absolute;
+  inset: 0;
+  background: var(--color-surface-sunken);
+}
+
+.media-frame-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-md);
+  text-align: center;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-faint);
+}
+
+.media-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+  font-feature-settings: var(--type-numeric-sm-feature);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+
+/* A success count, never a pass/fail glyph: one mp4 is a tiled grid of every env
+ * in a worker, so "3/8 succeeded" is the only honest rendering. */
+.media-count {
+  color: var(--color-text);
+}
+
+.media-count[data-all="true"] {
+  color: var(--color-healthy);
+}
+
+.media-count[data-none="true"] {
+  color: var(--color-degraded);
+}
+
+/* Unrecorded is not failed. Grey and worded, never red. */
+.media-count[data-unrecorded="true"] {
+  color: var(--color-text-faint);
+}
+
+.media-path {
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+  color: var(--color-text-faint);
+  overflow-wrap: anywhere;
+}
+
+/* -------------------------------------------------------------- misc blocks */
+
+.note {
+  padding: var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-muted);
+}
+
+.note[data-tone="error"] {
+  border-color: color-mix(in srgb, var(--color-unreachable) 45%, var(--color-border));
+}
+
+.note[data-tone="warn"] {
+  border-color: color-mix(in srgb, var(--color-degraded) 45%, var(--color-border));
+}
+
+.note-title {
+  margin-bottom: var(--space-xs);
+  font-size: var(--type-headline-md-size);
+  font-weight: var(--type-headline-md-weight);
+  color: var(--color-text);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.muted {
+  color: var(--color-text-muted);
+}
+
+.faint {
+  color: var(--color-text-faint);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: var(--space-xs) var(--space-md);
+  font-size: var(--type-body-sm-size);
+}
+
+.kv dt {
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+.kv dd {
+  margin: 0;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------------- event list */
+
+.events {
+  display: flex;
+  flex-direction: column;
+}
+
+.event {
+  display: grid;
+  grid-template-columns: max-content max-content max-content 1fr;
+  gap: var(--space-md);
+  align-items: baseline;
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--type-body-sm-size);
+}
+
+.event-time,
+.event-step {
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+  font-feature-settings: var(--type-numeric-sm-feature);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-faint);
+  white-space: nowrap;
+}
+
+.event-kind {
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.event[data-kind="error"] .event-kind {
+  color: var(--color-unreachable);
+}
+
+.event[data-kind="warn"] .event-kind {
+  color: var(--color-degraded);
+}
+
+.event[data-kind="ckpt_saved"] .event-kind,
+.event[data-kind="eval_done"] .event-kind {
+  color: var(--color-healthy);
+}
+
+.event-payload {
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
