@@ -1,0 +1,113 @@
+[build-system]
+# >=77 for SPDX `license` strings.
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rlinf-dashboard"
+version = "0.1.0"
+authors = [{ name = "RLinf Contributors" }]
+description = "Control-plane dashboard for RLinf training runs"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+
+# Deliberately does NOT depend on rlinf.
+#
+# RLinf training environments are many and heavy, often with separate virtual
+# environments. A dashboard that imported rlinf
+# would have to be installed into one of those venvs and would inherit its
+# solver constraints. The cross-process contract is therefore only the
+# filesystem contract bundled in ``rlinf_dashboard/schemas`` and HTTP.
+#
+# A CI job asserts this: it installs this package into a venv where
+# `import rlinf` fails, and runs the whole test suite plus a live server there.
+dependencies = [
+    "fastapi>=0.115",
+    # Range requests for media streaming land in starlette 0.45; FileResponse
+    # returns 200-with-whole-file on older versions.
+    "starlette>=0.45",
+    "uvicorn>=0.30",
+    "pydantic>=2.7",
+    # >=2.3 for `NoDecode`. Below that, list-typed settings are JSON-decoded
+    # before validators run and RLINF_DASHBOARD_SCAN_ROOTS=/logs is a startup
+    # error -- see settings.py.
+    "pydantic-settings>=2.3",
+    "httpx>=0.27",
+    "PyYAML>=6.0",
+    # TensorBoard's event reader. Pulls protobuf, not torch: reading event files
+    # needs no deep learning framework.
+    "tensorboard>=2.16",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0", "jsonschema>=4.0"]
+
+[project.scripts]
+rlinf-dashboard = "rlinf_dashboard.__main__:main"
+
+[tool.setuptools]
+# Stated rather than left to the default, which is already `true` for a
+# pyproject-only build. Both the templates and the bundled frontend ride on this
+# flag -- setting it to `false` drops *both* from the wheel -- and a silent
+# default deciding whether the shipped artifact has a UI is too much to leave
+# implicit. `tests/smoke_wheel.sh` is the artifact-level guard.
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rlinf_dashboard*"]
+
+[tool.setuptools.package-data]
+# `static/**` is the built frontend, put there by scripts/bundle_frontend.py
+# after `npm run build`. It is a build artifact and is gitignored, so a plain
+# source checkout has only the templates; the wheel smoke test builds the
+# frontend itself rather than trusting whatever is in the tree.
+#
+# Listed explicitly even though `include-package-data` already covers it: being
+# gitignored, `static/` is exactly the kind of directory a future inclusion rule
+# (a MANIFEST.in, or an scm plugin that filters by tracked files) would drop
+# without anyone noticing.
+rlinf_dashboard = ["templates/*.yaml", "schemas/*.json", "static/**"]
+
+[tool.ruff]
+line-length = 88
+indent-width = 4
+# The minimum Python version supported by this package. Ruff resolves config per
+# file from the nearest pyproject.toml.
+target-version = "py310"
+
+[tool.ruff.lint]
+isort = { known-first-party = ["rlinf_dashboard"] }
+select = ["C", "E", "F", "I", "W", "CPY001", "RUF013", "UP006", "PERF102", "PLC1802", "PLC0208", "D", "DOC102", "DOC202", "DOC403", "DOC502"]
+ignore = [
+    "C901", # "complex-structure"
+    "E501", # "line-too-long"
+    "D100", # "Missing docstring in public module"
+    "D104", # "Missing docstring in public package"
+    # Google style documents constructor arguments in the class docstring, so a
+    # separate `__init__` docstring would either duplicate it or drift from it.
+    "D107", # "Missing docstring in __init__"
+    "D203", # conflicts with D211
+    "D213", # conflicts with D212
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test names are the specification here -- the assertions are the docstring --
+# so a summary line per function would be noise rather than documentation.
+"tests/**.py" = ["D103"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
