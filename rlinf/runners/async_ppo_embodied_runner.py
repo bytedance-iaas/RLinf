@@ -104,11 +104,19 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         )
 
     def run(self) -> None:
+        """Run training, always recording a terminal run state."""
+        with self.reporter.run_lifecycle():
+            return self._run_impl()
+
+    def _run_impl(self) -> None:
         start_step = self.global_step
         start_time = time.time()
 
         self.actor.set_global_step(self.global_step).wait()
         self.rollout.set_global_step(self.global_step).wait()
+        # Before ``interact`` starts, so the very first clip is already labelled.
+        # See ``_advance_env_step`` for why this is not left to the loop below.
+        self._advance_env_step()
         self.update_rollout_weights()
 
         env_handle: Handle = self.env.interact(
@@ -127,6 +135,11 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         actor_handle: Handle = self.actor.recv_rollout_trajectories(
             input_channel=self.actor_channel
         )
+        # All three handles are live from here until the joins below, so the
+        # components map -- not the scalar phase -- is what describes this run.
+        self.reporter.component_enter("env")
+        self.reporter.component_enter("rollout")
+        self.reporter.component_enter("actor")
 
         while self.global_step < self.max_steps:
             # Use the step we're ABOUT to run as the profiling key, mirroring
@@ -138,6 +151,7 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
             )
             if profiled_step is not None:
                 self._open_profiling_window(profiled_step)
+            step_started = time.time()
             with self.timer("step"):
                 with self.timer("construct_rollout_batch"):
                     rollout_data_metrics = self.actor.construct_rollout_batch().wait()
@@ -158,6 +172,14 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
                 with self.timer("update_rollout_weights"):
                     self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
                 self.rollout.set_global_step(self.global_step).wait()
+                self._advance_env_step()
+                # Report after weight sync so the duration covers the full
+                # iteration while still excluding eval and checkpoint work.
+                self.reporter.set_progress(
+                    step=self.global_step,
+                    epoch=self.epoch,
+                    step_duration_s=time.time() - step_started,
+                )
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
@@ -269,11 +291,7 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         # Let any in-flight non-blocking sync land before the workers go away.
         self.drain_pending_rollout_weight_sync()
 
-        self.metric_logger.finish()
-
-        self.stop_logging = True
-        self.log_queue.join()
-        self.log_thread.join(timeout=1.0)
+        self._finish_run()
 
         self.env.stop().wait()
         self.rollout.stop().wait()
@@ -281,3 +299,6 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         env_handle.wait()
         rollout_handle.wait()
         actor_handle.wait()
+        self.reporter.component_exit("env")
+        self.reporter.component_exit("rollout")
+        self.reporter.component_exit("actor")
