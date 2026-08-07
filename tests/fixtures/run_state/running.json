@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "run_id": "20260803-131030-behavior_ppo_openpi05",
+  "task_type": "embodied",
+  "algorithm": {"loss_type": "decoupled_actor_critic", "adv_type": "gae"},
+  "state": "running",
+  "phase": "rollout",
+  "phase_since": "2026-08-03T14:31:02Z",
+  "components": {},
+  "heartbeat_at": "2026-08-03T14:31:07Z",
+  "heartbeat_seq": 1873,
+  "last_progress_at": "2026-08-03T14:31:02Z",
+  "last_metric_at": "2026-08-03T14:31:02Z",
+  "progress": {
+    "step": 137,
+    "max_steps": 1000,
+    "epoch": 137,
+    "step_semantics": "rl_iteration"
+  },
+  "timing": {
+    "started_at": "2026-08-03T13:10:30Z",
+    "elapsed_s": 4837.0,
+    "step_time_p50": 34.1,
+    "step_time_recent": [33.8, 34.5, 34.0],
+    "eta_s": 29400.0,
+    "eta_confidence": "medium"
+  },
+  "latest_checkpoint": {
+    "step": 120,
+    "path": "/logs/behavior_ppo_openpi05/checkpoints/global_step_120",
+    "saved_at": "2026-08-03T14:22:14Z",
+    "size_bytes": 12884901888,
+    "resume_dir": "/logs/behavior_ppo_openpi05/checkpoints/global_step_120",
+    "entry_script": "examples/embodiment/train_embodied_agent.py",
+    "config_name": "libero_spatial_async_ppo_openpi_pi05_best_4gpu"
+  },
+  "paths": {
+    "tensorboard": "/logs/behavior_ppo_openpi05/tensorboard",
+    "video_root": "/logs/behavior_ppo_openpi05/video"
+  },
+  "cluster": {"num_nodes": 1, "component_placement": {"actor": "0-3"}},
+  "exit": null
+}
