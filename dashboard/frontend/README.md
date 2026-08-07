@@ -68,6 +68,7 @@ npm install
 npm run typecheck     # tsc --noEmit
 npm run build         # tsc --noEmit && vite build  -> dist/
 npm run check:scales  # the one runtime assertion; see below
+npm run check:identity # cross-run payload isolation during route changes
 ```
 
 ### Runtime scale checks
@@ -99,7 +100,7 @@ The dev server proxies `/api` to the Python server rather than relying on CORS, 
 the browser's origin is identical to production.
 
 ```bash
-# terminal 1 -- the API, pointed at one or more scan roots
+# terminal 1 -- the API, pointed at the scan root
 python -m rlinf_dashboard /tmp/rlinf-demo
 
 # terminal 2 -- Vite, proxying to it
@@ -462,18 +463,26 @@ it again, and the stream comes back on its own.
 ### 9. Degenerate inputs
 
 - Point the server at a path that does not exist
-  (`python -m rlinf_dashboard /tmp/nope --port 8870`). The list says "The server
-  discovered no runs. A dashboard showing zero runs is almost always a scan root that
-  does not exist — check GET /api/health.", the footer marks the root `MISSING`, and
-  the health bar reads `unknown` / "No runs discovered yet — nothing to report on."
-  An empty dashboard that looks like a working dashboard is the failure mode here.
-- Two roots holding a copy of the same tree — the ordinary case of a run copied off a
-  cluster next to the original mount:
+  (`python -m rlinf_dashboard /tmp/nope --port 8870`). The list names the root and
+  says it does not exist, the footer marks it `MISSING`, and the health bar reads
+  `unknown` / "No runs discovered yet — nothing to report on." An empty dashboard
+  that looks like a working dashboard is the failure mode here.
+- Point it at a directory that exists and holds no run
+  (`mkdir -p /tmp/rlinf-empty && python -m rlinf_dashboard /tmp/rlinf-empty --port 8872`).
+  This must read differently from the case above: the root is fine, it is the
+  level that is wrong, and "missing" would send the reader to fix the wrong thing.
+  The footer shows `no runs found` rather than a count.
+- Passing two paths must fail with a sentence, not scan one of them:
+  `python -m rlinf_dashboard /tmp/a /tmp/b` exits 2 saying to use the common
+  ancestor.
+- One root holding two copies of the same tree — the ordinary case of a run copied
+  off a cluster beside the original:
 
   ```bash
-  mkdir -p /tmp/rlinf-dupe
-  cp -R /tmp/rlinf-demo/libero_10_ppo_baseline /tmp/rlinf-dupe/
-  python -m rlinf_dashboard /tmp/rlinf-demo /tmp/rlinf-dupe --port 8871
+  mkdir -p /tmp/rlinf-both/original /tmp/rlinf-both/copy
+  cp -R /tmp/rlinf-demo/libero_10_ppo_baseline /tmp/rlinf-both/original/
+  cp -R /tmp/rlinf-demo/libero_10_ppo_baseline /tmp/rlinf-both/copy/
+  python -m rlinf_dashboard /tmp/rlinf-both --port 8871
   ```
 
   Both rows are listed — the server does not deduplicate, because that
