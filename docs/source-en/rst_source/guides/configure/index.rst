@@ -18,6 +18,8 @@ settings before launching a run.
      - Config keys specific to agentic and reasoning training.
    * - :doc:`Logging <../logger>`
      - TensorBoard, wandb, and swanlab logger setup.
+   * - :doc:`Run State <../run_state>`
+     - Read run status, liveness, phase, and progress from disk.
 
 .. toctree::
    :hidden:
@@ -26,3 +28,4 @@ settings before launching a run.
    Embodied Configuration <../embodiment_config>
    Agentic Configuration <../agentic_config>
    Logging <../logger>
+   Run State <../run_state>

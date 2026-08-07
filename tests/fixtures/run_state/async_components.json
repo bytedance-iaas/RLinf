@@ -1,0 +1,42 @@
+{
+  "schema_version": 2,
+  "run_id": "20260803-142230-async_ppo_pi05",
+  "task_type": "embodied",
+  "algorithm": {"loss_type": "decoupled_actor_critic", "adv_type": "gae"},
+  "state": "running",
+  "phase": "actor_training",
+  "phase_since": "2026-08-03T14:44:51Z",
+  "components": {
+    "env": {"active": true, "since": "2026-08-03T14:22:35Z"},
+    "rollout": {"active": true, "since": "2026-08-03T14:22:35Z"},
+    "actor": {"active": true, "since": "2026-08-03T14:22:35Z"}
+  },
+  "heartbeat_at": "2026-08-03T14:44:56Z",
+  "heartbeat_seq": 269,
+  "last_progress_at": "2026-08-03T14:44:51Z",
+  "last_metric_at": "2026-08-03T14:44:51Z",
+  "progress": {
+    "step": 12,
+    "max_steps": 200,
+    "epoch": 12,
+    "step_semantics": "rl_iteration"
+  },
+  "timing": {
+    "started_at": "2026-08-03T14:22:30Z",
+    "elapsed_s": 1346.0,
+    "step_time_p50": 110.5,
+    "step_time_recent": [109.8, 111.2, 110.5],
+    "eta_s": 20774.0,
+    "eta_confidence": "low"
+  },
+  "latest_checkpoint": null,
+  "paths": {
+    "tensorboard": "/logs/async_ppo_pi05/tensorboard",
+    "video_root": "/logs/async_ppo_pi05/video"
+  },
+  "cluster": {
+    "num_nodes": 1,
+    "component_placement": {"env": "0-1", "rollout": "2", "actor": "3"}
+  },
+  "exit": null
+}

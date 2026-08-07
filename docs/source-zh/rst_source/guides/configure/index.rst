@@ -17,6 +17,8 @@
      - 智能体和推理训练专用配置项。
    * - :doc:`日志 <../logger>`
      - TensorBoard、wandb 和 swanlab 日志设置。
+   * - :doc:`Run 状态 <../run_state>`
+     - 从磁盘读取 run 状态、存活性、当前阶段与进度。
 
 .. toctree::
    :hidden:
@@ -25,3 +27,4 @@
    具身智能配置 <../embodiment_config>
    智能体配置 <../agentic_config>
    日志 <../logger>
+   Run 状态 <../run_state>
