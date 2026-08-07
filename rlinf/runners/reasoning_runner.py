@@ -14,6 +14,7 @@
 
 import logging
 import os
+import time
 import typing
 from typing import Optional, Union
 
@@ -29,6 +30,7 @@ from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
+from rlinf.utils.run_state import attach_reporter
 from rlinf.utils.runner_utils import check_progress, local_mkdir_safe
 from rlinf.utils.timers import Timer
 
@@ -152,6 +154,8 @@ class ReasoningRunner:
         self.run_timer = Timer(None)  # Timer that checks if we should stop training
 
         self.metric_logger = MetricLogger(cfg)
+        # Control plane: run state, heartbeat, phase, progress, checkpoints.
+        self.reporter = attach_reporter(self, cfg)
 
     def _build_dataloader(self, train_dataset, val_dataset, collate_fn=None):
         """
@@ -389,28 +393,39 @@ class ReasoningRunner:
             return False
         return os.path.exists(os.path.join(checkpoint_dir, "data", "data.pt"))
 
-    def _save_checkpoint(self):
+    def _save_checkpoint(self, metrics: Optional[dict] = None):
         base_output_dir = os.path.join(
             self.cfg.runner.output_dir,
             self.cfg.runner.experiment_name,
             f"checkpoints/global_step_{self.global_steps}",
         )
 
-        # actor
-        actor_save_path = os.path.join(base_output_dir, "actor")
-        self.actor.save_checkpoint(actor_save_path, self.global_steps).wait()
+        save_started = time.time()
+        with self.reporter.phase("save_ckpt"):
+            # actor
+            actor_save_path = os.path.join(base_output_dir, "actor")
+            self.actor.save_checkpoint(actor_save_path, self.global_steps).wait()
 
-        # critic
-        if self.critic:
-            critic_save_path = os.path.join(base_output_dir, "critic")
-            self.critic.save_checkpoint(critic_save_path, self.global_steps).wait()
+            # critic
+            if self.critic:
+                critic_save_path = os.path.join(base_output_dir, "critic")
+                self.critic.save_checkpoint(critic_save_path, self.global_steps).wait()
 
-        # data
-        data_save_path = os.path.join(base_output_dir, "data")
-        local_mkdir_safe(data_save_path)
-        dataloader_local_path = os.path.join(data_save_path, "data.pt")
-        dataloader_state_dict = self.train_dataloader.state_dict()
-        torch.save(dataloader_state_dict, dataloader_local_path)
+            # data
+            data_save_path = os.path.join(base_output_dir, "data")
+            local_mkdir_safe(data_save_path)
+            dataloader_local_path = os.path.join(data_save_path, "data.pt")
+            dataloader_state_dict = self.train_dataloader.state_dict()
+            torch.save(dataloader_state_dict, dataloader_local_path)
+
+        # Appended only after the save returns, so a reader of checkpoints.jsonl
+        # never sees a half-written checkpoint.
+        self.reporter.record_checkpoint(
+            step=self.global_steps,
+            path=base_output_dir,
+            duration_s=time.time() - save_started,
+            metrics=metrics,
+        )
 
     def _set_max_steps(self):
         self.num_steps_per_epoch = len(self.train_dataloader)
@@ -450,6 +465,15 @@ class ReasoningRunner:
         self.actor.del_reshard_state_dict().wait()
 
     def run(self):
+        """Run training, always recording a terminal run state.
+
+        A thin shell so that every ``runner.run()`` entry script gets a
+        ``finished``/``failed``/``stopped`` state without being changed.
+        """
+        with self.reporter.run_lifecycle():
+            return self._run_impl()
+
+    def _run_impl(self):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)
         if len(epoch_iter) <= 0:
             # epoch done
@@ -465,6 +489,7 @@ class ReasoningRunner:
         self.run_timer.start_time()
         for _ in epoch_iter:
             for batch in self.train_dataloader:
+                step_started = time.time()
                 with self.timer("step"):
                     with self.timer("prepare_data"):
                         self._put_batch(batch)
@@ -574,6 +599,13 @@ class ReasoningRunner:
                     actor_rollout_metrics = actor_metrics[0][0]
                     actor_training_metrics = actor_metrics[0][1]
                     self.global_steps += 1
+                    # Reported before save so that `step_duration_s` stays the
+                    # net step time and the ETA buckets remain independent.
+                    self.reporter.set_progress(
+                        step=self.global_steps,
+                        epoch=self.epoch,
+                        step_duration_s=time.time() - step_started,
+                    )
 
                     run_time_exceeded = self.run_timer.is_finished()
                     _, save_model, is_train_end = check_progress(
@@ -586,7 +618,11 @@ class ReasoningRunner:
                     )
 
                     if save_model:
-                        self._save_checkpoint()
+                        self._save_checkpoint(
+                            metrics=actor_training_metrics[-1]
+                            if actor_training_metrics
+                            else None
+                        )
 
                     if is_train_end:
                         logging.info(

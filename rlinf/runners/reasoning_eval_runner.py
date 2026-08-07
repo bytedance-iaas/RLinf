@@ -27,6 +27,7 @@ from rlinf.scheduler import Channel
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.placement import ModelParallelEvalComponentPlacement
+from rlinf.utils.run_state import attach_reporter
 from rlinf.utils.timers import Timer
 from rlinf.workers.reward.reward_worker import RewardWorker
 
@@ -82,6 +83,13 @@ class ReasoningEvalRunner:
         self.run_timer = Timer(None)  # Timer that checks if we should stop training
 
         self.metric_logger = MetricLogger(cfg)
+
+        # Wired in the base class so every eval subclass gets it. An eval job is
+        # a run too: without a reporter it appears nowhere in the dashboard, so
+        # one that dies on a bad checkpoint path is indistinguishable from one
+        # that was never launched. `_set_max_steps` already ran above, so the
+        # progress horizon is available here.
+        self.reporter = attach_reporter(self, cfg)
 
     def _build_dataloader(self, val_dataset, collate_fn=None):
         """
