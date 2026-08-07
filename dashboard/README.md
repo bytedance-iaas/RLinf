@@ -45,6 +45,16 @@ python3 -m venv .venv
 
 The package intentionally has no dependency on RLinf or PyTorch.
 
+To build the standalone image:
+
+```bash
+docker build -t rlinf-dashboard .
+docker run --rm -p 8420:8420 -v /path/to/logs:/runs:ro rlinf-dashboard
+```
+
+The container runs as a non-root user and supports a read-only log mount and
+read-only root filesystem.
+
 ## Run
 
 ```bash
@@ -62,17 +72,17 @@ variables:
 
 | Variable | Default | Meaning |
 | --- | ---: | --- |
-| `SCAN_ROOTS` | `./logs` | One path, comma-separated paths, or a JSON array |
-| `SCAN_MAX_DEPTH` | `6` | Maximum discovery depth below each root |
-| `HEARTBEAT_TIMEOUT_K` | `5.0` | Missed heartbeat intervals before `unreachable` |
-| `HEARTBEAT_INTERVAL_S` | `5.0` | Fallback interval for older manifests |
-| `PROGRESS_TIMEOUT_K` | `10.0` | Step-time budgets before `degraded` |
-| `TIMEOUT_FLOOR_S` | `30.0` | Minimum progress budget during startup |
-| `SSE_INTERVAL_S` | `2.0` | Live update interval |
-| `DISCOVERY_CACHE_TTL_S` | `5.0` | Run discovery cache lifetime |
-| `MAX_SERIES_POINTS` | `4000` | Per-series response budget |
-| `CORS_ORIGINS` | local Vite origins | Allowed development origins |
-| `FRONTEND_DIST` | auto-detected | Optional external frontend bundle |
+| `RLINF_DASHBOARD_SCAN_ROOTS` | `./logs` | One path, comma-separated paths, or a JSON array |
+| `RLINF_DASHBOARD_SCAN_MAX_DEPTH` | `6` | Maximum discovery depth below each root |
+| `RLINF_DASHBOARD_HEARTBEAT_TIMEOUT_K` | `5.0` | Missed heartbeat intervals before `unreachable` |
+| `RLINF_DASHBOARD_HEARTBEAT_INTERVAL_S` | `5.0` | Fallback interval for older manifests |
+| `RLINF_DASHBOARD_PROGRESS_TIMEOUT_K` | `10.0` | Step-time budgets before `degraded` |
+| `RLINF_DASHBOARD_TIMEOUT_FLOOR_S` | `30.0` | Minimum progress budget during startup |
+| `RLINF_DASHBOARD_SSE_INTERVAL_S` | `2.0` | Live update interval |
+| `RLINF_DASHBOARD_DISCOVERY_CACHE_TTL_S` | `5.0` | Run discovery cache lifetime |
+| `RLINF_DASHBOARD_MAX_SERIES_POINTS` | `4000` | Per-series response budget |
+| `RLINF_DASHBOARD_CORS_ORIGINS` | local Vite origins | Allowed development origins |
+| `RLINF_DASHBOARD_FRONTEND_DIST` | auto-detected | Optional external frontend bundle |
 
 For example:
 
@@ -151,11 +161,15 @@ From this directory:
 ```bash
 .venv/bin/python -m pytest tests -q
 bash tests/smoke_server.sh .venv/bin/python
+bash tests/smoke_wheel.sh .venv/bin/python
+bash tests/smoke_container.sh
 ```
 
 The server smoke test creates a synthetic run tree, launches uvicorn, checks the
-core REST endpoints, and verifies live SSE delivery. Distribution and frontend
-checks are added by their respective build layers.
+core REST endpoints, and verifies live SSE delivery. The wheel smoke test builds
+the frontend, installs the wheel in a clean environment, and checks its UI,
+schema, license, assets, and deep links. The container smoke test mounts a
+synthetic run tree read-only and checks both API and browser shell.
 
 ## Current integration constraint
 
