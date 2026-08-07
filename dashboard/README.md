@@ -124,6 +124,26 @@ response does not hide a loss spike or divergence signal.
 Media paths are treated as untrusted. A file is served only when its exact path
 appears in that run's media index and its suffix is allowlisted.
 
+## Browser console
+
+The React console provides run list, overview, metrics, media, events, and
+cross-run comparison views. Metric layouts are selected by server-side YAML
+templates for embodied RL, reasoning/coding RL, and SFT runs.
+
+For local frontend development:
+
+```bash
+cd frontend
+npm install
+npm run typecheck
+npm run check:scales
+npm run dev
+```
+
+The Vite server proxies `/api` to the Python service on port 8420. Production
+builds are served from the same origin by the Python package. See
+[`frontend/README.md`](frontend/README.md) for design and verification details.
+
 ## Tests
 
 From this directory:
