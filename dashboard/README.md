@@ -11,6 +11,9 @@ The service does not import `rlinf`. Training environments can keep their own
 heavy and sometimes incompatible dependencies while the dashboard runs in a
 small, independent Python environment.
 
+For a copy-paste source, wheel, container, and live-run workflow, see
+[`QUICKSTART.md`](QUICKSTART.md).
+
 ## Architecture
 
 The training process writes run metadata under:
