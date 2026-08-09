@@ -74,8 +74,29 @@ export function Overview(props: OverviewProps) {
   // (and forced to redraw) every time an unrelated card updates.
   const northStarData = useMemo(() => alignSeries([northStar]), [northStar]);
 
+  // Startup and damage look identical on disk -- no snapshot either way -- and
+  // reporting both as damage made every launch look like an incident. The server
+  // tells them apart; the page only has to stop conflating them.
+  const initializing = status.initializing === true;
+  // A run in a terminal state has no future to forecast. Several cards read
+  // differently once that is true, so the fact is named once.
+  const terminal =
+    snapshot?.state === "finished" ||
+    snapshot?.state === "failed" ||
+    snapshot?.state === "stopped";
+
   return (
     <>
+      {initializing && (
+        <Note title="Starting up">
+          The run has registered but has not published its first snapshot yet.
+          Cluster boot, worker allocation and model load all happen in this
+          window
+          {status.startup_elapsed_s != null
+            ? `, and it has been ${duration(status.startup_elapsed_s)} so far.`
+            : "."}
+        </Note>
+      )}
       {status.error && (
         <Note tone="error" title="Snapshot unreadable">
           {status.error}
@@ -84,9 +105,12 @@ export function Overview(props: OverviewProps) {
 
       <div className="cards">
         {/* 1. State -- the lifecycle fact the training process recorded. */}
-        <Card label="State" adornment={<Badge tone={snapshot?.state ?? "unknown"} />}>
-          <CardValue small empty={!snapshot?.state}>
-            {snapshot?.state ?? "unknown"}
+        <Card
+          label="State"
+          adornment={<Badge tone={snapshot?.state ?? (initializing ? "pending" : "unknown")} />}
+        >
+          <CardValue small empty={!snapshot?.state && !initializing}>
+            {snapshot?.state ?? (initializing ? "initializing" : "unknown")}
           </CardValue>
           <CardHint>
             {snapshot?.exit
@@ -119,8 +143,17 @@ export function Overview(props: OverviewProps) {
                   <span className="component-dot" />
                   <span className="component-name">{name}</span>
                   <span className="sr-only">{state.active ? "active" : "idle"}</span>
-                  <span className="component-since">
-                    {state.since ? age(ageSince(state.since, now)) : EMPTY}
+                  {/* `since` is when the component entered its current state, so
+                      the same number means "active for" or "idle for" depending
+                      on which state that is. Printed bare it read as an update
+                      time, which is a different fact entirely. */}
+                  <span
+                    className="component-since"
+                    title={`${state.active ? "Active" : "Idle"} since ${state.since ?? "unknown"}`}
+                  >
+                    {state.since
+                      ? `${state.active ? "active" : "idle"} for ${age(ageSince(state.since, now))}`
+                      : EMPTY}
                   </span>
                 </div>
               ))}
@@ -172,14 +205,19 @@ export function Overview(props: OverviewProps) {
 
         {/* 4. Timing -- elapsed as the hero, with the ETA and its confidence.
              The confidence is shown because a `low`-confidence ETA on a two-step
-             run is a projection from one sample and should not be trusted. */}
+             run is a projection from one sample and should not be trusted.
+             A run that has stopped has no time remaining to estimate, so the row
+             states the outcome instead: `ETA 0.0s (medium)` on a finished run is
+             a forecast of the past. */}
         <Card label="Timing">
           <CardValue>{duration(timing?.elapsed_s)}</CardValue>
           <div className="card-rows">
-            <Row label="ETA">
-              {timing?.eta_s === null || timing?.eta_s === undefined
-                ? EMPTY
-                : `${duration(timing.eta_s)}${timing.eta_confidence ? ` (${timing.eta_confidence})` : ""}`}
+            <Row label={terminal ? "finished" : "ETA"}>
+              {terminal
+                ? `${snapshot?.state ?? "ended"} after ${duration(timing?.elapsed_s)}`
+                : timing?.eta_s === null || timing?.eta_s === undefined
+                  ? EMPTY
+                  : `${duration(timing.eta_s)}${timing.eta_confidence ? ` (${timing.eta_confidence})` : ""}`}
             </Row>
             <Row label={`per ${semantics.toLowerCase()}`}>{duration(timing?.step_time_p50)}</Row>
           </div>
@@ -202,9 +240,8 @@ export function Overview(props: OverviewProps) {
               <Row label="took">{duration(checkpoint.duration_s)}</Row>
             </div>
           ) : (
-            <CardHint>
-              No completed checkpoint. The index is appended only after a save
-              finishes, so a half-written checkpoint is never listed.
+            <CardHint title="The index is appended only after a save finishes, so a half-written checkpoint is never listed.">
+              No checkpoints saved yet.
             </CardHint>
           )}
         </Card>
@@ -236,7 +273,7 @@ export function Overview(props: OverviewProps) {
           adornment={
             northStarKey ? (
               <button className="chart-flag" onClick={props.onOpenMetrics} type="button">
-                charts
+                open metric
               </button>
             ) : undefined
           }
@@ -293,7 +330,7 @@ export function Overview(props: OverviewProps) {
           label="Anomalies"
           adornment={
             <span className="chip" title="Computed in the browser from metric series">
-              metric-side
+              derived from metrics
             </span>
           }
         >

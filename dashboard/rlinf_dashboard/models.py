@@ -258,6 +258,15 @@ class RunStatus(_Lenient):
     #: with no media -- every SFT and reasoning run -- is a tab that always leads
     #: to an empty page. Cheap: a directory listing, not a parse of the index.
     has_media: bool = False
+    #: Read-side derivation, like :class:`Health`: the manifest exists, the
+    #: snapshot does not, and the startup deadline has not passed. Deliberately
+    #: not a :class:`RunState` member -- the write side cannot report "I have not
+    #: started reporting yet", so this can only ever be inferred from outside.
+    initializing: bool = False
+    #: Seconds since the manifest was written, while no snapshot exists. Reported
+    #: past the deadline too, because how long a startup has been stuck is the
+    #: part an operator can act on.
+    startup_elapsed_s: float | None = None
 
 
 class RunSummary(_Lenient):
@@ -278,6 +287,10 @@ class RunSummary(_Lenient):
     eta_s: float | None = None
     latest_checkpoint_step: int | None = None
     run_root: str
+    #: See :attr:`RunStatus.initializing`. Carried on the row as well so the list
+    #: view can show a starting run as starting without a second request.
+    initializing: bool = False
+    startup_elapsed_s: float | None = None
 
 
 class SeriesPoint(_Lenient):

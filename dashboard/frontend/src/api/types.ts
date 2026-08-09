@@ -167,6 +167,14 @@ export interface RunStatus {
    * with `enable_dump_video: false` has nothing to show.
    */
   has_media?: boolean;
+  /**
+   * Startup, as distinct from failure. The training process cannot report "I
+   * have not started reporting yet", so this is derived on the read side from a
+   * manifest with no snapshot beside it and a deadline that has not passed.
+   */
+  initializing?: boolean;
+  /** Seconds spent in startup so far, reported past the deadline too. */
+  startup_elapsed_s?: number | null;
 }
 
 export interface RunSummary {
@@ -186,6 +194,14 @@ export interface RunSummary {
   latest_checkpoint_step: number | null;
   run_root: string;
   relocation?: Record<string, string> | null;
+  /**
+   * The manifest exists, the snapshot does not, and the startup deadline has not
+   * passed. A read-side derivation like `health`, not a `state` the training
+   * process could have written -- see `RunStatus.initializing`.
+   */
+  initializing?: boolean;
+  /** Seconds spent in startup so far, reported past the deadline too. */
+  startup_elapsed_s?: number | null;
 }
 
 export interface SeriesPoint {

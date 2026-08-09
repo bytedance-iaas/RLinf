@@ -80,6 +80,17 @@ class Settings(BaseSettings):
     #: recording its configured interval.
     heartbeat_interval_s: float = 5.0
 
+    #: How long a run may hold a manifest without a ``run.json`` before that
+    #: counts as a stuck startup rather than a normal one.
+    #:
+    #: The producer writes ``manifest.json`` when the reporter is constructed and
+    #: ``run.json`` when the training loop enters ``run_lifecycle``; everything
+    #: between -- Ray cluster boot, worker allocation, model load, simulator
+    #: warmup -- happens in that window, so on a VLA job it is minutes, not
+    #: milliseconds. Generous on purpose: waiting too long only delays an alarm,
+    #: while waiting too little reports every normal startup as a broken run.
+    startup_grace_s: float = 600.0
+
     #: SSE push period. The training side heartbeats every 5s by default, so
     #: polling faster than this only costs syscalls.
     sse_interval_s: float = 2.0

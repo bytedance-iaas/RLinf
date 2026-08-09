@@ -16,6 +16,17 @@ import { age, ageSince, duration, integer, semanticsLabel } from "../lib/format"
 
 export interface RunListProps {
   runs: RunSummary[];
+  /**
+   * The first discovery has not returned yet.
+   *
+   * Separate from `runs.length === 0` because the two demand opposite copy: one
+   * says "wait", the other says "something is misconfigured". Collapsing them
+   * meant the very first render accused the user's scan roots of not existing,
+   * seconds before listing the runs it found in them.
+   */
+  discovering: boolean;
+  /** From `GET /api/health`, so an empty result can name the roots it searched. */
+  scanRoots?: { path: string; exists: boolean }[];
   selected: string[];
   now: number;
   onOpen: (runId: string) => void;
@@ -53,6 +64,11 @@ export function RunList(props: RunListProps) {
   const { runs, selected, now } = props;
   const [stateFilter, setStateFilter] = useState<RunState | "all">("all");
   const [query, setQuery] = useState("");
+  // Named rather than guessed at: the old copy asserted a missing scan root as
+  // the likely cause while the server was reporting every root as present.
+  const missingRoots = (props.scanRoots ?? [])
+    .filter((root) => !root.exists)
+    .map((root) => root.path);
 
   const rows = useMemo(() => {
     const filtered = runs.filter((run) => {
@@ -92,7 +108,10 @@ export function RunList(props: RunListProps) {
   const attention = useMemo(
     () =>
       runs
-        .filter((run) => run.health !== "healthy")
+        // A run inside its startup window has nothing to report yet, so its
+        // `unknown` health is the absence of an answer rather than a bad one.
+        // Listing it here made every launch open with a warning banner.
+        .filter((run) => run.health !== "healthy" && run.initializing !== true)
         .sort(
           (a, b) =>
             HEALTH_RANK[a.health] - HEALTH_RANK[b.health] ||
@@ -207,7 +226,14 @@ export function RunList(props: RunListProps) {
       )}
 
       {attention.length > 0 && (
-        <Note tone="warn" title={`${attention.length} run${attention.length === 1 ? "" : "s"} need attention`}>
+        <Note
+          tone="warn"
+          title={
+            attention.length === 1
+              ? "1 run needs attention"
+              : `${attention.length} runs need attention`
+          }
+        >
           {attention.map((run) => (
             <div key={rowKey(run)}>
               <Badge tone={run.health} /> {run.experiment_name ?? run.run_id}
@@ -216,78 +242,99 @@ export function RunList(props: RunListProps) {
         </Note>
       )}
 
-      <table className="table">
-        <thead>
-          <tr>
-            <th style={{ width: 32 }} aria-label="Select for compare" />
-            <th>Run</th>
-            <th>State</th>
-            <th>Health</th>
-            <th>Phase</th>
-            <th className="col-num">Step</th>
-            <th className="col-num">Elapsed</th>
-            <th className="col-num">ETA</th>
-            <th className="col-num">Ckpt</th>
-            <th className="col-num">Heartbeat</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((run) => (
-            <tr
-              key={rowKey(run)}
-              data-selected={selected.includes(rowKey(run)) ? "true" : undefined}
-            >
-              <td>
-                {/* Selection uses row identity because run IDs may collide. */}
-                <input
-                  type="checkbox"
-                  checked={selected.includes(rowKey(run))}
-                  onChange={() => props.onToggleSelect(rowKey(run))}
-                  aria-label={`Select ${run.experiment_name ?? run.run_id} for compare`}
-                />
-              </td>
-              <td>
-                <a
-                  className="table-link"
-                  href={`#/runs/${encodeURIComponent(run.run_id)}`}
-                  title={run.run_id}
-                >
-                  {run.experiment_name ?? run.run_id}
-                </a>
-                <div className="faint" style={{ fontSize: "var(--type-label-sm-size)" }}>
-                  {run.task_type} · {semanticsLabel(run.step_semantics)}
-                  {duplicated.has(run.run_id) && <> · {run.run_root}</>}
-                </div>
-              </td>
-              <td>
-                <Badge tone={run.state ?? "unknown"} />
-              </td>
-              <td>
-                <Badge tone={run.health} />
-              </td>
-              <td className="muted">{run.phase ?? "—"}</td>
-              <td className="col-num">
-                {integer(run.step)}
-                {run.max_steps ? <span className="faint">/{integer(run.max_steps)}</span> : null}
-              </td>
-              <td className="col-num">{duration(run.elapsed_s)}</td>
-              <td className="col-num">{run.eta_s === null ? "—" : duration(run.eta_s)}</td>
-              <td className="col-num">
-                {run.latest_checkpoint_step === null ? "—" : integer(run.latest_checkpoint_step)}
-              </td>
-              <td className="col-num">{age(ageSince(run.heartbeat_at, now))}</td>
+      <div className="table-scroll">
+        <table className="table">
+          <thead>
+            <tr>
+              <th style={{ width: 32 }} aria-label="Select for compare" />
+              <th>Run</th>
+              <th>State</th>
+              <th>Health</th>
+              <th>Phase</th>
+              <th className="col-num">Step</th>
+              <th className="col-num">Elapsed</th>
+              <th className="col-num">ETA</th>
+              <th className="col-num">Ckpt</th>
+              <th className="col-num">Heartbeat</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((run) => (
+              <tr
+                key={rowKey(run)}
+                data-selected={selected.includes(rowKey(run)) ? "true" : undefined}
+              >
+                <td>
+                  {/* Selection uses row identity because run IDs may collide. */}
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(rowKey(run))}
+                    onChange={() => props.onToggleSelect(rowKey(run))}
+                    aria-label={`Select ${run.experiment_name ?? run.run_id} for compare`}
+                  />
+                </td>
+                <td>
+                  <a
+                    className="table-link"
+                    href={`#/runs/${encodeURIComponent(run.run_id)}`}
+                    title={run.run_id}
+                  >
+                    {run.experiment_name ?? run.run_id}
+                  </a>
+                  <div className="faint" style={{ fontSize: "var(--type-label-sm-size)" }}>
+                    {run.task_type} · {semanticsLabel(run.step_semantics)}
+                    {duplicated.has(run.run_id) && <> · {run.run_root}</>}
+                  </div>
+                </td>
+                <td>
+                  {run.state ? (
+                    <Badge tone={run.state} />
+                  ) : run.initializing ? (
+                    <Badge tone="pending">initializing</Badge>
+                  ) : (
+                    <Badge tone="unknown" />
+                  )}
+                </td>
+                <td>
+                  <Badge tone={run.health} />
+                </td>
+                <td className="muted">{run.phase ?? "—"}</td>
+                <td className="col-num">
+                  {integer(run.step)}
+                  {run.max_steps ? <span className="faint">/{integer(run.max_steps)}</span> : null}
+                </td>
+                <td className="col-num">{duration(run.elapsed_s)}</td>
+                <td className="col-num">{run.eta_s === null ? "—" : duration(run.eta_s)}</td>
+                <td className="col-num">
+                  {run.latest_checkpoint_step === null ? "—" : integer(run.latest_checkpoint_step)}
+                </td>
+                <td className="col-num">{age(ageSince(run.heartbeat_at, now))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
-      {rows.length === 0 && (
-        <Note title="No runs match">
-          {runs.length === 0
-            ? "The server discovered no runs. A dashboard showing zero runs is almost always a scan root that does not exist — check GET /api/health."
-            : "Every discovered run is filtered out by the current search or state filter."}
-        </Note>
-      )}
+      {rows.length === 0 &&
+        (props.discovering ? (
+          <Note title="Discovering runs">
+            Scanning for runs. Nothing is claimed about what is there until this
+            finishes.
+          </Note>
+        ) : runs.length === 0 ? (
+          <Note title="No runs discovered">
+            {missingRoots.length > 0
+              ? `These scan roots do not exist: ${missingRoots.join(", ")}.`
+              : props.scanRoots && props.scanRoots.length > 0
+                ? `Searched ${props.scanRoots.map((root) => root.path).join(", ")}, which exist but hold no run yet.`
+                : "No scan root is configured. Pass one on the command line or set RLINF_DASHBOARD_SCAN_ROOTS."}
+          </Note>
+        ) : (
+          <Note title="No runs match">
+            Every discovered run is filtered out by the current search or state
+            filter.
+          </Note>
+        ))}
     </div>
   );
 }

@@ -45,25 +45,26 @@ const BASE_TABS = [
 const EVENTS_TAB = { name: "events", label: "Events" } as const;
 
 /**
- * Whether to offer a Media tab, from the two independent facts the server sends.
+ * Whether to offer a Media tab.
  *
- * * `template.has_media_view` -- can this *kind* of run have video? A property of
- *   the task type, declared in the template YAML, so a new task type answers it
- *   in data rather than here.
- * * `status.has_media` -- did *this* run record any? `enable_dump_video: false`
- *   is the common case even for embodied runs.
+ * Decided by `template.has_media_view` alone -- can this *kind* of run have
+ * video? A property of the task type, declared in the template YAML, so a new
+ * task type answers it in data rather than here.
+ *
+ * `status.has_media` is deliberately not consulted. It is a fact about what has
+ * been written *so far*, and on a live run that starts false and turns true at
+ * the first video dump, so gating on it made the tab strip change shape partway
+ * through a run. For a task type that records video the tab is part of the run's
+ * navigation whether or not a clip has landed; the empty view says so, which is
+ * a stable answer rather than a missing one.
  *
  * `"pending"` while the template is still in flight: the tab strip must not
  * flicker a Media tab in and then remove it, because a tab that appears and
  * vanishes under the pointer is a misclick.
  */
-function mediaTabState(
-  template: RunTemplate | null,
-  status: RunStatus | null,
-): "show" | "hide" | "pending" {
-  if (template === null || status === null) return "pending";
-  if (template.has_media_view === false) return "hide";
-  return status.has_media ? "show" : "hide";
+function mediaTabState(template: RunTemplate | null): "show" | "hide" | "pending" {
+  if (template === null) return "pending";
+  return template.has_media_view === false ? "hide" : "show";
 }
 
 export function App() {
@@ -178,7 +179,7 @@ export function App() {
     [],
   );
 
-  const mediaTab = mediaTabState(template, status);
+  const mediaTab = mediaTabState(template);
   const tabs = useMemo(
     () => (mediaTab === "show"
       ? [...BASE_TABS, { name: "media", label: "Media" } as const, EVENTS_TAB]
@@ -290,6 +291,11 @@ export function App() {
           {renderRoute({
             route,
             runs: runs.data ?? [],
+            // `data === null` with no error is the only shape that means "the
+            // first fetch has not landed". Passed through rather than inferred
+            // from an empty array, which cannot tell "none" from "not yet".
+            discovering: runs.data === null && runs.error === null,
+            scanRoots: serverQuery.data?.scan_roots,
             status,
             template,
             templateError: templateQuery.error,
@@ -313,7 +319,12 @@ export function App() {
                   <Code>{serverQuery.data.version}</Code>
                 </dd>
                 <dt>runs</dt>
-                <dd>{serverQuery.data.run_count}</dd>
+                {/* Counted from the same live list the table renders, not from
+                    the one-shot health fetch. That fetch happens once at page
+                    load and never again, so its count froze at whatever was
+                    there when the tab opened while the table went on updating --
+                    two numbers on one screen disagreeing about the same fact. */}
+                <dd>{runRows.length}</dd>
                 <dt>scan roots</dt>
                 <dd>
                   {serverQuery.data.scan_roots.map((root) => (
@@ -342,6 +353,8 @@ export function App() {
 interface RenderArgs {
   route: Route;
   runs: RunSummary[];
+  discovering: boolean;
+  scanRoots?: { path: string; exists: boolean }[];
   status: RunStatus | null;
   template: RunTemplate | null;
   templateError: string | null;
@@ -365,6 +378,8 @@ function renderRoute(args: RenderArgs) {
     return (
       <RunList
         runs={args.runs}
+        discovering={args.discovering}
+        scanRoots={args.scanRoots}
         selected={args.selected}
         now={args.now}
         onOpen={(runId) => args.navigate({ name: "overview", runId })}

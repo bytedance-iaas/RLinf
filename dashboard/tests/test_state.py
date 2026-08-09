@@ -25,6 +25,9 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
 
 from rlinf_dashboard.discovery import RunDiscovery
 from rlinf_dashboard.models import Health, RunState
@@ -82,22 +85,67 @@ def test_reads_a_published_snapshot(run_tree, settings_for):
     assert snapshot.progress.step == 7
 
 
-def test_a_run_with_no_snapshot_yet_reports_why(run_tree, settings_for):
-    """A manifest without a ``run.json`` is a real, reachable state.
+def test_a_run_with_no_snapshot_yet_is_starting_up_not_broken(run_tree, settings_for):
+    """A manifest without a ``run.json`` is a normal startup, not a fault.
 
     The manifest is written in the reporter's constructor and the first snapshot
-    flush comes later, so a run that dies in between leaves exactly this. It must
-    render as "hasn't published yet", not as an error page.
+    flush comes when the training loop opens its lifecycle. Everything in between
+    -- cluster boot, worker allocation, model load -- lives in that window, so
+    reporting it as an unreadable snapshot turns every launch into an incident.
     """
     store, run = _store_and_run(run_tree, settings_for)
     snapshot, error = store.read_snapshot(run.run_root)
 
+    # The read layer still says what it found; the interpretation is `status`'s.
     assert snapshot is None
     assert error and "not been written" in error
 
     status = store.status(run, NOW)
-    assert status.health.health is Health.UNKNOWN
-    assert status.error == error
+    assert status.initializing is True
+    assert status.error is None
+
+
+def test_a_startup_that_misses_its_deadline_is_reported(run_tree, settings_for):
+    """Past the grace period the same state is a real problem, and says so."""
+    started = NOW - timedelta(seconds=900)
+    run_tree("stuck", manifest={"started_at": _iso(started)})
+    settings = settings_for(startup_grace_s=600.0)
+    run = RunDiscovery(settings).find("stuck")
+    assert run is not None
+
+    status = StateStore(settings).status(run, NOW)
+
+    assert status.initializing is False
+    assert status.error and "not been written" in status.error
+    # How long it has been stuck is the part an operator can act on.
+    assert status.startup_elapsed_s == pytest.approx(900.0)
+
+
+def test_a_startup_inside_the_grace_period_still_reports_its_age(
+    run_tree, settings_for
+):
+    started = NOW - timedelta(seconds=120)
+    run_tree("booting", manifest={"started_at": _iso(started)})
+    settings = settings_for(startup_grace_s=600.0)
+    run = RunDiscovery(settings).find("booting")
+    assert run is not None
+
+    status = StateStore(settings).status(run, NOW)
+
+    assert status.initializing is True
+    assert status.error is None
+    assert status.startup_elapsed_s == pytest.approx(120.0)
+
+
+def test_a_corrupt_snapshot_is_never_called_a_startup(run_tree, settings_for):
+    """A file that exists and is wrong is damage, whenever it happens."""
+    store, run = _store_and_run(run_tree, settings_for, run_id="corrupt")
+    (Path(run.run_root) / "run.json").write_text("{not json")
+
+    status = store.status(run, NOW)
+
+    assert status.initializing is False
+    assert status.error and "unreadable" in status.error
 
 
 def test_a_corrupt_snapshot_does_not_500(run_tree, settings_for):
@@ -566,3 +614,23 @@ def test_a_single_run_status_read_stays_under_the_budget(run_tree, settings_for)
     assert median_ms < 10.0, (
         f"status() median {median_ms:.2f}ms exceeds the 10ms budget"
     )
+
+
+def test_a_starting_run_health_reason_does_not_read_as_damage(run_tree, settings_for):
+    """The health bar's reason is the sentence an operator actually reads.
+
+    The verdict stays `unknown` -- nothing has been published, so nothing can be
+    concluded -- but "no readable run.json" describes a normal launch as a
+    broken file, which is the false alarm this whole state exists to remove.
+    """
+    started = NOW - timedelta(seconds=30)
+    run_tree("fresh", manifest={"started_at": _iso(started)})
+    settings = settings_for(startup_grace_s=600.0)
+    run = RunDiscovery(settings).find("fresh")
+    assert run is not None
+
+    status = StateStore(settings).status(run, NOW)
+
+    assert status.health.health is Health.UNKNOWN
+    assert "Starting up" in status.health.reason
+    assert "readable" not in status.health.reason

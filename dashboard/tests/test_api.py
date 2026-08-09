@@ -702,25 +702,44 @@ def _parse_sse_chunk(chunk: str) -> tuple[str, object]:
 
 
 def test_a_run_with_no_snapshot_still_appears(run_tree, settings_for):
-    """A run that died between its manifest and its first flush.
+    """A run between its manifest and its first flush.
 
-    It has to be listed -- that failure is one of the things the dashboard exists
-    to make visible, and dropping the row would hide it completely.
+    It has to be listed -- a launch that never gets past startup is one of the
+    things the dashboard exists to make visible, and dropping the row would hide
+    it completely. Inside the grace period it is listed as starting up, which is
+    a different claim from listing it as broken.
     """
     run_tree("never-published")
     with TestClient(create_app(settings_for())) as client:
         rows = client.get("/api/runs").json()
         assert [row["run_id"] for row in rows] == ["never-published"]
         assert rows[0]["health"] == "unknown"
+        assert rows[0]["initializing"] is True
 
         body = client.get("/api/runs/never-published").json()
         assert body["snapshot"] is None
-        assert body["error"]
+        assert body["initializing"] is True
+        assert body["error"] is None
         # The page still needs a layout to render into.
         assert (
             client.get("/api/runs/never-published/template").json()["name"]
             == "embodied"
         )
+
+
+def test_a_startup_past_its_deadline_is_reported_over_http(run_tree, settings_for):
+    """The other side of the same state: still no snapshot, no longer excusable."""
+    started = datetime.now(timezone.utc) - timedelta(seconds=900)
+    run_tree(
+        "stuck-start",
+        manifest={"started_at": started.isoformat().replace("+00:00", "Z")},
+    )
+    with TestClient(create_app(settings_for(startup_grace_s=600.0))) as client:
+        body = client.get("/api/runs/stuck-start").json()
+
+        assert body["initializing"] is False
+        assert body["error"]
+        assert body["startup_elapsed_s"] > 600.0
 
 
 def test_a_corrupt_snapshot_does_not_break_the_list(tmp_path, run_tree, settings_for):

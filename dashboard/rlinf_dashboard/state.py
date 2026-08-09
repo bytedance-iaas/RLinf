@@ -62,6 +62,11 @@ class Event:
     payload: dict
 
 
+#: `read_snapshot`'s marker for "the file is not there", as distinct from "the
+#: file is there and wrong". Only the first of the two can be a normal startup.
+_SNAPSHOT_MISSING = "run.json has not been written yet."
+
+
 class StateStore:
     """Read and interpret the control-plane files for discovered runs."""
 
@@ -84,7 +89,10 @@ class StateStore:
             with open(path, encoding="utf-8") as handle:
                 payload = json.load(handle)
         except FileNotFoundError:
-            return None, "run.json has not been written yet."
+            # Absence is not damage. A run that has a manifest and no snapshot is
+            # usually still starting up, and `status` decides which of the two it
+            # is; this sentinel is what lets it tell them apart.
+            return None, _SNAPSHOT_MISSING
         except (OSError, json.JSONDecodeError) as exc:
             return None, f"run.json is unreadable: {exc}"
 
@@ -123,6 +131,20 @@ class StateStore:
             )
             snapshot = snapshot.model_copy(update={"paths": paths})
 
+        initializing, startup_s = self._startup_state(run, error, now)
+        if initializing:
+            # The startup window is the expected state here, not a fault, so it
+            # does not also get reported as one. Past the deadline the error is
+            # restored and says what actually failed.
+            error = None
+            # The verdict stays `unknown` -- nothing has been reported, so
+            # nothing can be concluded -- but its reason is what the operator
+            # reads on the health bar, and "no readable run.json" describes a
+            # normal launch as a broken file.
+            verdict = verdict.model_copy(
+                update={"reason": "Starting up: no snapshot published yet."}
+            )
+
         return RunStatus(
             run_id=run.run_id,
             manifest=run.manifest,
@@ -132,7 +154,35 @@ class StateStore:
             error=error,
             relocation=run.relocation,
             has_media=self.has_media(run.run_root),
+            initializing=initializing,
+            startup_elapsed_s=startup_s,
         )
+
+    def _startup_state(
+        self, run: DiscoveredRun, error: str | None, now: datetime
+    ) -> tuple[bool, float | None]:
+        """Whether a snapshot-less run is still within its startup window.
+
+        A run is registered by its manifest and starts reporting when the
+        training loop opens its lifecycle. Everything in between is a normal
+        startup, however long it looks from outside, so it is reported as such
+        until the configured deadline passes.
+
+        Returns:
+            ``(initializing, seconds_in_startup)``. The duration is reported even
+            once the deadline has passed, because "stuck for 20 minutes" is the
+            fact an operator needs and "stuck" alone is not.
+        """
+        if error != _SNAPSHOT_MISSING:
+            return False, None
+        started_at = run.manifest.started_at if run.manifest else None
+        if started_at is None:
+            # No launch time to measure against. Treat it as starting up rather
+            # than as broken: a manifest with no timestamp is a producer-side
+            # gap, and inventing an alarm from a missing field helps nobody.
+            return True, None
+        elapsed = (now - started_at).total_seconds()
+        return elapsed <= self._settings.startup_grace_s, max(elapsed, 0.0)
 
     def summary(self, run: DiscoveredRun, now: datetime | None = None) -> RunSummary:
         """Build the flat list-view row for one run."""
@@ -165,6 +215,8 @@ class StateStore:
                 else None
             ),
             run_root=run.run_root,
+            initializing=status.initializing,
+            startup_elapsed_s=status.startup_elapsed_s,
         )
 
     def _refine_with_heartbeat_file(
