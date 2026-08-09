@@ -819,7 +819,32 @@ a:hover {
   color: var(--color-text);
 }
 
+/* The stack total is a different kind of number from the rows above it -- a sum,
+   not a series -- so it is ruled off and left without a colour swatch. Sharing
+   their styling is what let a cumulative height read as a phase duration. */
+.chart-tooltip-row[data-role="total"] {
+  margin-top: var(--space-xs);
+  padding-top: var(--space-xs);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-faint);
+}
+
+.chart-legend-swatch[data-role="total"] {
+  background: transparent;
+}
+
 /* ------------------------------------------------------------------ tables */
+
+/* A table is the one thing here that has a width of its own: enough columns of
+   numbers and it stops fitting, and below roughly 800px these do. Left alone it
+   pushes the whole application sideways, which turns one wide element into a
+   horizontal scrollbar under every page. Scrolling belongs to the table. */
+.table-scroll {
+  overflow-x: auto;
+  /* Without this a grid or flex child refuses to shrink below its content, and
+     the `auto` above never has anything to scroll. */
+  min-width: 0;
+}
 
 .table {
   width: 100%;
@@ -1184,9 +1209,32 @@ input[type="checkbox"] {
 }
 
 .media-path {
-  font-family: var(--font-jetbrains-mono);
   font-size: var(--type-numeric-sm-size);
   color: var(--color-text-faint);
+}
+
+.media-path > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.media-path > summary::-webkit-details-marker {
+  display: none;
+}
+
+.media-path > summary::before {
+  content: "▸ ";
+}
+
+.media-path[open] > summary::before {
+  content: "▾ ";
+}
+
+.media-path-value {
+  margin-top: var(--space-xs);
+  font-family: var(--font-jetbrains-mono);
+  /* The one place a long absolute path is allowed to wrap rather than widen the
+     card: it is opened deliberately, so it may take the height it needs. */
   overflow-wrap: anywhere;
 }
 

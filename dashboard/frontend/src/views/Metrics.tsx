@@ -366,13 +366,19 @@ export function ChartPanel(props: {
   const plotKeys = [...chart.keys, ...rankLines.map((line) => line.key)];
   const entries = plotKeys.map((key) => series[key]);
 
-  const data = useMemo<PlotData>(() => {
+  // A stacked chart is drawn from cumulative columns but has to be *read* as
+  // individual values, so both forms are kept. Reconstructing one from the other
+  // by subtraction would be lossy: `stackColumns` writes the running total where
+  // a part is missing, and the difference of two totals cannot say whether the
+  // band contributed zero or contributed nothing.
+  const { data, rawData } = useMemo<{ data: PlotData; rawData?: PlotData }>(() => {
     const aligned = alignSeries(entries);
     const [xs, ...columns] = aligned;
     // Smoothing is applied before stacking, so the bands still sum to the smoothed
     // total rather than to a mix of raw and smoothed parts.
     const smoothed = columns.map((column) => smooth(column, smoothing));
-    return [xs, ...(stacked ? stackColumns(smoothed) : smoothed)];
+    if (!stacked) return { data: [xs, ...smoothed] };
+    return { data: [xs, ...stackColumns(smoothed)], rawData: [xs, ...smoothed] };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plotKeys.join("|"), entries.map((entry) => entry?.total_points ?? 0).join(","), smoothing, stacked, series]);
 
@@ -519,6 +525,7 @@ export function ChartPanel(props: {
 
       <Chart
         data={data}
+        rawData={rawData}
         series={specs}
         xLabel={props.axisLabel}
         unit={unit}

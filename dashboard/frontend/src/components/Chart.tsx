@@ -92,6 +92,15 @@ export interface ChartProps {
   logScale?: boolean;
   /** Template `stacked: true`. Series are pre-stacked by the caller. */
   stacked?: boolean;
+  /**
+   * The same series before stacking, supplied only for a `stacked` chart.
+   *
+   * `data` holds cumulative heights because that is what uPlot draws, but a
+   * reader asking "how long did this phase take" wants the band's own value.
+   * Reading the drawn number back would answer a question nobody asked, and the
+   * answer looks plausible, which is worse than looking wrong.
+   */
+  rawData?: PlotData;
   /** Taller variant for the one chart a page emphasises. */
   tall?: boolean;
   /**
@@ -144,7 +153,8 @@ function countPoints(data: PlotData): number {
 }
 
 export function Chart(props: ChartProps) {
-  const { data, series, xLabel, unit, percent, logScale, stacked, tall, spark, cursorGroup } = props;
+  const { data, rawData, series, xLabel, unit, percent, logScale, stacked, tall, spark, cursorGroup } =
+    props;
   const hostRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -411,7 +421,11 @@ export function Chart(props: ChartProps) {
   // null there; the explicit guard is so the invariant survives a future edit to
   // the cursor options rather than silently reintroducing an overflowing tooltip.
   const tooltip =
-    hover === null || spark ? null : buildTooltip(data, series, hover.idx, xLabel, percent);
+    hover === null || spark
+      ? null
+      : buildTooltip(rawData ?? data, series, hover.idx, xLabel, percent, {
+          total: stacked ? ((data[series.length] as (number | null)[] | undefined)?.[hover.idx] ?? null) : undefined,
+        });
   // Flip past the midpoint so the tooltip never leaves the panel and never covers
   // the point being read. Computed here rather than inline so the null check is one
   // branch instead of three.
@@ -457,6 +471,7 @@ function buildTooltip(
   idx: number,
   xLabel: string,
   percent?: boolean,
+  opts: { total?: number | null } = {},
 ) {
   const step = data[0]?.[idx];
   if (step === undefined) return null;
@@ -464,6 +479,9 @@ function buildTooltip(
     .map((spec, index) => ({ spec, value: (data[index + 1] as (number | null)[] | undefined)?.[idx] ?? null }))
     .filter((row) => row.spec.hidden !== true && row.spec.muted !== true);
   if (rows.length === 0) return null;
+  // Only a stacked chart passes a total, and it is labelled as one. Rows above
+  // it are each band's own value, so the two readings are never confusable.
+  const total = opts.total;
 
   return (
     <>
@@ -479,6 +497,15 @@ function buildTooltip(
           </span>
         </div>
       ))}
+      {total !== undefined && (
+        <div className="chart-tooltip-row" data-role="total">
+          <span className="chart-legend-swatch" data-role="total" />
+          <span>Total</span>
+          <span className="chart-tooltip-row-value">
+            {total === null ? "—" : formatMetric(total, { percent })}
+          </span>
+        </div>
+      )}
     </>
   );
 }
