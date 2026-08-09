@@ -270,9 +270,15 @@ function Clip(props: { entry: MediaEntry; semantics: string }) {
         {entry.fps !== null && <span>{entry.fps}fps</span>}
         <span className="faint">shard {entry.shard}</span>
       </div>
-      <div className="media-path" title={entry.path}>
-        {entry.path}
-      </div>
+      {/* The path is diagnosis material, not caption material: it is the widest
+          thing on the card and the least often needed, and forty of them made
+          the grid read as a file listing with videos attached. Kept one click
+          away rather than removed -- when the question *is* "which file is
+          this", nothing else answers it. */}
+      <details className="media-path">
+        <summary>path</summary>
+        <div className="media-path-value">{entry.path}</div>
+      </details>
     </figure>
   );
 }

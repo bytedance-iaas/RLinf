@@ -251,35 +251,37 @@ export function Compare(props: CompareProps) {
       )}
 
       {selected.length > 0 && (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Run</th>
-              <th>State</th>
-              <th className="col-num">Step</th>
-              <th className="col-num">Latest {metricKey ? "value" : ""}</th>
-              <th className="col-num">Elapsed</th>
-              <th>Step semantics</th>
-            </tr>
-          </thead>
-          <tbody>
-            {selected.map((runId) => {
-              const run = byId.get(runId);
-              return (
-                <tr key={runId}>
-                  <td title={runId}>{run?.experiment_name ?? runId}</td>
-                  <td>{run?.state ?? "unknown"}</td>
-                  <td className="col-num">{run?.step ?? "—"}</td>
-                  <td className="col-num">
-                    {formatMetric(lastValue(seriesQuery.data?.[runId]), { percent })}
-                  </td>
-                  <td className="col-num">{duration(run?.elapsed_s)}</td>
-                  <td>{semanticsLabel(run?.step_semantics)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="table-scroll">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Run</th>
+                <th>State</th>
+                <th className="col-num">Step</th>
+                <th className="col-num">Latest {metricKey ? "value" : ""}</th>
+                <th className="col-num">Elapsed</th>
+                <th>Step semantics</th>
+              </tr>
+            </thead>
+            <tbody>
+              {selected.map((runId) => {
+                const run = byId.get(runId);
+                return (
+                  <tr key={runId}>
+                    <td title={runId}>{run?.experiment_name ?? runId}</td>
+                    <td>{run?.state ?? "unknown"}</td>
+                    <td className="col-num">{run?.step ?? "—"}</td>
+                    <td className="col-num">
+                      {formatMetric(lastValue(seriesQuery.data?.[runId]), { percent })}
+                    </td>
+                    <td className="col-num">{duration(run?.elapsed_s)}</td>
+                    <td>{semanticsLabel(run?.step_semantics)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

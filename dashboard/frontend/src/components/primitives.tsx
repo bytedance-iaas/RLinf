@@ -102,9 +102,17 @@ export function CardValue(props: { children: ReactNode; small?: boolean; empty?:
   );
 }
 
-export function CardHint(props: { children: ReactNode; strong?: boolean }) {
+export function CardHint(props: { children: ReactNode; strong?: boolean; title?: string }) {
   return (
-    <div className={props.strong ? "card-hint card-hint-strong" : "card-hint"}>{props.children}</div>
+    <div
+      className={props.strong ? "card-hint card-hint-strong" : "card-hint"}
+      // For the invariant behind a hint rather than the hint itself. Prose that
+      // explains how a file is written belongs one hover away from the sentence
+      // the operator actually needs, not in front of it.
+      title={props.title}
+    >
+      {props.children}
+    </div>
   );
 }
 

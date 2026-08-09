@@ -229,33 +229,35 @@ export function Events(props: EventsProps) {
             <span className="section-title">Checkpoints</span>
             <span className="section-meta">{checkpoints.length}</span>
           </div>
-          <table className="table">
-            <thead>
-              <tr>
-                <th className="col-num">{stepUnit}</th>
-                <th>Saved</th>
-                <th className="col-num">Size</th>
-                <th className="col-num">Took</th>
-                <th>Path</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...checkpoints].reverse().map((entry) => (
-                <tr key={`${entry.step}-${entry.path}`}>
-                  <td className="col-num">
-                    {integer(entry.step)}
-                    {entry.is_best && <span className="chip">best</span>}
-                  </td>
-                  <td>{clockTime(entry.saved_at)}</td>
-                  <td className="col-num">{bytes(entry.size_bytes)}</td>
-                  <td className="col-num">{duration(entry.duration_s)}</td>
-                  <td>
-                    <Code title={entry.path}>{entry.path}</Code>
-                  </td>
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th className="col-num">{stepUnit}</th>
+                  <th>Saved</th>
+                  <th className="col-num">Size</th>
+                  <th className="col-num">Took</th>
+                  <th>Path</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {[...checkpoints].reverse().map((entry) => (
+                  <tr key={`${entry.step}-${entry.path}`}>
+                    <td className="col-num">
+                      {integer(entry.step)}
+                      {entry.is_best && <span className="chip">best</span>}
+                    </td>
+                    <td>{clockTime(entry.saved_at)}</td>
+                    <td className="col-num">{bytes(entry.size_bytes)}</td>
+                    <td className="col-num">{duration(entry.duration_s)}</td>
+                    <td>
+                      <Code title={entry.path}>{entry.path}</Code>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
     </div>
