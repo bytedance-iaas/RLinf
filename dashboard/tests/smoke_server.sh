@@ -118,7 +118,7 @@ printf '\x00\x00\x00\x18ftypmp42smoke-video-bytes' > "$ROOT/videos/unknown.mp4"
 } > "$RUN_ROOT/media.rank0.jsonl"
 
 echo "Serving $ROOT on port $PORT"
-RLINF_DASHBOARD_SCAN_ROOTS="$ROOT" \
+RLINF_DASHBOARD_SCAN_ROOT="$ROOT" \
 RLINF_DASHBOARD_SSE_INTERVAL_S=0.2 \
 RLINF_DASHBOARD_DISCOVERY_CACHE_TTL_S=0 \
   "$PYTHON" -m rlinf_dashboard --host 127.0.0.1 --port "$PORT" > "$SERVER_LOG" 2>&1 &

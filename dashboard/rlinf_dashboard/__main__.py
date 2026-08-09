@@ -18,9 +18,21 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 
+from pydantic import ValidationError
+
 from .settings import Settings, set_settings
+
+
+def _first_message(exc: ValidationError) -> str:
+    """The one sentence a validator wrote, without pydantic's frame around it."""
+    for error in exc.errors():
+        message = str(error.get("msg", ""))
+        # pydantic prefixes messages raised from a validator with "Value error, ".
+        return message.removeprefix("Value error, ") or str(exc)
+    return str(exc)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -33,12 +45,14 @@ def main(argv: list[str] | None = None) -> int:
         prog="rlinf-dashboard",
         description="Serve the RLinf control-plane dashboard.",
     )
+    # `*` rather than `?` so a second path reaches the check below and gets an
+    # explanation, instead of argparse's "unrecognized arguments".
     parser.add_argument(
-        "log_paths",
+        "log_path",
         nargs="*",
         help=(
-            "Directories to scan for runs -- each a runner.logger.log_path or an "
-            "ancestor of several. Defaults to RLINF_DASHBOARD_SCAN_ROOTS or ./logs."
+            "The directory to scan for runs -- a runner.logger.log_path or an "
+            "ancestor of several. Defaults to RLINF_DASHBOARD_SCAN_ROOT or ./logs."
         ),
     )
     parser.add_argument("--host", default="127.0.0.1")
@@ -56,10 +70,34 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    if len(args.log_path) > 1:
+        print(
+            "This server scans a single directory. Point it at the common "
+            f"ancestor of {', '.join(args.log_path)} instead.",
+            file=sys.stderr,
+        )
+        return 2
+    if os.environ.get("RLINF_DASHBOARD_SCAN_ROOTS"):
+        # The plural spelling would now be ignored, which is worse than failing:
+        # the server would scan ./logs while its operator reads their own path in
+        # a shell profile and concludes discovery is broken.
+        print(
+            "RLINF_DASHBOARD_SCAN_ROOTS is no longer read. Set "
+            "RLINF_DASHBOARD_SCAN_ROOT to a single directory instead.",
+            file=sys.stderr,
+        )
+        return 2
+
     overrides = {}
-    if args.log_paths:
-        overrides["scan_roots"] = args.log_paths
-    settings = Settings(**overrides)
+    if args.log_path:
+        overrides["scan_root"] = args.log_path[0]
+    try:
+        settings = Settings(**overrides)
+    except ValidationError as exc:
+        # Almost always the old two-path invocation. Say what to do rather than
+        # printing a pydantic traceback at someone who changed nothing.
+        print(_first_message(exc), file=sys.stderr)
+        return 2
     set_settings(settings)
 
     try:
@@ -71,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    print(f"Scanning: {', '.join(settings.scan_roots)}", file=sys.stderr)
+    print(f"Scanning: {settings.scan_root}", file=sys.stderr)
     print(f"Dashboard: http://{args.host}:{args.port}/api/health", file=sys.stderr)
 
     # `--reload` needs an import string so the reloader can re-import; the direct

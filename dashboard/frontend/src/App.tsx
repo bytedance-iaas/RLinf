@@ -295,7 +295,7 @@ export function App() {
             // first fetch has not landed". Passed through rather than inferred
             // from an empty array, which cannot tell "none" from "not yet".
             discovering: runs.data === null && runs.error === null,
-            scanRoots: serverQuery.data?.scan_roots,
+            scanRoot: serverQuery.data?.scan_root,
             status,
             template,
             templateError: templateQuery.error,
@@ -325,21 +325,23 @@ export function App() {
                     there when the tab opened while the table went on updating --
                     two numbers on one screen disagreeing about the same fact. */}
                 <dd>{runRows.length}</dd>
-                <dt>scan roots</dt>
+                <dt>scan root</dt>
                 <dd>
-                  {serverQuery.data.scan_roots.map((root) => (
-                    <div key={root.path}>
-                      <Code>{root.path}</Code>{" "}
-                      {/* A scan root that does not exist is the single most common
-                          reason for an empty dashboard, so it is stated here rather
-                          than left to be inferred from a blank table. */}
-                      {root.exists ? (
-                        <span className="faint">exists</span>
-                      ) : (
-                        <Badge tone="unreachable">missing</Badge>
-                      )}
-                    </div>
-                  ))}
+                  <Code>{serverQuery.data.scan_root.path}</Code>{" "}
+                  {/* A scan root that does not exist is the commonest reason for
+                      an empty dashboard, and a root one level off the runs is the
+                      next -- which "exists" alone cannot distinguish, since both
+                      report true. The count is what separates them. */}
+                  {!serverQuery.data.scan_root.exists ? (
+                    <Badge tone="unreachable">missing</Badge>
+                  ) : serverQuery.data.scan_root.run_count === 0 ? (
+                    <Badge tone="unknown">no runs found</Badge>
+                  ) : (
+                    <span className="faint">
+                      {serverQuery.data.scan_root.run_count} run
+                      {serverQuery.data.scan_root.run_count === 1 ? "" : "s"}
+                    </span>
+                  )}
                 </dd>
               </div>
             </Note>
@@ -354,7 +356,7 @@ interface RenderArgs {
   route: Route;
   runs: RunSummary[];
   discovering: boolean;
-  scanRoots?: { path: string; exists: boolean }[];
+  scanRoot?: { path: string; exists: boolean; run_count: number };
   status: RunStatus | null;
   template: RunTemplate | null;
   templateError: string | null;
@@ -379,7 +381,7 @@ function renderRoute(args: RenderArgs) {
       <RunList
         runs={args.runs}
         discovering={args.discovering}
-        scanRoots={args.scanRoots}
+        scanRoot={args.scanRoot}
         selected={args.selected}
         now={args.now}
         onOpen={(runId) => args.navigate({ name: "overview", runId })}

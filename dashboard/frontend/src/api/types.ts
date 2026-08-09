@@ -343,6 +343,12 @@ export interface RunTemplate {
 export interface ServerHealth {
   status: string;
   version: string;
-  scan_roots: { path: string; exists: boolean }[];
+  /**
+   * The one directory this server scans, and what it found there.
+   *
+   * `run_count` is here because "exists" alone cannot tell a correct root from
+   * one level off: both report true, and only the count says which.
+   */
+  scan_root: { path: string; exists: boolean; run_count: number };
   run_count: number;
 }

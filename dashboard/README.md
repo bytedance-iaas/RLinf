@@ -61,21 +61,29 @@ read-only root filesystem.
 ## Run
 
 ```bash
-.venv/bin/rlinf-dashboard /path/to/logs
-# Multiple roots are accepted:
-.venv/bin/rlinf-dashboard /mnt/team-a/runs /mnt/team-b/runs --port 8420
+.venv/bin/rlinf-dashboard /path/to/logs --port 8420
 ```
 
-Each positional path can be a `runner.logger.log_path` or an ancestor of
-several log paths. Discovery searches for `_rlinf/runs/*/manifest.json` within a
-bounded depth.
+One directory, which can be a `runner.logger.log_path` or an ancestor of
+several. Discovery searches for `_rlinf/runs/*/manifest.json` within a bounded
+depth, so runs that already share an ancestor are covered by naming it:
+
+```
+/mnt/runs                        <- the scan root
+├── experiment-a/<run>/_rlinf/…
+└── experiment-b/<run>/_rlinf/…
+```
+
+Gathering runs that do *not* share a filesystem — from several machines — is a
+separate problem with its own questions about identity and freshness, and is not
+what a second local path would solve.
 
 Configuration can also be supplied with `RLINF_DASHBOARD_` environment
 variables:
 
 | Variable | Default | Meaning |
 | --- | ---: | --- |
-| `RLINF_DASHBOARD_SCAN_ROOTS` | `./logs` | One path, comma-separated paths, or a JSON array |
+| `RLINF_DASHBOARD_SCAN_ROOT` | `./logs` | One directory. Point it at the common ancestor when runs live in several |
 | `RLINF_DASHBOARD_SCAN_MAX_DEPTH` | `6` | Maximum discovery depth below each root |
 | `RLINF_DASHBOARD_HEARTBEAT_TIMEOUT_K` | `5.0` | Missed heartbeat intervals before `unreachable` |
 | `RLINF_DASHBOARD_HEARTBEAT_INTERVAL_S` | `5.0` | Fallback interval for older manifests |
@@ -90,7 +98,7 @@ variables:
 For example:
 
 ```bash
-RLINF_DASHBOARD_SCAN_ROOTS=/mnt/runs \
+RLINF_DASHBOARD_SCAN_ROOT=/mnt/runs \
   .venv/bin/rlinf-dashboard --host 0.0.0.0 --port 8420
 ```
 

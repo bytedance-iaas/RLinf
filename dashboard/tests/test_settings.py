@@ -14,13 +14,16 @@
 
 """Environment-variable configuration.
 
-The list-typed settings are the ones worth testing. pydantic-settings
-JSON-decodes a list field's raw string *before* any validator runs, so
-``RLINF_DASHBOARD_SCAN_ROOTS=/logs`` -- the obvious thing to write, and what the
-README documents -- raised ``SettingsError`` at startup until these fields were
-annotated ``NoDecode``. The server refusing to boot on its own documented
-variable is exactly the kind of failure no unit test elsewhere would catch,
-because every other test constructs ``Settings`` from keyword arguments.
+Two things are worth testing here. The list-typed settings, because
+pydantic-settings JSON-decodes a list field's raw string *before* any validator
+runs, so ``RLINF_DASHBOARD_CORS_ORIGINS=http://a:5173`` -- the obvious thing to
+write -- raised ``SettingsError`` at startup until the field was annotated
+``NoDecode``. And the scan root, because it used to be a list: an invocation
+that passed two directories must now fail loudly rather than quietly scan one of
+them, or the symptom is missing runs that look like a discovery bug.
+
+Both are failures no other test would catch, because every other test constructs
+``Settings`` from keyword arguments.
 """
 
 from __future__ import annotations
@@ -41,27 +44,27 @@ def _settings(monkeypatch, **env) -> Settings:
     return Settings(_env_file=None)
 
 
-# ------------------------------------------------------------------- list fields
+# --------------------------------------------------------------- the scan root
 
 
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        # The single most likely value, and the one the README shows.
-        ("/logs", ["/logs"]),
-        ("/logs,/mnt/other", ["/logs", "/mnt/other"]),
-        # Whitespace around a comma is what a human types.
-        (" /logs , /mnt/other ", ["/logs", "/mnt/other"]),
-        # A JSON array is what someone who knows pydantic-settings reaches for.
-        ('["/logs","/mnt/other"]', ["/logs", "/mnt/other"]),
-        # Trailing separators must not produce empty roots, which would scan the
-        # process's cwd by accident.
-        ("/logs,", ["/logs"]),
-    ],
-    ids=["single", "csv", "csv-spaced", "json", "trailing-comma"],
-)
-def test_scan_roots_accepts_every_reasonable_spelling(monkeypatch, raw, expected):
-    assert _settings(monkeypatch, RLINF_DASHBOARD_SCAN_ROOTS=raw).scan_roots == expected
+def test_the_scan_root_is_read_from_the_environment(monkeypatch):
+    assert _settings(monkeypatch, RLINF_DASHBOARD_SCAN_ROOT="/logs").scan_root == "/logs"
+
+
+def test_a_comma_separated_scan_root_is_refused(monkeypatch):
+    """The old spelling has to fail, not silently name a directory with a comma.
+
+    Someone carrying an ``RLINF_DASHBOARD_SCAN_ROOTS=/a,/b`` line forward would
+    otherwise get a server scanning a path that does not exist, reported as an
+    empty dashboard.
+    """
+    with pytest.raises(Exception, match="single directory"):
+        _settings(monkeypatch, RLINF_DASHBOARD_SCAN_ROOT="/logs,/mnt/other")
+
+
+def test_a_list_scan_root_is_refused():
+    with pytest.raises(Exception, match="common ancestor"):
+        Settings(scan_root=["/logs", "/mnt/other"], _env_file=None)
 
 
 def test_cors_origins_parses_the_same_way(monkeypatch):
@@ -75,12 +78,10 @@ def test_cors_origins_parses_the_same_way(monkeypatch):
 def test_an_empty_value_falls_back_to_the_default(monkeypatch):
     """An unset-but-exported variable must not scan nothing.
 
-    ``export RLINF_DASHBOARD_SCAN_ROOTS=`` in a shell profile is easy to do by
-    accident, and a server scanning ``[]`` reports zero runs with no explanation.
+    ``export RLINF_DASHBOARD_SCAN_ROOT=`` in a shell profile is easy to do by
+    accident, and a server scanning "" reports zero runs with no explanation.
     """
-    assert _settings(monkeypatch, RLINF_DASHBOARD_SCAN_ROOTS="").scan_roots == [
-        "./logs"
-    ]
+    assert _settings(monkeypatch, RLINF_DASHBOARD_SCAN_ROOT="  ").scan_root == "./logs"
 
 
 # ----------------------------------------------------------------- scalar fields
@@ -107,7 +108,7 @@ def test_timeout_policy_is_overridable(monkeypatch):
 def test_an_unknown_prefixed_variable_is_ignored(monkeypatch):
     """``extra="ignore"``: a stale variable from an older version must not block boot."""
     settings = _settings(monkeypatch, RLINF_DASHBOARD_SOMETHING_REMOVED="1")
-    assert settings.scan_roots == ["./logs"]
+    assert settings.scan_root == "./logs"
 
 
 # ------------------------------------------------------------------- the accessor
@@ -117,9 +118,9 @@ def test_the_process_wide_accessor_is_replaceable(monkeypatch):
     """``set_settings`` is how ``__main__`` injects CLI arguments.
 
     The app is built from whatever ``get_settings`` returns, so a CLI override
-    that did not stick would silently serve the environment's roots instead.
+    that did not stick would silently serve the environment's root instead.
     """
     monkeypatch.setattr("rlinf_dashboard.settings._settings", None)
-    injected = Settings(scan_roots=["/injected"], _env_file=None)
+    injected = Settings(scan_root="/injected", _env_file=None)
     set_settings(injected)
     assert get_settings() is injected

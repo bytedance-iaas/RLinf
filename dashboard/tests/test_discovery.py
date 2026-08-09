@@ -26,6 +26,8 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
+
 from rlinf_dashboard.discovery import RunDiscovery
 
 
@@ -117,17 +119,22 @@ def test_runs_without_started_at_fall_back_to_manifest_mtime(tmp_path, settings_
     assert [run.run_id for run in runs] == ["second", "first"]
 
 
-def test_overlapping_scan_roots_list_a_run_once(tmp_path, settings_for):
-    """``--scan-root /data --scan-root /data/logs`` is a normal typo-adjacent setup.
+def test_a_run_reachable_by_two_paths_is_listed_once(tmp_path, settings_for):
+    """One root can still reach one run twice, through a symlinked directory.
 
-    Deduping on the resolved path keeps the same run from appearing twice with
-    different path spellings, which would look like a duplicated job.
+    Deduping on the resolved path keeps it from appearing twice under different
+    spellings, which would look like a duplicated job.
     """
     root = tmp_path / "logs" / "_rlinf" / "runs" / "dup-run"
     root.mkdir(parents=True)
     (root / "manifest.json").write_text(json.dumps(_manifest("dup-run")))
+    alias = tmp_path / "logs" / "mirror"
+    try:
+        alias.symlink_to(tmp_path / "logs", target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unavailable on this filesystem")
 
-    settings = settings_for(scan_roots=[str(tmp_path), str(tmp_path / "logs")])
+    settings = settings_for(scan_root=str(tmp_path))
     runs = RunDiscovery(settings).list_runs()
     assert [run.run_id for run in runs] == ["dup-run"]
 
@@ -151,7 +158,7 @@ def test_a_missing_scan_root_is_not_an_error(settings_for):
     diagnosed; crashing the list endpoint would hide it.
     """
     assert (
-        RunDiscovery(settings_for(scan_roots=["/nonexistent/path"])).list_runs() == []
+        RunDiscovery(settings_for(scan_root="/nonexistent/path")).list_runs() == []
     )
 
 

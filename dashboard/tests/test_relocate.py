@@ -192,7 +192,7 @@ def test_discovery_repairs_a_container_written_tree(tmp_path):
         )
     )
 
-    runs = RunDiscovery(Settings(scan_roots=[str(log_path)])).list_runs()
+    runs = RunDiscovery(Settings(scan_root=str(log_path))).list_runs()
     assert len(runs) == 1
     run = runs[0]
     assert run.relocation is not None
@@ -247,7 +247,7 @@ def test_media_streams_from_a_relocated_tree(tmp_path):
         + "\n"
     )
 
-    client = TestClient(create_app(Settings(scan_roots=[str(log_path)])))
+    client = TestClient(create_app(Settings(scan_root=str(log_path))))
     rows = client.get("/api/runs/r1/media").json()
     assert len(rows) == 1
     assert rows[0]["path"] == str(clip)
@@ -300,7 +300,7 @@ def test_relocation_does_not_rewrite_the_resume_command(tmp_path):
         + "\n"
     )
 
-    client = TestClient(create_app(Settings(scan_roots=[str(log_path)])))
+    client = TestClient(create_app(Settings(scan_root=str(log_path))))
     entry = client.get("/api/runs/r1/checkpoints").json()[0]
     assert entry["resume_dir"] == f"{recorded}/exp/checkpoints/global_step_1"
     assert entry["entry_script"] == "/workspace/tree/examples/embodiment/x.py"
@@ -327,5 +327,5 @@ def test_discovery_leaves_a_local_tree_untouched(tmp_path):
         )
     )
 
-    runs = RunDiscovery(Settings(scan_roots=[str(log_path)])).list_runs()
+    runs = RunDiscovery(Settings(scan_root=str(log_path))).list_runs()
     assert runs[0].relocation is None

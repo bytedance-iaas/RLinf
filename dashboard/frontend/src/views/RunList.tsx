@@ -21,12 +21,12 @@ export interface RunListProps {
    *
    * Separate from `runs.length === 0` because the two demand opposite copy: one
    * says "wait", the other says "something is misconfigured". Collapsing them
-   * meant the very first render accused the user's scan roots of not existing,
-   * seconds before listing the runs it found in them.
+   * meant the very first render accused the user's scan root of not existing,
+   * seconds before listing the runs it found under it.
    */
   discovering: boolean;
-  /** From `GET /api/health`, so an empty result can name the roots it searched. */
-  scanRoots?: { path: string; exists: boolean }[];
+  /** From `GET /api/health`, so an empty result can name the root it searched. */
+  scanRoot?: { path: string; exists: boolean; run_count: number };
   selected: string[];
   now: number;
   onOpen: (runId: string) => void;
@@ -49,10 +49,10 @@ const HEALTH_RANK: Record<Health, number> = {
 /**
  * React key for a row.
  *
- * `run_id` alone is not unique. Two scan roots can each hold a copy of the same
- * tree -- a run copied off a cluster next to the original mount is the ordinary
- * case -- and the server lists both, since deduplicating them would hide the fact
- * that there are two. `run_root` is what actually distinguishes them, so it is
+ * `run_id` alone is not unique. One scan root can hold two copies of the same
+ * tree -- a run copied off a cluster beside the original is the ordinary case --
+ * and the server lists both, since deduplicating them would hide the fact that
+ * there are two. `run_root` is what actually distinguishes them, so it is
  * appended: a key collision here makes React drop or duplicate rows silently,
  * which on a click target is a wrong-run-opened bug rather than a cosmetic one.
  */
@@ -65,10 +65,8 @@ export function RunList(props: RunListProps) {
   const [stateFilter, setStateFilter] = useState<RunState | "all">("all");
   const [query, setQuery] = useState("");
   // Named rather than guessed at: the old copy asserted a missing scan root as
-  // the likely cause while the server was reporting every root as present.
-  const missingRoots = (props.scanRoots ?? [])
-    .filter((root) => !root.exists)
-    .map((root) => root.path);
+  // the likely cause while the server was reporting the root as present.
+  const root = props.scanRoot;
 
   const rows = useMemo(() => {
     const filtered = runs.filter((run) => {
@@ -84,7 +82,7 @@ export function RunList(props: RunListProps) {
     // Started-at descending, with the run id and then the run root as tiebreaks so
     // the order is total: two runs that started in the same second never swap
     // places between pushes, and neither do two copies of the same run found under
-    // different scan roots.
+    // different paths under the scan root.
     return [...filtered].sort((a, b) => {
       const at = a.started_at ? Date.parse(a.started_at) : 0;
       const bt = b.started_at ? Date.parse(b.started_at) : 0;
@@ -120,8 +118,8 @@ export function RunList(props: RunListProps) {
     [runs],
   );
 
-  // Run ids that appear more than once, i.e. the same tree found under two scan
-  // roots. Those rows are otherwise identical, so they get their run root shown --
+  // Run ids that appear more than once, i.e. the same tree found at two paths.
+  // Those rows are otherwise identical, so they get their run root shown --
   // without it the list reads as a duplicated row, which looks like a bug in the
   // dashboard rather than two copies of a tree on disk.
   const duplicated = useMemo(() => {
@@ -133,7 +131,7 @@ export function RunList(props: RunListProps) {
   /**
    * Ids shared by runs with *different* experiment names.
    *
-   * The benign duplicate above is one tree reachable through two scan roots: the
+   * The benign duplicate above is one tree reachable by two paths: the
    * rows describe the same run, so resolving the id to either is correct and
    * showing `run_root` is enough to explain the repetition.
    *
@@ -323,11 +321,11 @@ export function RunList(props: RunListProps) {
           </Note>
         ) : runs.length === 0 ? (
           <Note title="No runs discovered">
-            {missingRoots.length > 0
-              ? `These scan roots do not exist: ${missingRoots.join(", ")}.`
-              : props.scanRoots && props.scanRoots.length > 0
-                ? `Searched ${props.scanRoots.map((root) => root.path).join(", ")}, which exist but hold no run yet.`
-                : "No scan root is configured. Pass one on the command line or set RLINF_DASHBOARD_SCAN_ROOTS."}
+            {root === undefined
+              ? "The server has not reported its scan root yet."
+              : !root.exists
+                ? `The scan root ${root.path} does not exist.`
+                : `Searched ${root.path}, which exists but holds no run yet. A run is a directory holding _rlinf/runs/<id>/manifest.json, up to six levels below the root.`}
           </Note>
         ) : (
           <Note title="No runs match">

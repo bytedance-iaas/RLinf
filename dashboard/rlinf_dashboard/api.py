@@ -208,18 +208,21 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - one function per rou
     def health(services: ServicesDep) -> dict:
         """Report the server's own health, not any run's.
 
-        Includes which scan roots exist: a dashboard showing zero runs is almost
-        always a mistyped path, and this turns that into a one-look diagnosis.
+        Includes whether the scan root exists and how many runs are under it: a
+        dashboard showing zero runs is almost always a mistyped path or a root
+        one level off, and those two facts separate the two cases at a glance.
         """
-        roots = [
-            {"path": root, "exists": os.path.isdir(os.path.expanduser(root))}
-            for root in services.settings.scan_roots
-        ]
+        root = services.settings.scan_root
+        run_count = len(services.discovery.list_runs())
         return {
             "status": "ok",
             "version": __version__,
-            "scan_roots": roots,
-            "run_count": len(services.discovery.list_runs()),
+            "scan_root": {
+                "path": root,
+                "exists": os.path.isdir(os.path.expanduser(root)),
+                "run_count": run_count,
+            },
+            "run_count": run_count,
         }
 
     @app.get("/api/runs", summary="List discovered runs")

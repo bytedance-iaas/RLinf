@@ -100,12 +100,11 @@ class RunDiscovery:
             return self._cache
 
         runs: dict[str, DiscoveredRun] = {}
-        for root in self._settings.scan_roots:
-            for run in self._scan_root(os.path.expanduser(root)):
-                # The same run can be reachable through two overlapping scan
-                # roots (e.g. `/data/logs` and `/data`). Key on the resolved path
-                # so it is listed once.
-                runs[os.path.realpath(run.run_root)] = run
+        for run in self._scan_root(os.path.expanduser(self._settings.scan_root)):
+            # Keyed on the resolved path so a run reachable twice within the root
+            # -- through a symlink, or a tree copied beside itself -- is listed
+            # once rather than duplicated.
+            runs[os.path.realpath(run.run_root)] = run
 
         ordered = sorted(runs.values(), key=_sort_key, reverse=True)
         self._cache = ordered

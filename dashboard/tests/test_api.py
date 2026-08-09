@@ -106,25 +106,39 @@ def client(tmp_path, run_tree, settings_for):
 # ---------------------------------------------------------------------------- health
 
 
-def test_health_reports_the_scan_roots(client):
+def test_health_reports_the_scan_root(client):
     """A dashboard showing zero runs is almost always a mistyped path.
 
-    Reporting each root and whether it exists turns that into a one-look
-    diagnosis instead of a support question.
+    Reporting the root, whether it exists and how many runs are under it turns
+    that into a one-look diagnosis instead of a support question.
     """
     body = client.get("/api/health").json()
     assert body["status"] == "ok"
     assert body["run_count"] == 1
-    assert len(body["scan_roots"]) == 1
-    assert body["scan_roots"][0]["exists"] is True
+    assert body["scan_root"]["exists"] is True
+    assert body["scan_root"]["run_count"] == 1
 
 
 def test_health_flags_a_nonexistent_scan_root(tmp_path, settings_for):
-    settings = settings_for(scan_roots=[str(tmp_path / "typo")])
+    settings = settings_for(scan_root=str(tmp_path / "typo"))
     with TestClient(create_app(settings)) as client:
         body = client.get("/api/health").json()
-        assert body["scan_roots"][0]["exists"] is False
+        assert body["scan_root"]["exists"] is False
         assert body["run_count"] == 0
+
+
+def test_health_separates_a_wrong_root_from_a_missing_one(tmp_path, settings_for):
+    """Both cases show an empty table; only the counts tell them apart.
+
+    A root pointed one level off the runs exists and holds nothing, which is a
+    different fix from a root that is not there at all.
+    """
+    (tmp_path / "empty-but-real").mkdir()
+    settings = settings_for(scan_root=str(tmp_path / "empty-but-real"))
+    with TestClient(create_app(settings)) as client:
+        body = client.get("/api/health").json()
+        assert body["scan_root"]["exists"] is True
+        assert body["scan_root"]["run_count"] == 0
 
 
 # ------------------------------------------------------------------------- run lists

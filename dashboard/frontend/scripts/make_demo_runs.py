@@ -1041,7 +1041,7 @@ def main() -> int:
 
     print(f"wrote demo runs under {args.root}")
     print("point the server at it with:")
-    print(f"  RLINF_DASHBOARD_SCAN_ROOTS={args.root} python -m rlinf_dashboard")
+    print(f"  RLINF_DASHBOARD_SCAN_ROOT={args.root} python -m rlinf_dashboard")
     return 0
 
 

@@ -42,17 +42,16 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    #: Directories to scan. Each is a ``runner.logger.log_path`` (or any ancestor
-    #: of several), searched for ``_rlinf/runs/*/manifest.json``.
+    #: The directory to scan: a ``runner.logger.log_path``, or any ancestor of
+    #: several, searched for ``_rlinf/runs/*/manifest.json``.
     #:
-    #: ``NoDecode`` because pydantic-settings JSON-decodes list-typed fields
-    #: *before* validators run, so without it
-    #: ``RLINF_DASHBOARD_SCAN_ROOTS=/logs`` raises a ``SettingsError`` at startup
-    #: instead of reaching ``_split_csv``. A path is the natural thing to put in
-    #: that variable, and requiring ``["/logs"]`` would be a trap.
-    scan_roots: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["./logs"]
-    )
+    #: One root, not a list. Several local directories was never the shape of the
+    #: real problem -- runs that belong together already share an ancestor, and
+    #: the ones that do not are usually on another machine, which a second local
+    #: path cannot reach anyway. Gathering runs across nodes is a separate design
+    #: with its own questions about identity and freshness; leaving a list here in
+    #: the meantime only invited half of it.
+    scan_root: str = "./logs"
 
     #: How deep below a scan root to look for the ``_rlinf`` marker. Bounded
     #: because a scan root on NFS can be arbitrarily large and an unbounded walk
@@ -104,8 +103,14 @@ class Settings(BaseSettings):
     max_series_points: int = 4000
 
     #: CORS origins for the Vite dev server. Empty in production, where the
-    #: frontend is served from this same origin. ``NoDecode`` for the same reason
-    #: as ``scan_roots``. The port must match ``server.port`` in
+    #: frontend is served from this same origin.
+    #:
+    #: ``NoDecode`` because pydantic-settings JSON-decodes list-typed fields
+    #: *before* validators run, so without it a plain
+    #: ``RLINF_DASHBOARD_CORS_ORIGINS=http://localhost:5273`` raises a
+    #: ``SettingsError`` at startup instead of reaching ``_split_csv``.
+    #:
+    #: The port must match ``server.port`` in
     #: ``frontend/vite.config.ts``; a mismatch shows up as an empty dashboard
     #: with CORS errors only in the browser console.
     cors_origins: Annotated[list[str], NoDecode] = Field(
@@ -118,7 +123,7 @@ class Settings(BaseSettings):
     #: to read run status would be a worse default.
     frontend_dist: str = ""
 
-    @field_validator("scan_roots", "cors_origins", mode="before")
+    @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_csv(cls, value):
         """Accept a comma-separated string, which is all an env var can carry.
@@ -139,17 +144,39 @@ class Settings(BaseSettings):
             return [item.strip() for item in text.split(",") if item.strip()]
         return value
 
-    @field_validator("scan_roots")
+    @field_validator("scan_root", mode="before")
     @classmethod
-    def _no_empty_scan_roots(cls, value: list[str]) -> list[str]:
+    def _reject_a_list(cls, value):
+        """Turn the old plural spelling into an error rather than a surprise.
+
+        ``RLINF_DASHBOARD_SCAN_ROOTS`` and a second positional path both used to
+        work. Silently ignoring either would leave a dashboard scanning one
+        directory while its operator believes it is scanning two, and the symptom
+        -- some runs missing -- looks like a discovery bug rather than a config
+        change.
+        """
+        if isinstance(value, (list, tuple)):
+            raise ValueError(
+                "scan_root takes a single directory. Point it at the common "
+                f"ancestor of {', '.join(str(item) for item in value)} instead."
+            )
+        if isinstance(value, str) and "," in value:
+            raise ValueError(
+                "scan_root takes a single directory, not a comma-separated list. "
+                "Point it at the common ancestor of those paths instead."
+            )
+        return value
+
+    @field_validator("scan_root")
+    @classmethod
+    def _no_empty_scan_root(cls, value: str) -> str:
         """Fall back to the default rather than scanning nothing.
 
-        ``export RLINF_DASHBOARD_SCAN_ROOTS=`` is easy to leave in a shell
-        profile, and an empty list makes the server report zero runs with nothing
-        in ``/api/health`` to explain why. Unlike ``cors_origins``, where empty is
-        a meaningful production setting, an empty scan list has no valid use.
+        ``export RLINF_DASHBOARD_SCAN_ROOT=`` is easy to leave in a shell
+        profile, and an empty value makes the server report zero runs with
+        nothing in ``/api/health`` to explain why.
         """
-        return value or ["./logs"]
+        return value.strip() or "./logs"
 
 
 _settings: Settings | None = None

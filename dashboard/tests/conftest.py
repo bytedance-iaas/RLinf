@@ -141,7 +141,7 @@ def settings_for(tmp_path):
 
     def make(**overrides):
         kwargs = {
-            "scan_roots": [str(tmp_path / "logs")],
+            "scan_root": str(tmp_path / "logs"),
             "discovery_cache_ttl_s": 0.0,
             "cors_origins": [],
             "_env_file": None,
