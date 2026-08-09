@@ -6,9 +6,17 @@
  * reconnects on its own. Hand-rolling a reconnect loop on top would double every
  * retry and fight the server's cadence, which is exactly what the `retry:` frame
  * exists to prevent.
+ *
+ * Every payload is stored together with the identity it was fetched for, and
+ * read back only when that identity still matches. Holding the two in one piece
+ * of state is what makes "the previous run's numbers under the new run's URL"
+ * unrepresentable rather than merely unlikely: there is no ordering of fetches,
+ * stream events or renders that can pair them up. A hook that cleared stale data
+ * in an effect would still render once with the mismatch before the effect ran.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { commit as commitKeyed, read as readKeyed, type Keyed } from "../lib/identity";
 import { api, streamUrls } from "./client";
 import type { RunStatus, RunSummary } from "./types";
 
@@ -25,11 +33,20 @@ interface Live<T> {
   refetch: () => void;
 }
 
+/** The part of a live view that belongs to one identity. */
+interface Snapshot<T> {
+  data: T | null;
+  liveState: LiveState;
+  error: string | null;
+  updatedAt: number | null;
+}
+
+function blank<T>(): Snapshot<T> {
+  return { data: null, liveState: "connecting", error: null, updatedAt: null };
+}
+
 function useSse<T>(url: string, initial: () => Promise<T>, enabled = true): Live<T> {
-  const [data, setData] = useState<T | null>(null);
-  const [liveState, setLiveState] = useState<LiveState>("connecting");
-  const [error, setError] = useState<string | null>(null);
-  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const [snapshot, setSnapshot] = useState<Keyed<Snapshot<T>> | null>(null);
   const [nonce, setNonce] = useState(0);
   // The initial fetch is a fresh closure every render; a ref keeps the effect
   // from re-subscribing the stream every time the caller re-renders.
@@ -42,37 +59,45 @@ function useSse<T>(url: string, initial: () => Promise<T>, enabled = true): Live
     if (!enabled) return;
     let cancelled = false;
 
+    // Writes are stamped with the URL this effect run owns. If what is stored
+    // belongs to an earlier URL it is discarded rather than patched, so a field
+    // from the previous identity cannot survive into the new one.
+    const commit = (patch: Partial<Snapshot<T>>) =>
+      setSnapshot((prev) => commitKeyed(prev, url, patch, blank<T>));
+
     // Fetch once up front rather than waiting a full push interval: the SSE loop
     // sleeps *after* its first payload, but a cold page should not be blank for
     // two seconds when the data is one GET away.
     initialRef.current()
       .then((value) => {
         if (cancelled) return;
-        setData(value);
-        setUpdatedAt(Date.now());
-        setError(null);
+        commit({ data: value, updatedAt: Date.now(), error: null });
       })
       .catch((exc: unknown) => {
         if (cancelled) return;
-        setError(exc instanceof Error ? exc.message : String(exc));
-        setLiveState("error");
+        commit({
+          error: exc instanceof Error ? exc.message : String(exc),
+          liveState: "error",
+        });
       });
 
     const source = new EventSource(url);
 
     source.addEventListener("open", () => {
-      if (!cancelled) setLiveState("live");
+      if (!cancelled) commit({ liveState: "live" });
     });
 
     source.addEventListener("update", (event) => {
       if (cancelled) return;
       try {
-        setData(JSON.parse((event as MessageEvent<string>).data) as T);
-        setUpdatedAt(Date.now());
-        setLiveState("live");
-        setError(null);
+        commit({
+          data: JSON.parse((event as MessageEvent<string>).data) as T,
+          updatedAt: Date.now(),
+          liveState: "live",
+          error: null,
+        });
       } catch (exc: unknown) {
-        setError(exc instanceof Error ? exc.message : String(exc));
+        commit({ error: exc instanceof Error ? exc.message : String(exc) });
       }
     });
 
@@ -85,14 +110,18 @@ function useSse<T>(url: string, initial: () => Promise<T>, enabled = true): Live
       const message = (event as MessageEvent<string>).data;
       if (message) {
         try {
-          setError((JSON.parse(message) as { detail?: string }).detail ?? message);
+          commit({
+            error: (JSON.parse(message) as { detail?: string }).detail ?? message,
+          });
         } catch {
-          setError(message);
+          commit({ error: message });
         }
         return;
       }
       // No payload means the transport dropped. EventSource is already retrying.
-      setLiveState(source.readyState === EventSource.CLOSED ? "error" : "reconnecting");
+      commit({
+        liveState: source.readyState === EventSource.CLOSED ? "error" : "reconnecting",
+      });
     });
 
     return () => {
@@ -101,7 +130,20 @@ function useSse<T>(url: string, initial: () => Promise<T>, enabled = true): Live
     };
   }, [url, enabled, nonce]);
 
-  return { data, liveState, error, updatedAt, refetch };
+  // The read side is the other half of the guarantee. A snapshot left over from
+  // a previous URL is never unwrapped, so the very first render after a route
+  // change already shows an empty view rather than the old run.
+  const view = readKeyed(snapshot, url) ?? blank<T>();
+  return useMemo(
+    () => ({
+      data: view.data,
+      liveState: view.liveState,
+      error: view.error,
+      updatedAt: view.updatedAt,
+      refetch,
+    }),
+    [view.data, view.liveState, view.error, view.updatedAt, refetch],
+  );
 }
 
 /** All runs, for the run list. */
@@ -128,31 +170,49 @@ export function useFetch<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
   deps: readonly unknown[],
 ): { data: T | null; loading: boolean; error: string | null; reload: () => void } {
-  const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // The deps are the identity of the request, exactly as for the SSE hook: a
+  // series fetched for `env/episode_len` must not be readable once the caller
+  // has moved to `env/return`, or the chart renders the old numbers under the
+  // new label for as long as the new request takes.
+  const key = JSON.stringify(deps);
+  const [entry, setEntry] = useState<Keyed<{ data: T | null; error: string | null }> | null>(
+    null,
+  );
+  const [loadingKey, setLoadingKey] = useState<string | null>(key);
   const [nonce, setNonce] = useState(0);
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true);
+    setLoadingKey(key);
     fetcherRef.current(controller.signal)
       .then((value) => {
-        setData(value);
-        setError(null);
+        if (controller.signal.aborted) return;
+        setEntry({ key, value: { data: value, error: null } });
       })
       .catch((exc: unknown) => {
         if (controller.signal.aborted) return;
-        setError(exc instanceof Error ? exc.message : String(exc));
+        setEntry({
+          key,
+          value: { data: null, error: exc instanceof Error ? exc.message : String(exc) },
+        });
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) setLoadingKey(null);
       });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, nonce]);
+  }, [key, nonce]);
 
-  return { data, loading, error, reload: useCallback(() => setNonce((n) => n + 1), []) };
+  const fresh = readKeyed(entry, key);
+  return {
+    data: fresh?.data ?? null,
+    // A request for the current identity is outstanding, or the identity just
+    // changed and the effect has not run yet. Both are "not loaded", and the
+    // caller must not be told otherwise while it is holding a stale payload.
+    loading: loadingKey === key || fresh === null,
+    error: fresh?.error ?? null,
+    reload: useCallback(() => setNonce((n) => n + 1), []),
+  };
 }

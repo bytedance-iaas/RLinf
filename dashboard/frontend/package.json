@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "check:scales": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/check_scales.mjs",
+    "check:identity": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/check_identity.mjs",
     "tokens": "python scripts/gen_tokens.py",
     "tokens:check": "python scripts/gen_tokens.py --check"
   },
