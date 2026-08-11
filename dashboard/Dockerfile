@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22-bookworm-slim AS frontend-build
+ARG NODE_BASE_IMAGE=node:22-bookworm-slim
+ARG PYTHON_BASE_IMAGE=python:3.11-slim-bookworm
+
+FROM ${NODE_BASE_IMAGE} AS frontend-build
 WORKDIR /src
 COPY frontend/package.json frontend/package-lock.json ./frontend/
 RUN --mount=type=cache,target=/root/.npm \
@@ -8,7 +11,7 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY frontend ./frontend
 RUN npm --prefix frontend run build
 
-FROM python:3.11-slim-bookworm AS wheel-build
+FROM ${PYTHON_BASE_IMAGE} AS wheel-build
 WORKDIR /src
 COPY . .
 COPY --from=frontend-build /src/frontend/dist ./frontend/dist
@@ -16,7 +19,7 @@ RUN python scripts/bundle_frontend.py
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip wheel --wheel-dir /wheels .
 
-FROM python:3.11-slim-bookworm AS runtime
+FROM ${PYTHON_BASE_IMAGE} AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
