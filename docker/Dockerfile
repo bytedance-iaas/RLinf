@@ -1,5 +1,12 @@
+# syntax=docker/dockerfile:1.7
+
 ARG BUILD_TARGET=embodied
 ARG TARGETARCH
+# Registry prefix for Docker Hub images, including the dashboard builders.
+# Keep the trailing slash, for example m.daocloud.io/docker.io/.
+ARG REGISTRY_MIRROR=
+ARG NODE_BASE_IMAGE=${REGISTRY_MIRROR}node:22-bookworm-slim
+ARG PYTHON_BASE_IMAGE=${REGISTRY_MIRROR}python:3.11-slim-bookworm
 # Hardware platform for the install: nvidia (default), amd (ROCm), ascend (CANN),
 # or musa (Moore Threads).
 ARG PLATFORM=nvidia
@@ -11,9 +18,6 @@ ARG ROCM_ARCHS=gfx90a;gfx942
 ARG CANN_VER=9.0.0-910b
 ARG MUSA_VER=v2.1.5-musa4.3.7
 ARG UBUNTU_VER=22.04
-# Registry prefix for the Docker Hub base images, with a trailing slash.
-# Empty pulls from Docker Hub; set e.g. REGISTRY_MIRROR=m.daocloud.io/docker.io/ when it is unreachable.
-ARG REGISTRY_MIRROR=
 ARG NVIDIA_BASE_IMAGE=${REGISTRY_MIRROR}nvidia/cuda:${CUDA_VER}-cudnn-devel-ubuntu${UBUNTU_VER}
 ARG AMD_BASE_IMAGE=${REGISTRY_MIRROR}rocm/dev-ubuntu-${UBUNTU_VER}:${ROCM_VER}-complete
 # Ascend lives on Huawei SWR, not Docker Hub.
@@ -21,6 +25,43 @@ ARG ASCEND_BASE_IMAGE=swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:${CANN_VER
 # MUSA lives on the Moore Threads registry, not Docker Hub.
 ARG MUSA_BASE_IMAGE=registry.mthreads.com/mcctest/ai/training-suite:${MUSA_VER}
 ARG FRANKA_BASE_IMAGE=${REGISTRY_MIRROR}ubuntu:20.04
+
+
+##################################################################################################
+# Dashboard build (frontend bundle and standalone Python wheel)
+##################################################################################################
+FROM ${NODE_BASE_IMAGE} AS dashboard-frontend-build
+WORKDIR /src
+
+# Keep dependency installation cacheable when only dashboard source changes.
+COPY dashboard/frontend/package.json dashboard/frontend/package-lock.json ./frontend/
+RUN --mount=type=cache,target=/root/.npm \
+    npm --prefix frontend ci
+
+# Copy only build inputs. The repository-root Docker context does not apply
+# dashboard/.dockerignore, so copying the whole directory could import a host's
+# node_modules or dist into this Linux build.
+COPY dashboard/frontend/index.html \
+     dashboard/frontend/tsconfig.json \
+     dashboard/frontend/vite.config.ts \
+     ./frontend/
+COPY dashboard/frontend/src ./frontend/src
+RUN npm --prefix frontend run build
+
+
+FROM ${PYTHON_BASE_IMAGE} AS dashboard-wheel-build
+WORKDIR /src
+
+COPY dashboard/pyproject.toml dashboard/README.md dashboard/LICENSE ./
+COPY dashboard/scripts/bundle_frontend.py ./scripts/bundle_frontend.py
+COPY dashboard/rlinf_dashboard ./rlinf_dashboard
+COPY --from=dashboard-frontend-build /src/frontend/dist ./frontend/dist
+
+# Bundle the UI into the package before resolving all runtime wheels. The final
+# training image can then install the dashboard without Node or network access.
+RUN python scripts/bundle_frontend.py
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip wheel --wheel-dir /wheels .
 
 
 ##################################################################################################
@@ -539,6 +580,29 @@ RUN echo "source ${UV_PATH}/genesis/bin/activate" >> ~/.bashrc
 # Final image selection
 ##################################################################################################
 FROM ${BUILD_TARGET}-image AS final-image
+
+
+##################################################################################################
+# Dashboard runtime
+##################################################################################################
+COPY --from=dashboard-wheel-build /wheels /tmp/rlinf-dashboard-wheels
+RUN if ! uv python find 3.11.14 >/dev/null 2>&1; then \
+        uv python install 3.11.14; \
+    fi && \
+    uv venv "${UV_PATH}/dashboard" --python 3.11.14 && \
+    uv pip install \
+        --python "${UV_PATH}/dashboard/bin/python" \
+        --no-index \
+        --find-links /tmp/rlinf-dashboard-wheels \
+        rlinf-dashboard && \
+    "${UV_PATH}/dashboard/bin/python" -c \
+        "from importlib.resources import files; assert files('rlinf_dashboard').joinpath('static', 'index.html').is_file()" && \
+    ln -sf "${UV_PATH}/dashboard/bin/rlinf-dashboard" /usr/local/bin/rlinf-dashboard && \
+    rm -rf /tmp/rlinf-dashboard-wheels
+
+# The dashboard is opt-in and does not replace the training image entrypoint.
+# Example: rlinf-dashboard /workspace/RLinf/logs --host 0.0.0.0 --port 8420
+EXPOSE 8420
 
 
 ##################################################################################################
