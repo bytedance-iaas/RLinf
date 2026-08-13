@@ -1,0 +1,145 @@
+#!/bin/bash
+# OVERNIGHT true-task pipeline (user pre-approved incl. GPU):
+#  S1 stratified planner demos (16 cells, 4 parallel CPU workers)
+#  S2 convert -> so101-sim-demos-v3 + norm_stats
+#  S3 SFT from pp6b_1000 (GPU) with preflight
+#  S4 gate: overall zero-shot (777/888) + fresh verify (909) + 3 y-band evals
+# All stages timeout-guarded; status -> v3.status
+set -uo pipefail
+SCRATCH=/tmp/claude-0/-data08-henryg-pai-RLinf/3e748c24-1f70-49ee-a01c-395d2f1161dd/scratchpad
+STATUS=$SCRATCH/v3.status
+cd /data08/henryg/pai/RLinf
+log(){ echo "[$(date '+%F %T')] $*" >> "$STATUS"; }
+
+export REPO_PATH="$PWD" PYTHONPATH="$PWD" HYDRA_FULL_ERROR=1
+export VK_ICD_FILENAMES=$PWD/.venv/nvidia_gl/nvidia_icd.json
+export LD_LIBRARY_PATH=$PWD/.venv/nvidia_gl
+export XDG_RUNTIME_DIR=/tmp/xdg-runtime; mkdir -p "$XDG_RUNTIME_DIR"
+export MUJOCO_GL=egl TOKENIZERS_PARALLELISM=false
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export HF_LEROBOT_HOME=/data08/henryg/pai/data
+export RAY_local_fs_capacity_threshold=0.99
+export RLINF_MASTER_ADDR_OVERRIDE=127.0.0.1 GLOO_SOCKET_IFNAME=lo NCCL_SOCKET_IFNAME=lo
+
+FREE_GB=$(df --output=avail -BG /data08 | tail -1 | tr -dc '0-9')
+[ "$FREE_GB" -lt 200 ] && { log "ABORT: disk <200G"; exit 3; }
+log "overnight v3 started (pid $$)"
+
+# ---- S1: stratified collection, 16 cells, 4 workers x 4 cells ----
+worker(){ # $1 worker-id, cells passed as remaining args "x0,x1,y0,y1;seed"
+  local W=$1; shift
+  for SPEC in "$@"; do
+    local FRAC=${SPEC%%;*}; local SEED=${SPEC##*;}
+    local TAG=$(echo "$FRAC" | tr ',.' '_-')
+    rm -rf /data08/henryg/pai/data/v3_demos_cell_$TAG
+    SO101_SPAWN_FRAC=$FRAC timeout 4500 .venv/bin/python "$SCRATCH/gen_so101_demos.py" \
+      --num 22 --seed0 $SEED --out /data08/henryg/pai/data/v3_demos_cell_$TAG \
+      > "$SCRATCH/v3_gen_${TAG}.out" 2>&1
+    local N=$(grep -oE 'TOTAL success [0-9]+' "$SCRATCH/v3_gen_${TAG}.out" | grep -oE '[0-9]+$' || echo 0)
+    log "cell $FRAC: $N/22 (worker $W)"
+  done
+}
+CELLS=()
+SEED=60000
+for XI in 0 1 2 3; do
+  for YI in 0 1 2 3; do
+    X0=$(awk -v i=$XI 'BEGIN{printf "%.2f", i*0.25}'); X1=$(awk -v i=$XI 'BEGIN{printf "%.2f", (i+1)*0.25}')
+    Y0=$(awk -v i=$YI 'BEGIN{printf "%.2f", i*0.25}'); Y1=$(awk -v i=$YI 'BEGIN{printf "%.2f", (i+1)*0.25}')
+    CELLS+=("$X0,$X1,$Y0,$Y1;$SEED"); SEED=$((SEED+100))
+  done
+done
+worker 1 "${CELLS[@]:0:4}"  & P1=$!
+worker 2 "${CELLS[@]:4:4}"  & P2=$!
+worker 3 "${CELLS[@]:8:4}"  & P3=$!
+worker 4 "${CELLS[@]:12:4}" & P4=$!
+wait $P1 $P2 $P3 $P4
+TOTAL=$(grep -hoE 'TOTAL success [0-9]+' "$SCRATCH"/v3_gen_*.out | grep -oE '[0-9]+' | awk '{s+=$1} END{print s}')
+log "S1 DONE: total successes $TOTAL/352"
+[ "${TOTAL:-0}" -ge 150 ] || { log "S1 GATE FAIL: <150 demos"; exit 1; }
+
+# ---- S2: convert + norm stats ----
+timeout 5400 .venv/bin/python "$SCRATCH/convert_v3_demos.py" > "$SCRATCH/convert_v3.out" 2>&1
+grep -q 'DONE:' "$SCRATCH/convert_v3.out" || { log "S2 GATE FAIL: conversion"; tail -3 "$SCRATCH/convert_v3.out" >> "$STATUS"; exit 1; }
+log "S2 convert: $(grep -E '^DONE|^length' "$SCRATCH/convert_v3.out" | tr '\n' ' ')"
+timeout 3600 .venv/bin/python -m toolkits.lerobot.calculate_norm_stats \
+  --config-name pi05_so101_v3 --repo-id so101-sim-demos-v3 > "$SCRATCH/norm_v3.out" 2>&1
+[ -f assets/pi05_so101_v3/so101-sim-demos-v3/norm_stats.json ] || { log "S2 GATE FAIL: norm stats"; exit 1; }
+log "S2 norm stats OK"
+
+# ---- S3: SFT (GPU; preflight first) ----
+export EMBODIED_PATH=$PWD/examples/sft
+.venv/bin/python -m toolkits.preflight_config \
+  --config-path /data08/henryg/pai/RLinf/examples/sft/config/ \
+  --config-name so101_sft_v3 \
+  runner.logger.log_path=/data08/henryg/pai/results/so101_sft_v3 > "$SCRATCH/preflight_sft_v3.out" 2>&1
+grep -q 'PREFLIGHT OK' "$SCRATCH/preflight_sft_v3.out" || { log "S3 PREFLIGHT FAIL"; tail -5 "$SCRATCH/preflight_sft_v3.out" >> "$STATUS"; exit 1; }
+.venv/bin/ray stop --force >/dev/null 2>&1 || true
+for p in $(pgrep -f 'ray::|raylet|gcs_server'); do
+  [ "$p" = "$$" ] && continue
+  exe=$(readlink /proc/$p/exe 2>/dev/null)
+  case "$exe" in */python*|*raylet*|*gcs_server*) st=$(awk '{print $3}' /proc/$p/stat 2>/dev/null); [ "$st" != "Z" ] && kill -9 "$p" 2>/dev/null;; esac
+done
+rm -rf /tmp/ray/session_* 2>/dev/null
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+log "S3 SFT launching"
+timeout 14400 .venv/bin/python examples/sft/train_vla_sft.py \
+  --config-path /data08/henryg/pai/RLinf/examples/sft/config/ \
+  --config-name so101_sft_v3 \
+  runner.logger.log_path=/data08/henryg/pai/results/so101_sft_v3 \
+  > "$SCRATCH/sft_v3.out" 2>&1
+log "S3 SFT exit=$?"
+CKS=$(ls -d /data08/henryg/pai/results/so101_sft_v3/*/checkpoints/global_step_* 2>/dev/null | sort -V)
+[ -n "$CKS" ] || { log "S3 GATE FAIL: no ckpts"; exit 1; }
+for CK in $CKS; do
+  mkdir -p "$CK/so101-sim-demos-v3"
+  cp assets/pi05_so101_v3/so101-sim-demos-v3/norm_stats.json "$CK/so101-sim-demos-v3/" 2>/dev/null || true
+done
+
+# ---- S4: gate ----
+export EMBODIED_PATH=$PWD/examples/embodiment
+clean(){
+  .venv/bin/ray stop --force >/dev/null 2>&1 || true
+  for p in $(pgrep -f 'ray::|raylet|gcs_server|eval_embodied_agent'); do
+    [ "$p" = "$$" ] && continue
+    exe=$(readlink /proc/$p/exe 2>/dev/null)
+    case "$exe" in */python*|*raylet*|*gcs_server*) st=$(awk '{print $3}' /proc/$p/stat 2>/dev/null); [ "$st" != "Z" ] && kill -9 "$p" 2>/dev/null;; esac
+  done
+  rm -rf /tmp/ray/session_* 2>/dev/null
+}
+run_eval(){ # ckpt seed tag [spawnfrac]
+  local SF="${4:-}"
+  local TRY
+  for TRY in 1 2; do
+    clean
+    SO101_SPAWN_FRAC="$SF" timeout 900 .venv/bin/python evaluations/eval_embodied_agent.py \
+      --config-path /data08/henryg/pai/RLinf/examples/embodiment/config/ \
+      --config-name so101_eval_openpi_pi05 \
+      runner.logger.log_path=/data08/henryg/pai/results/so101_eval_v3 \
+      rollout.model.model_path="$1" \
+      rollout.model.openpi.config_name=pi05_so101_v3 \
+      rollout.model.openpi_data.norm_stats_path=/data08/henryg/pai/RLinf/assets/pi05_so101_v3/so101-sim-demos-v3/norm_stats.json \
+      env.eval.total_num_envs=128 \
+      env.eval.seed=$2 \
+      > "$SCRATCH/eval_v3_$3_t$TRY.out" 2>&1
+    local EV=$(grep -oE 'success_once=[0-9.]+' "$SCRATCH/eval_v3_$3_t$TRY.out" | tail -1 | cut -d= -f2)
+    [ -n "$EV" ] && { echo "$EV"; return 0; }
+    log "eval $3 try$TRY empty, retry"
+  done
+  return 0
+}
+BESTCK=""; BESTAVG=0
+for CK in $(ls -d /data08/henryg/pai/results/so101_sft_v3/*/checkpoints/global_step_{2000,3000,4000} 2>/dev/null); do
+  E1=$(run_eval "$CK" 777 $(basename $CK)_s777); log "gate $(basename $CK) s777: ${E1:-FAIL}"
+  E2=$(run_eval "$CK" 888 $(basename $CK)_s888); log "gate $(basename $CK) s888: ${E2:-FAIL}"
+  [ -n "${E1:-}" ] && [ -n "${E2:-}" ] || continue
+  AVG=$(awk -v a="$E1" -v b="$E2" 'BEGIN{printf "%.4f",(a+b)/2}')
+  log "gate avg $(basename $CK): $AVG"
+  if awk -v a="$AVG" -v b="$BESTAVG" 'BEGIN{exit !(a>b)}'; then BESTAVG=$AVG; BESTCK=$CK; fi
+done
+[ -n "$BESTCK" ] || { log "S4 GATE FAIL: no candidate"; exit 1; }
+echo "$BESTCK" > "$SCRATCH/v3_best.ck"
+V=$(run_eval "$BESTCK" 909 verify_s909); log "VERIFY s909: ${V:-FAIL}"
+B0=$(run_eval "$BESTCK" 606 band_right "0,1,0,0.33");  log "y-band right (near black end): ${B0:-FAIL}"
+B1=$(run_eval "$BESTCK" 606 band_mid   "0,1,0.33,0.66"); log "y-band middle: ${B1:-FAIL}"
+B2=$(run_eval "$BESTCK" 606 band_left  "0,1,0.66,1");  log "y-band left: ${B2:-FAIL}"
+log "V3 PIPELINE DONE: best=$BESTCK gate=$BESTAVG verify=${V:-?} bands=[${B0:-?} ${B1:-?} ${B2:-?}]"

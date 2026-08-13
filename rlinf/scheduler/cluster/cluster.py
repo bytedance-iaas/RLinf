@@ -144,9 +144,21 @@ class Cluster:
         """Find a free port on the node."""
         import socket
 
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("", 0))
-            return s.getsockname()[1]
+        # Probe on an IPv6 dual-stack socket when available: collective comms
+        # may run over IPv6 (e.g. clusters whose node IPs are IPv6), and a port
+        # that is free on IPv4 can already be taken by an IPv6 listener. A port
+        # published from an IPv4-only probe then makes c10d TCPStore clients
+        # dial the wrong listener and hang/fail flakily. Dual-stack bind
+        # reserves the port on both families during the probe.
+        try:
+            with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
+                s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+                s.bind(("", 0))
+                return s.getsockname()[1]
+        except OSError:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("", 0))
+                return s.getsockname()[1]
 
     @classmethod
     def has_initialized(cls):

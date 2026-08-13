@@ -1,0 +1,81 @@
+# Reproduction check: does THIS machine + THIS code reproduce the published
+# pi0.5 SFT number on the paper's own benchmark?
+#   Target: 40.1% on ManiSkill3 PutOnPlateInScene25Main-v3 (πRL, arXiv 2510.25889)
+#   Checkpoint: RLinf/RLinf-Pi05-ManiSkill-25Main-SFT (downloaded 2026-08-13)
+# Every field below is taken from the official training config's eval block
+# (examples/embodiment/config/maniskill_ppo_openpi_pi05.yaml) so the protocol
+# matches the paper's: 320 envs, 80-step budget, fixed reset ids, 5 chunks.
+defaults:
+  - env/maniskill_put_on_plate_in_scene_25_main@env.eval
+  - model/pi0_5@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "maniskill_pi05_official_eval"
+    logger_backends: ["tensorboard"]
+  max_epochs: 1
+  max_steps: -1
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 320          # official
+    auto_reset: True
+    ignore_terminations: True
+    max_episode_steps: 80        # official
+    max_steps_per_rollout_epoch: 80
+    use_fixed_reset_state_ids: True
+    group_size: 1
+    is_eval: True
+    video_cfg:
+      save_video: False
+      video_base_dir: ${runner.logger.log_path}/video/eval
+    init_params:
+      use_multiple_plates: False # official
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  unnorm_key: libero_10        # verbatim from the official config; inert for openpi (only openvla_oft reads it)
+  enable_offload: False
+  pipeline_stage_num: 1
+  model:
+    model_path: "/data08/henryg/pai/models/RLinf-Pi05-ManiSkill-25Main-SFT"
+    model_type: "openpi"
+    add_value_head: False
+    num_action_chunks: 5         # official
+    action_dim: 7
+    num_steps: 4
+    openpi:
+      config_name: "pi05_maniskill"
+      num_images_in_input: 1
+      action_horizon: 10
+      noise_method: "flow_noise"
+    openpi_data:
+      # THEIR stats, shipped inside their checkpoint. Never our v4 stats --
+      # swapping norm_stats across lineages cost this project 10 points once.
+      norm_stats_path: "/data08/henryg/pai/models/RLinf-Pi05-ManiSkill-25Main-SFT/physical-intelligence/maniskill/norm_stats.json"
+    policy_setup: widowx_bridge

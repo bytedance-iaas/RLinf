@@ -1345,6 +1345,16 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         elif self.config.value_vlm_mode == "first_token":
             prefix_mask = [True] * 1 + [False] * (all_token_length - 1)
         prefix_out_value = prefix_output[:, prefix_mask, :]
+        # Honor detach_critic_input on the VLM value path too (it previously
+        # only covered the suffix path): without the detach, the critic loss
+        # backpropagates into the shared VLM backbone, and with high-variance
+        # returns (successful grasps mixed with failures) its gradients dwarf
+        # the actor's and corrupt the visual representation the policy depends
+        # on (value_loss 34-45 / grad_norm 65-990 vs 1.05 / 23 in healthy runs;
+        # precise behaviors die within ~10 epochs while the backbone-frozen
+        # warmup run kept them intact for 66).
+        if self.config.detach_critic_input:
+            prefix_out_value = prefix_out_value.detach()
         prefix_out_value = prefix_out_value.mean(dim=1, keepdim=False)
         prefix_out_value = prefix_out_value.to(dtype=torch.float32)
         values_vlm = self.value_head(prefix_out_value)[:, 0]

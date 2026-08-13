@@ -1171,7 +1171,18 @@ class CollectiveGroup:
                     worker_info = self._collective._get_worker_info_safe(address)
                     workers.append(worker_info)
 
-                master_addr = workers[0].node_ip
+                # Class-level fix for IPv6-primary hosts: on single-node
+                # clusters every collective peer is local, and PyTorch's
+                # distributed stack has several independent address-handling
+                # paths (TCPStore URL parsing, port probing, gloo interface
+                # resolution) that each mishandle IPv6 in their own way.
+                # Pinning the rendezvous to IPv4 loopback sidesteps the whole
+                # class. Opt-in via RLINF_MASTER_ADDR_OVERRIDE=127.0.0.1.
+                import os as _os
+
+                master_addr = _os.environ.get(
+                    "RLINF_MASTER_ADDR_OVERRIDE", workers[0].node_ip
+                )
 
                 group_info = CollectiveGroupInfo(
                     group_name=self._group_name,
@@ -1243,8 +1254,13 @@ class CollectiveGroup:
                 f"Initializing process group for collective group {self._group_info.group_name}, master address {self._group_info.master_addr}, master port {master_port}, world size {self._group_info.world_size}, rank {self._rank}"
             )
 
+            # Bracket IPv6 addresses so the tcp:// rendezvous URL parses correctly
+            # (an unbracketed IPv6 host makes urllib misparse the port).
+            _master_addr = self._group_info.master_addr
+            if ":" in _master_addr and not _master_addr.startswith("["):
+                _master_addr = f"[{_master_addr}]"
             self._mc_group.init(
-                init_method=f"tcp://{self._group_info.master_addr}:{master_port}",
+                init_method=f"tcp://{_master_addr}:{master_port}",
                 world_size=self._group_info.world_size,
                 rank=self._rank,
                 group_name=self._group_info.group_name,

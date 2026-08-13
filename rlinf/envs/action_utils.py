@@ -26,7 +26,17 @@ def prepare_actions_for_maniskill(
     action_scale,
     policy,
 ) -> torch.Tensor:
+    if "so100" in policy or "so101" in policy:
+        # The SO101 LeRobot dataset stores joint targets in LeRobot NORMALIZED
+        # units (arm: [-100,100], gripper: [0,100]), NOT radians. ManiSkill's
+        # pd_joint_pos wants radians. Map via the follower calibration; without
+        # this the arm slams to its joint limits / moves the wrong way.
+        from rlinf.envs.maniskill.so101_calib import norm_to_rad
+
+        return norm_to_rad(raw_chunk_actions)
     if "panda" in policy:
+        # Panda EE-pose policies already emit env-ready actions [num_envs,
+        # num_action_chunks, action_dim] for the pd_ee_* controller. Pass through.
         return raw_chunk_actions
     # TODO only suitable for action_dim = 7
     reshaped_actions = raw_chunk_actions.reshape(-1, action_dim)

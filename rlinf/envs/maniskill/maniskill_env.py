@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from typing import Optional, OrderedDict, Union
 
 import gymnasium as gym
@@ -77,6 +78,21 @@ class ManiskillEnv(gym.Env):
         )  # [B, ]
         self.record_metrics = record_metrics
         self._is_start = True
+        # Optional on-policy trajectory collector, enabled via env var
+        # SO101_COLLECT_DIR: successful episodes are flushed there as .npz
+        # (obs images/states as seen by the policy, actions in env units).
+        self._collect_dir = os.environ.get("SO101_COLLECT_DIR")
+        if self._collect_dir:
+            os.makedirs(self._collect_dir, exist_ok=True)
+            self._rec_bufs = [[] for _ in range(num_envs)]
+            self._rec_flushed = [False] * num_envs
+            self._rec_last_obs = None
+            self._rec_count = 0
+        # Optional spawn-vs-outcome diagnostic: CSV rows "spawn_x,spawn_y,success"
+        # appended per finished episode. Enable via env var SO101_SPAWN_LOG=<file>.
+        self._spawn_log = os.environ.get("SO101_SPAWN_LOG")
+        if self._spawn_log:
+            self._spawn_xy = np.zeros((num_envs, 2), dtype=np.float64)
         self._init_reset_state_ids()
         self.info_logging_keys = ["is_src_obj_grasped", "consecutive_grasp", "success"]
         self._show_goal_site_visual()
@@ -177,14 +193,36 @@ class ManiskillEnv(gym.Env):
                 }
 
         # Default
-        obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(
+        sensor_data = raw_obs["sensor_data"]
+        obs_image = sensor_data["3rd_view_camera"]["rgb"].to(
             torch.uint8
         )  # [B, H, W, C]
+        # Optional wrist camera: envs that mount a "wrist_camera" sensor (e.g. the
+        # SO101 arm) expose a second view. Envs without one fall back to None, which
+        # EmbodiedOutput.prepare_observations backfills anyway -- so this preserves
+        # prior single-camera behavior for existing envs.
+        wrist_image = (
+            sensor_data["wrist_camera"]["rgb"].to(torch.uint8)
+            if "wrist_camera" in sensor_data
+            else None
+        )
         proprioception: torch.Tensor = self.env.unwrapped.agent.robot.get_qpos().to(
             obs_image.device, dtype=torch.float32
         )
+        # ManiSkill reports joint positions in radians. The SO101 LeRobot dataset
+        # records them in LeRobot NORMALIZED units, so convert the proprioceptive
+        # state to match the policy's normalization stats. Enable via env cfg
+        # ``so101_state_norm: True``.
+        if getattr(self.cfg, "so101_state_norm", False):
+            from rlinf.envs.maniskill.so101_calib import rad_to_norm
+
+            proprioception = torch.from_numpy(
+                rad_to_norm(proprioception.cpu().numpy())
+            ).to(proprioception.device)
         return {
             "main_images": obs_image,
+            "wrist_images": wrist_image,
+            "extra_view_images": None,
             "states": proprioception,
             "task_descriptions": self.instruction,
         }
@@ -268,6 +306,67 @@ class ManiskillEnv(gym.Env):
         infos["episode"] = episode_info
         return infos
 
+    def _rec_reset(self, extracted_obs, env_idx=None):
+        """Clear collector buffers on (partial) reset and cache the new obs."""
+        if env_idx is None:
+            for i in range(self.num_envs):
+                self._rec_bufs[i] = []
+                self._rec_flushed[i] = False
+        else:
+            for i in common.to_numpy(env_idx).tolist():
+                self._rec_bufs[i] = []
+                self._rec_flushed[i] = False
+        if self._rec_last_obs is None or env_idx is None:
+            self._rec_last_obs = torch_clone_dict(extracted_obs)
+        else:
+            for k in ("main_images", "wrist_images", "states"):
+                if extracted_obs.get(k) is not None:
+                    self._rec_last_obs[k][env_idx] = extracted_obs[k][env_idx]
+
+    def _rec_record_step(self, actions, infos):
+        """Append (obs_t, action_t) per env; flush an episode on first success."""
+        obs = self._rec_last_obs
+        act = common.to_numpy(actions)
+        main = common.to_numpy(obs["main_images"])
+        wrist = (
+            common.to_numpy(obs["wrist_images"])
+            if obs.get("wrist_images") is not None
+            else None
+        )
+        states = common.to_numpy(obs["states"])
+        success = (
+            common.to_numpy(infos["success"]) if "success" in infos else None
+        )
+        for i in range(self.num_envs):
+            if self._rec_flushed[i]:
+                continue
+            self._rec_bufs[i].append(
+                (
+                    main[i].copy(),
+                    wrist[i].copy() if wrist is not None else None,
+                    states[i].copy(),
+                    act[i].copy(),
+                )
+            )
+            if success is not None and bool(success[i]) and len(self._rec_bufs[i]) > 5:
+                buf = self._rec_bufs[i]
+                path = os.path.join(
+                    self._collect_dir,
+                    f"ep_s{self.seed}_e{i}_{self._rec_count:05d}.npz",
+                )
+                np.savez_compressed(
+                    path,
+                    main=np.stack([b[0] for b in buf]),
+                    wrist=np.stack([b[1] for b in buf])
+                    if buf[0][1] is not None
+                    else np.zeros(0),
+                    state=np.stack([b[2] for b in buf]),
+                    action=np.stack([b[3] for b in buf]),
+                )
+                self._rec_count += 1
+                self._rec_bufs[i] = []
+                self._rec_flushed[i] = True
+
     def reset(
         self,
         *,
@@ -289,6 +388,16 @@ class ManiskillEnv(gym.Env):
             self._reset_metrics(env_idx)
         else:
             self._reset_metrics()
+        if self._collect_dir:
+            self._rec_reset(extracted_obs, options.get("env_idx"))
+        if self._spawn_log and hasattr(self.env.unwrapped, "red_cube"):
+            xy = common.to_numpy(self.env.unwrapped.red_cube.pose.p[:, :2])
+            idx = options.get("env_idx")
+            if idx is None:
+                self._spawn_xy[:] = xy
+            else:
+                for i in common.to_numpy(idx).tolist():
+                    self._spawn_xy[i] = xy[i]
         return extracted_obs, infos
 
     def step(
@@ -296,6 +405,15 @@ class ManiskillEnv(gym.Env):
     ) -> tuple[Array, Array, Array, Array, dict]:
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
         extracted_obs = self._wrap_obs(raw_obs, infos=infos)
+        if self._collect_dir:
+            self._rec_record_step(actions, infos)
+            self._rec_last_obs = torch_clone_dict(
+                {
+                    k: extracted_obs[k]
+                    for k in ("main_images", "wrist_images", "states")
+                    if extracted_obs.get(k) is not None
+                }
+            )
         step_reward = self._calc_step_reward(_reward, infos)
 
         infos = self._record_metrics(step_reward, infos)
@@ -313,6 +431,15 @@ class ManiskillEnv(gym.Env):
                     infos["episode"]["fail_at_end"] = infos["fail"].clone()
 
         dones = torch.logical_or(terminations, truncations)
+
+        if self._spawn_log and dones.any() and self.record_metrics:
+            done_idx = torch.nonzero(dones, as_tuple=False).flatten()
+            succ = common.to_numpy(self.success_once)
+            with open(self._spawn_log, "a") as f:
+                for i in common.to_numpy(done_idx).tolist():
+                    f.write(
+                        f"{self._spawn_xy[i][0]:.4f},{self._spawn_xy[i][1]:.4f},{int(succ[i])}\n"
+                    )
 
         _auto_reset = auto_reset and self.auto_reset
         if dones.any() and _auto_reset:

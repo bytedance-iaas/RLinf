@@ -1,0 +1,84 @@
+defaults:
+  - model/pi0_5@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0-7   # SFT on all 8 H200 GPUs
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "so101_sft_openpi_pi05"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: -1
+  max_steps: 3000
+  val_check_interval: -1
+  save_interval: 1000
+
+data:
+  # LeRobot repo id (resolved from HF_LEROBOT_HOME cache or downloaded).
+  train_data_paths: "so101-sim-demos-pp"
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 16
+  global_batch_size: 128    # must be world_size (8) multiple of micro_batch_size
+  seed: 0
+
+  # Override the default values in model/pi0_5
+  model:
+    precision: null
+    # Pretrained PI0.5 base to fine-tune FROM (local snapshot of lerobot/pi05_base;
+    # openpi.maybe_download only resolves local paths / gs:// / s3://, not bare HF
+    # repo ids). It's in the openpi `paligemma_with_expert.*` layout and loads
+    # cleanly into RLinf's model (verified: 812/812 checkpoint keys match).
+    model_path: "/data08/henryg/pai/results/so101_sft_pp/so101_sft_openpi_pi05/checkpoints/global_step_4000"
+    num_action_chunks: 10   # action horizon H (keep == RL openpi.action_horizon)
+    action_dim: 6           # SO101: 5 arm joints + gripper
+    add_value_head: False
+    openpi:
+      config_name: "pi05_so101_pp"
+      detach_critic_input: True
+      num_images_in_input: 2         # front + wrist
+      train_expert_only: False       # full fine-tune
+    # Precomputed action/state normalization stats (from calculate_norm_stats).
+    openpi_data:
+      norm_stats_path: "/data08/henryg/pai/RLinf/assets/pi05_so101_pp/so101-sim-demos-pp/norm_stats.json"
+
+  optim:
+    lr: 2.5e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1e-10
+    clip_grad: 1.0
+    total_training_steps: 20000
+    lr_warmup_steps: 200
+    lr_scheduler: "cosine"
+    num_cycles: 0.5
+    min_lr: 2.5e-6
+
+  # Override the default values in hybrid_engines/fsdp
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "full_shard"
+    use_orig_params: False
+    gradient_checkpointing: False # for openpi, gradient checkpointing is not supported
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
