@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 ARG BUILD_TARGET=embodied
 ARG TARGETARCH
 # Registry prefix for Docker Hub images, including the dashboard builders.
