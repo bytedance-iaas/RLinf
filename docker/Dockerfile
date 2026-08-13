@@ -62,6 +62,9 @@ COPY --from=dashboard-frontend-build /src/frontend/dist ./frontend/dist
 # training image can then install the dashboard without Node or network access.
 RUN python scripts/bundle_frontend.py
 RUN --mount=type=cache,target=/root/.cache/pip \
+    mkdir -p /wheels && \
+    python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' \
+        > /wheels/.python-version && \
     python -m pip wheel --wheel-dir /wheels .
 
 
@@ -587,21 +590,22 @@ FROM ${BUILD_TARGET}-image AS final-image
 # Dashboard runtime
 ##################################################################################################
 COPY --from=dashboard-wheel-build /wheels /tmp/rlinf-dashboard-wheels
-RUN if ! uv python find 3.11.14 >/dev/null 2>&1; then \
-        if [ "$NO_MIRROR" != "1" ]; then \
-            export UV_PYTHON_INSTALL_MIRROR="https://gh-proxy.org/https://github.com/astral-sh/python-build-standalone/releases/download"; \
-        fi; \
-        uv python install 3.11.14; \
-    fi && \
-    uv venv "${UV_PATH}/dashboard" --python 3.11.14 && \
+# Keep Python downloads on uv's default Astral CDN. Sending the standalone
+# archive back through the GitHub URL proxy is slower and prone to timeouts.
+RUN set -eux; \
+    dashboard_python_version=$(cat /tmp/rlinf-dashboard-wheels/.python-version); \
+    if ! uv python find "$dashboard_python_version" >/dev/null 2>&1; then \
+        UV_HTTP_TIMEOUT=300 uv python install "$dashboard_python_version"; \
+    fi; \
+    uv venv "${UV_PATH}/dashboard" --python "$dashboard_python_version"; \
     uv pip install \
         --python "${UV_PATH}/dashboard/bin/python" \
         --no-index \
         --find-links /tmp/rlinf-dashboard-wheels \
-        rlinf-dashboard && \
+        rlinf-dashboard; \
     "${UV_PATH}/dashboard/bin/python" -c \
-        "from importlib.resources import files; assert files('rlinf_dashboard').joinpath('static', 'index.html').is_file()" && \
-    ln -sf "${UV_PATH}/dashboard/bin/rlinf-dashboard" /usr/local/bin/rlinf-dashboard && \
+        "from importlib.resources import files; assert files('rlinf_dashboard').joinpath('static', 'index.html').is_file()"; \
+    ln -sf "${UV_PATH}/dashboard/bin/rlinf-dashboard" /usr/local/bin/rlinf-dashboard; \
     rm -rf /tmp/rlinf-dashboard-wheels
 
 # The dashboard is opt-in and does not replace the training image entrypoint.
