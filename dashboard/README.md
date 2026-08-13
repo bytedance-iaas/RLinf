@@ -48,10 +48,10 @@ python3 -m venv .venv
 
 The package intentionally has no dependency on RLinf or PyTorch.
 
-To build the standalone image:
+To build the standalone image from the repository root:
 
 ```bash
-docker build -t rlinf-dashboard .
+docker build -f dashboard/Dockerfile -t rlinf-dashboard .
 docker run --rm -p 8420:8420 -v /path/to/logs:/runs:ro rlinf-dashboard
 ```
 

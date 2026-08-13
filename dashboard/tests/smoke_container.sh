@@ -5,6 +5,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DASHBOARD="$(dirname "$HERE")"
+REPO_ROOT="$(dirname "$DASHBOARD")"
 IMAGE="${IMAGE:-rlinf-dashboard:smoke}"
 PORT="${PORT:-8435}"
 WORK="$(mktemp -d)"
@@ -46,7 +47,7 @@ cat > "$RUN_ROOT/run.json" <<JSON
 JSON
 chmod -R a+rX "$WORK"
 
-docker build --tag "$IMAGE" "$DASHBOARD"
+docker build --file "$DASHBOARD/Dockerfile" --tag "$IMAGE" "$REPO_ROOT"
 docker run --detach --rm \
   --name "$CONTAINER" \
   --read-only \

@@ -50,6 +50,9 @@ RUN npm --prefix frontend run build
 
 
 FROM ${PYTHON_BASE_IMAGE} AS dashboard-wheel-build
+ARG NO_MIRROR
+ENV PIP_INDEX_URL=${NO_MIRROR:+"https://pypi.org/simple/"}
+ENV PIP_INDEX_URL=${PIP_INDEX_URL:-"https://mirrors.ivolces.com/pypi/simple/"}
 WORKDIR /src
 
 COPY dashboard/pyproject.toml dashboard/README.md dashboard/LICENSE ./
@@ -587,6 +590,9 @@ FROM ${BUILD_TARGET}-image AS final-image
 ##################################################################################################
 COPY --from=dashboard-wheel-build /wheels /tmp/rlinf-dashboard-wheels
 RUN if ! uv python find 3.11.14 >/dev/null 2>&1; then \
+        if [ "$NO_MIRROR" != "1" ]; then \
+            export UV_PYTHON_INSTALL_MIRROR="https://gh-proxy.org/https://github.com/astral-sh/python-build-standalone/releases/download"; \
+        fi; \
         uv python install 3.11.14; \
     fi && \
     uv venv "${UV_PATH}/dashboard" --python 3.11.14 && \

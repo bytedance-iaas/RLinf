@@ -1,22 +1,59 @@
-# syntax=docker/dockerfile:1.7
+ARG NODE_BASE_IMAGE=node:22-bookworm-slim
+ARG PYTHON_BASE_IMAGE=python:3.11-slim-bookworm
+ARG NO_MIRROR
 
-FROM node:22-bookworm-slim AS frontend-build
+# Set NO_MIRROR=1 to keep the upstream Debian and PyPI sources.
+FROM ${NODE_BASE_IMAGE} AS node-base
+ARG NO_MIRROR
+ENV NO_MIRROR=${NO_MIRROR}
+RUN if [ "$NO_MIRROR" != "1" ]; then \
+        for source_file in \
+            /etc/apt/sources.list \
+            /etc/apt/sources.list.d/debian.sources; do \
+            if [ -f "$source_file" ]; then \
+                sed -i \
+                    -e 's@//deb.debian.org@//mirrors.ivolces.com@g' \
+                    -e 's@//security.debian.org@//mirrors.ivolces.com@g' \
+                    "$source_file"; \
+            fi; \
+        done; \
+    fi
+
+FROM node-base AS frontend-build
 WORKDIR /src
-COPY frontend/package.json frontend/package-lock.json ./frontend/
+COPY dashboard/frontend/package.json dashboard/frontend/package-lock.json ./frontend/
 RUN --mount=type=cache,target=/root/.npm \
     npm --prefix frontend ci
-COPY frontend ./frontend
+COPY dashboard/frontend ./frontend
 RUN npm --prefix frontend run build
 
-FROM python:3.11-slim-bookworm AS wheel-build
+FROM ${PYTHON_BASE_IMAGE} AS python-base
+ARG NO_MIRROR
+ENV NO_MIRROR=${NO_MIRROR}
+ENV PIP_INDEX_URL=${NO_MIRROR:+"https://pypi.org/simple/"}
+ENV PIP_INDEX_URL=${PIP_INDEX_URL:-"https://mirrors.ivolces.com/pypi/simple/"}
+RUN if [ "$NO_MIRROR" != "1" ]; then \
+        for source_file in \
+            /etc/apt/sources.list \
+            /etc/apt/sources.list.d/debian.sources; do \
+            if [ -f "$source_file" ]; then \
+                sed -i \
+                    -e 's@//deb.debian.org@//mirrors.ivolces.com@g' \
+                    -e 's@//security.debian.org@//mirrors.ivolces.com@g' \
+                    "$source_file"; \
+            fi; \
+        done; \
+    fi
+
+FROM python-base AS wheel-build
 WORKDIR /src
-COPY . .
+COPY dashboard/ .
 COPY --from=frontend-build /src/frontend/dist ./frontend/dist
 RUN python scripts/bundle_frontend.py
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip wheel --wheel-dir /wheels .
 
-FROM python:3.11-slim-bookworm AS runtime
+FROM python-base AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
