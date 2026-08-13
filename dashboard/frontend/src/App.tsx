@@ -13,12 +13,14 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import rlinfLogo from "./assets/rlinf-logo.svg";
 import { api } from "./api/client";
 import { useFetch, useRun, useRuns, type LiveState } from "./api/useLive";
 import type { Health, RunStatus, RunSummary, RunTemplate, Series, ServerHealth } from "./api/types";
 import { AsOf, Badge, Code, HealthBar, Note } from "./components/primitives";
 import { href, routeRunId, useRoute, type Route } from "./lib/router";
 import { collectSignals, watchSetKeys } from "./lib/signals";
+import { setTheme, useTheme } from "./lib/theme";
 import { Compare } from "./views/Compare";
 import { Events } from "./views/Events";
 import { Media } from "./views/Media";
@@ -70,6 +72,7 @@ function mediaTabState(template: RunTemplate | null): "show" | "hide" | "pending
 export function App() {
   const [route, navigate] = useRoute();
   const runId = routeRunId(route);
+  const theme = useTheme();
 
   // One clock for the whole page.
   const [now, setNow] = useState(() => Date.now());
@@ -210,14 +213,18 @@ export function App() {
     <div className="app">
       <header className="header">
         <div className="header-inner">
-          <a className="header-brand" href={href({ name: "runs" })}>
-            <span className="header-brand-mark">RLinf</span>
-            <span className="faint" style={{ fontSize: "var(--type-body-sm-size)" }}>
-              dashboard
-            </span>
+          <a
+            className="header-brand"
+            href={href({ name: "runs" })}
+          >
+            <img className="header-brand-logo" src={rlinfLogo} alt="RLinf" />
           </a>
 
-          <nav className="header-crumbs" aria-label="Breadcrumb">
+          <nav
+            className="header-crumbs"
+            aria-label="Breadcrumb"
+            data-run={runId ? "true" : undefined}
+          >
             <a href={href({ name: "runs" })}>Runs</a>
             {route.name === "compare" && (
               <>
@@ -235,6 +242,27 @@ export function App() {
           </nav>
 
           <div className="header-right">
+            <button
+              className="theme-toggle"
+              type="button"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+              title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+            >
+              {theme === "dark" ? (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="4" />
+                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20.5 14.3A8.5 8.5 0 0 1 9.7 3.5a8.5 8.5 0 1 0 10.8 10.8Z" />
+                </svg>
+              )}
+              <span className="theme-toggle-label">
+                {theme === "dark" ? "Light" : "Dark"}
+              </span>
+            </button>
             {/* Refresh invalidates the fetched-once resources. The live document
                 does not need it -- SSE owns that -- so this is deliberately not a
                 "reload the page" button. */}

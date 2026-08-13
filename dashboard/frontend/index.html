@@ -3,10 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Dark-first is a hard commitment, not a preference: this console sits
-         beside a terminal at 2am. Declaring it keeps form controls and
-         scrollbars dark before any CSS loads, so there is no white flash. -->
-    <meta name="color-scheme" content="dark" />
+    <!-- The dark fallback is useful beside a terminal, while the saved choice
+         below is applied before CSS and React load so neither theme flashes the
+         other one on startup. -->
+    <meta name="color-scheme" content="dark light" />
+    <script>
+      (() => {
+        try {
+          const saved = window.localStorage.getItem("rlinf-dashboard-theme");
+          const theme = saved === "light" ? "light" : "dark";
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.colorScheme = theme;
+        } catch {
+          // Hardened browser contexts can block storage. The dark HTML fallback
+          // remains complete and the in-page switch still works for this load.
+        }
+      })();
+    </script>
     <title>RLinf Control Plane</title>
   </head>
   <body>

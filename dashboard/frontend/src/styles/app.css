@@ -23,6 +23,10 @@ body,
   margin: 0;
 }
 
+html {
+  background: var(--color-bg);
+}
+
 body {
   background: var(--color-bg);
   color: var(--color-text);
@@ -56,7 +60,7 @@ a:hover {
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-border-strong);
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 
@@ -95,7 +99,7 @@ a:hover {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: var(--color-bg);
+  background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -105,25 +109,26 @@ a:hover {
   gap: var(--space-lg);
   width: 100%;
   max-width: 1600px;
+  min-height: 56px;
   margin: 0 auto;
-  padding: var(--space-md) var(--space-xl);
+  padding: var(--space-sm) var(--space-xl);
 }
 
 .header-brand {
   display: flex;
-  align-items: baseline;
-  gap: var(--space-sm);
-  font-size: var(--type-headline-lg-size);
-  font-weight: var(--type-headline-lg-weight);
-  letter-spacing: var(--type-headline-lg-tracking);
-  color: var(--color-text);
+  align-items: center;
+  white-space: nowrap;
 }
 
-.header-brand-mark {
-  background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+.header-brand-logo {
+  display: block;
+  flex: none;
+  width: 82px;
+  height: auto;
+}
+
+.header-brand:hover {
+  text-decoration: none;
 }
 
 .header-crumbs {
@@ -143,8 +148,39 @@ a:hover {
 .header-right {
   display: flex;
   align-items: center;
-  gap: var(--space-md);
+  gap: var(--space-sm);
   margin-left: auto;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-height: 32px;
+  padding: 0 var(--space-sm);
+  background: transparent;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+}
+
+.theme-toggle:hover {
+  background: var(--color-surface-raised);
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.theme-toggle svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .header-live {
@@ -158,11 +194,12 @@ a:hover {
   color: var(--color-text-faint);
 }
 
-/* A 6px square, not a pulsing dot. Anything that animates forever becomes
+/* A static 6px dot, never a pulsing one. Anything that animates forever becomes
  * something you learn to ignore, and this one carries information. */
 .header-live-dot {
   width: 6px;
   height: 6px;
+  border-radius: var(--radius-full);
   background: var(--color-text-faint);
 }
 
@@ -222,13 +259,13 @@ a:hover {
 }
 
 .healthbar-reason[data-health="degraded"] .healthbar-reason-label {
-  color: var(--color-degraded);
+  color: var(--color-degraded-text);
 }
 .healthbar-reason[data-health="unreachable"] .healthbar-reason-label {
-  color: var(--color-unreachable);
+  color: var(--color-unreachable-text);
 }
 .healthbar-reason[data-health="unknown"] .healthbar-reason-label {
-  color: var(--color-unknown);
+  color: var(--color-unknown-text);
 }
 
 /* ------------------------------------------------------------------ badges */
@@ -300,6 +337,78 @@ a:hover {
     padding-left: var(--space-lg);
     padding-right: var(--space-lg);
   }
+
+  .theme-toggle-label {
+    display: none;
+  }
+
+  .header-live {
+    display: none;
+  }
+
+  .header-brand {
+    order: 1;
+  }
+
+  .header-brand-logo {
+    width: 68px;
+  }
+
+  .header-inner {
+    flex-wrap: wrap;
+    gap: var(--space-xs) var(--space-sm);
+  }
+
+  .header-crumbs {
+    order: 3;
+    display: flex;
+    flex: 1 0 100%;
+    min-width: 0;
+  }
+
+  .header-crumbs:not([data-run="true"]),
+  .header-crumbs > * {
+    display: none;
+  }
+
+  .header-crumbs > .code,
+  .header-crumbs > .badge {
+    display: inline-flex;
+  }
+
+  .header-crumbs > .code {
+    max-width: calc(100% - 96px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .header-right {
+    order: 2;
+    gap: var(--space-xs);
+  }
+
+  .header-right > .faint {
+    display: inline;
+    max-width: 7ch;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .theme-toggle {
+    width: 32px;
+    padding: 0;
+  }
+
+  .tabs {
+    overflow-x: auto;
+  }
+
+  .tab {
+    flex: none;
+    padding-left: var(--space-sm);
+    padding-right: var(--space-sm);
+  }
 }
 
 .card {
@@ -323,9 +432,8 @@ a:hover {
   gap: var(--space-sm);
   font-size: var(--type-label-sm-size);
   font-weight: var(--type-label-sm-weight);
-  letter-spacing: var(--type-label-sm-tracking);
+  letter-spacing: normal;
   line-height: var(--type-label-sm-leading);
-  text-transform: uppercase;
   color: var(--card-label-fg);
 }
 
@@ -538,8 +646,7 @@ a:hover {
   margin-left: auto;
   font-size: var(--type-label-sm-size);
   font-weight: var(--type-label-sm-weight);
-  letter-spacing: var(--type-label-sm-tracking);
-  text-transform: uppercase;
+  letter-spacing: normal;
   color: var(--color-text-faint);
 }
 
@@ -751,7 +858,7 @@ a:hover {
 }
 
 .chart-note[data-level="red"] {
-  color: var(--color-unreachable);
+  color: var(--color-unreachable-text);
 }
 
 /* --------------------------------------------------------------- uPlot skin */
@@ -791,6 +898,7 @@ a:hover {
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
+  box-shadow: 0 8px 20px var(--color-shadow-overlay);
   font-size: var(--type-numeric-sm-size);
   pointer-events: none;
 }
@@ -844,6 +952,9 @@ a:hover {
   /* Without this a grid or flex child refuses to shrink below its content, and
      the `auto` above never has anything to scroll. */
   min-width: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
 }
 
 .table {
@@ -852,11 +963,12 @@ a:hover {
 }
 
 .table th {
-  padding: var(--space-sm) var(--space-md);
+  height: 40px;
+  padding: 0 var(--space-lg);
+  background: var(--color-surface-raised);
   font-size: var(--type-label-sm-size);
   font-weight: var(--type-label-sm-weight);
-  letter-spacing: var(--type-label-sm-tracking);
-  text-transform: uppercase;
+  letter-spacing: normal;
   text-align: left;
   color: var(--table-header-fg);
   border-bottom: 1px solid var(--color-border);
@@ -864,8 +976,8 @@ a:hover {
 }
 
 .table td {
-  height: 36px;
-  padding: 0 var(--space-md);
+  height: 40px;
+  padding: 0 var(--space-lg);
   font-size: var(--type-body-sm-size);
   color: var(--table-row-fg);
   border-bottom: 1px solid var(--color-border);
@@ -880,8 +992,12 @@ a:hover {
 }
 
 .table tbody tr[data-selected="true"] {
-  background: var(--color-surface-raised);
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface));
   box-shadow: inset 2px 0 0 0 var(--color-primary);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .table .col-num {
@@ -949,9 +1065,13 @@ a:hover {
 /* ----------------------------------------------------------------- buttons */
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
   padding: var(--space-xs) var(--button-ghost-pad);
   background: var(--button-ghost-bg);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--button-ghost-radius);
   font-size: var(--type-label-md-size);
   font-weight: var(--type-label-md-weight);
@@ -979,7 +1099,7 @@ a:hover {
 .btn-primary:hover {
   background: var(--button-primary-hover-bg);
   border-color: var(--button-primary-hover-bg);
-  color: var(--color-bg);
+  color: var(--button-primary-fg);
 }
 
 .btn[disabled] {
@@ -995,7 +1115,7 @@ a:hover {
   gap: var(--space-sm);
   padding: var(--space-xs) var(--space-sm);
   background: transparent;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
   font-size: var(--type-body-sm-size);
   color: var(--color-text);
@@ -1049,8 +1169,7 @@ a:hover {
   gap: var(--space-sm);
   font-size: var(--type-label-sm-size);
   font-weight: var(--type-label-sm-weight);
-  letter-spacing: var(--type-label-sm-tracking);
-  text-transform: uppercase;
+  letter-spacing: normal;
   color: var(--color-text-faint);
 }
 
@@ -1062,9 +1181,10 @@ a:hover {
 select,
 input[type="search"],
 input[type="text"] {
+  min-height: 32px;
   padding: var(--space-xs) var(--space-sm);
   background: var(--color-surface-sunken);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
   font-family: var(--font-inter);
   font-size: var(--type-body-sm-size);
@@ -1117,7 +1237,7 @@ input[type="checkbox"] {
 
 .tab[data-active="true"] {
   border-bottom-color: var(--color-primary);
-  color: var(--color-text);
+  color: var(--color-primary);
 }
 
 /* ------------------------------------------------------------------- media */
@@ -1196,11 +1316,11 @@ input[type="checkbox"] {
 }
 
 .media-count[data-all="true"] {
-  color: var(--color-healthy);
+  color: var(--color-healthy-text);
 }
 
 .media-count[data-none="true"] {
-  color: var(--color-degraded);
+  color: var(--color-degraded-text);
 }
 
 /* Unrecorded is not failed. Grey and worded, never red. */
@@ -1343,16 +1463,16 @@ input[type="checkbox"] {
 }
 
 .event[data-kind="error"] .event-kind {
-  color: var(--color-unreachable);
+  color: var(--color-unreachable-text);
 }
 
 .event[data-kind="warn"] .event-kind {
-  color: var(--color-degraded);
+  color: var(--color-degraded-text);
 }
 
 .event[data-kind="ckpt_saved"] .event-kind,
 .event[data-kind="eval_done"] .event-kind {
-  color: var(--color-healthy);
+  color: var(--color-healthy-text);
 }
 
 .event-payload {

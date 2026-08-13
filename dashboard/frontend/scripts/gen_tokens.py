@@ -100,7 +100,7 @@ def _dimension(value) -> str:
 
 
 def render(front: dict) -> str:
-    """Render the front matter as a ``:root`` block of custom properties."""
+    """Render base tokens and any named theme overrides as CSS properties."""
     lines: list[str] = [
         "/* GENERATED FROM DESIGN.md -- do not edit.",
         " *",
@@ -112,6 +112,7 @@ def render(front: dict) -> str:
         " */",
         "",
         ":root {",
+        "  color-scheme: dark;",
     ]
 
     def section(title: str) -> None:
@@ -177,6 +178,31 @@ def render(front: dict) -> str:
             lines.append(f"  --{name}-{css}: {resolved};")
 
     lines.append("}")
+
+    # The base palette is the dark, no-JavaScript fallback. Named theme blocks
+    # override only colours, so typography, spacing and component decisions stay
+    # identical when the operator switches appearance. Keeping the override in
+    # this generated file also makes DESIGN.md the single source of truth for
+    # both palettes rather than hiding half the system in handwritten CSS.
+    base_color_names = set((front.get("colors") or {}).keys())
+    for theme_name, theme in (front.get("themes") or {}).items():
+        colors = theme.get("colors") or {}
+        if not colors:
+            raise SystemExit(f"Theme {theme_name!r} has no color overrides")
+        theme_color_names = set(colors.keys())
+        if theme_color_names != base_color_names:
+            missing = ", ".join(sorted(base_color_names - theme_color_names)) or "none"
+            extra = ", ".join(sorted(theme_color_names - base_color_names)) or "none"
+            raise SystemExit(
+                f"Theme {theme_name!r} must override the complete base palette "
+                f"(missing: {missing}; extra: {extra})"
+            )
+        lines.extend(["", f':root[data-theme="{theme_name}"] {{'])
+        lines.append(f"  color-scheme: {theme_name};")
+        for name, value in colors.items():
+            lines.append(f"  --color-{name}: {value};")
+        lines.append("}")
+
     lines.append("")
     return "\n".join(lines)
 

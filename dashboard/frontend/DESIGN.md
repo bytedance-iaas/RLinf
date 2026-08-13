@@ -2,38 +2,86 @@
 version: alpha
 name: RLinf Control Plane
 description: >
-  Dark-first operator console for RLinf training runs. Built for the question
-  "is my job OK?" answered in under five seconds, on a screen that may be left
-  open for days.
+  Arco-inspired operator console for RLinf training runs, with first-class dark
+  and light themes. Built for the question "is my job OK?" answered in under
+  five seconds, on a screen that may be left open for days.
 colors:
-  primary: "#9F23EF"
-  secondary: "#0F90EE"
-  tertiary: "#CF9BFF"
+  primary: "#3C7EFF"
+  primary-solid: "#165DFF"
+  primary-solid-hover: "#0E42D2"
+  secondary: "#8D4EDA"
+  tertiary: "#6AA1FF"
 
-  bg: "#0B0D12"
-  surface: "#141821"
-  surface-raised: "#1C2130"
-  surface-sunken: "#0F1218"
-  border: "#252B3A"
-  border-strong: "#39415A"
+  bg: "#17171A"
+  surface: "#232324"
+  surface-raised: "#2A2A2B"
+  surface-sunken: "#1D1D1F"
+  border: "#333335"
+  border-strong: "#737379"
 
-  text: "#E8EAF0"
-  text-muted: "#9AA3B8"
-  text-faint: "#6B7488"
+  text: "#F2F3F5"
+  text-muted: "#B3B6BD"
+  text-faint: "#86909C"
 
-  healthy: "#2DD4A7"
-  degraded: "#F0B429"
-  unreachable: "#F2555A"
-  unknown: "#6B7488"
+  healthy: "#27C346"
+  healthy-text: "#65D77E"
+  degraded: "#FF9626"
+  degraded-text: "#FFB65C"
+  unreachable: "#F76965"
+  unreachable-text: "#FF9692"
+  unknown: "#86909C"
+  unknown-text: "#C9CDD4"
 
-  series-1: "#9F23EF"
-  series-2: "#0F90EE"
-  series-3: "#2DD4A7"
-  series-4: "#F0B429"
-  series-5: "#F2555A"
-  series-6: "#CF9BFF"
-  series-7: "#5EEAD4"
-  series-8: "#FB923C"
+  shadow-overlay: "rgba(0, 0, 0, 0.32)"
+
+  series-1: "#3C7EFF"
+  series-2: "#8D4EDA"
+  series-3: "#27C346"
+  series-4: "#FF9626"
+  series-5: "#F76965"
+  series-6: "#33D1C9"
+  series-7: "#FADC19"
+  series-8: "#F54BAE"
+
+themes:
+  light:
+    colors:
+      primary: "#165DFF"
+      primary-solid: "#165DFF"
+      primary-solid-hover: "#0E42D2"
+      secondary: "#722ED1"
+      tertiary: "#165DFF"
+
+      bg: "#F7F8FA"
+      surface: "#FFFFFF"
+      surface-raised: "#F2F3F5"
+      surface-sunken: "#F7F8FA"
+      border: "#E5E6EB"
+      border-strong: "#86909C"
+
+      text: "#1D2129"
+      text-muted: "#4E5969"
+      text-faint: "#5F6B7A"
+
+      healthy: "#00B42A"
+      healthy-text: "#007A1B"
+      degraded: "#FF7D00"
+      degraded-text: "#B54700"
+      unreachable: "#F53F3F"
+      unreachable-text: "#B71F2A"
+      unknown: "#86909C"
+      unknown-text: "#4E5969"
+
+      shadow-overlay: "rgba(0, 0, 0, 0.12)"
+
+      series-1: "#165DFF"
+      series-2: "#722ED1"
+      series-3: "#008A1E"
+      series-4: "#B54700"
+      series-5: "#B71F2A"
+      series-6: "#078A85"
+      series-7: "#946200"
+      series-8: "#A61E9C"
 
 typography:
   display:
@@ -71,7 +119,7 @@ typography:
     letterSpacing: 0.04em
   label-sm:
     fontFamily: Inter
-    fontSize: 11px
+    fontSize: 12px
     fontWeight: 550
     lineHeight: 1.25
     letterSpacing: 0.06em
@@ -96,9 +144,9 @@ typography:
 
 rounded:
   none: 0px
-  sm: 4px
-  md: 8px
-  lg: 12px
+  sm: 2px
+  md: 4px
+  lg: 8px
   full: 999px
 
 spacing:
@@ -132,26 +180,26 @@ components:
     textColor: "{colors.text-muted}"
 
   badge-healthy:
-    backgroundColor: "color-mix(in srgb, #2DD4A7 16%, transparent)"
-    textColor: "{colors.healthy}"
+    backgroundColor: "color-mix(in srgb, var(--color-healthy) 14%, transparent)"
+    textColor: "{colors.healthy-text}"
     typography: "{typography.label-sm}"
     rounded: "{rounded.full}"
     padding: 4px
   badge-degraded:
-    backgroundColor: "color-mix(in srgb, #F0B429 16%, transparent)"
-    textColor: "{colors.degraded}"
+    backgroundColor: "color-mix(in srgb, var(--color-degraded) 14%, transparent)"
+    textColor: "{colors.degraded-text}"
     typography: "{typography.label-sm}"
     rounded: "{rounded.full}"
     padding: 4px
   badge-unreachable:
-    backgroundColor: "color-mix(in srgb, #F2555A 16%, transparent)"
-    textColor: "{colors.unreachable}"
+    backgroundColor: "color-mix(in srgb, var(--color-unreachable) 14%, transparent)"
+    textColor: "{colors.unreachable-text}"
     typography: "{typography.label-sm}"
     rounded: "{rounded.full}"
     padding: 4px
   badge-unknown:
-    backgroundColor: "color-mix(in srgb, #6B7488 16%, transparent)"
-    textColor: "{colors.unknown}"
+    backgroundColor: "color-mix(in srgb, var(--color-unknown) 14%, transparent)"
+    textColor: "{colors.unknown-text}"
     typography: "{typography.label-sm}"
     rounded: "{rounded.full}"
     padding: 4px
@@ -187,13 +235,13 @@ components:
     backgroundColor: "{colors.surface-raised}"
     textColor: "{colors.text}"
   button-primary:
-    backgroundColor: "{colors.primary}"
+    backgroundColor: "{colors.primary-solid}"
     textColor: "#FFFFFF"
     typography: "{typography.label-md}"
     rounded: "{rounded.md}"
     padding: 8px
   button-primary-hover:
-    backgroundColor: "{colors.tertiary}"
+    backgroundColor: "{colors.primary-solid-hover}"
 
   table-row:
     backgroundColor: transparent
@@ -223,11 +271,12 @@ here is arranged to answer that before they finish reading the page.
 
 Three facts about the audience shape every decision below:
 
-**They are looking at it in a dark room, at 2am, for the fourth day running.**
-Dark-first is not a style preference — a white page beside a terminal is a flash
-in the face. Long-session comfort also means no animation that repeats: a
-progress bar that pulses forever becomes something you learn to ignore, and
-anything you learn to ignore is dead pixels.
+**They may be looking at it in a dark room at 2am, or beside a bright notebook
+during a daytime incident review.** Dark remains the safe default for long
+training sessions, while light is a first-class theme rather than an inverted
+afterthought. The choice is remembered and applied before React starts so neither
+mode flashes the other on load. Long-session comfort also means no animation that
+repeats: anything you learn to ignore is dead pixels.
 
 **The numbers matter more than the chrome.** A step count, a success rate, an
 ETA — these get read, compared against a number remembered from an hour ago, and
@@ -245,46 +294,53 @@ invent a fourth answer. `unknown` gets its own grey treatment rather than
 collapsing into green — "we could not tell" is real information and must not be
 laundered into "fine".
 
-The overall feel is instrument panel: dense, quiet, legible at a glance, with
-colour reserved almost entirely for status. A screen where six things are purple
-has told you nothing about which one to look at.
+The overall feel combines an instrument panel with Arco's enterprise-console
+values: clear hierarchy, consistent rules, a 4px rhythm, and restrained chrome.
+It is dense, quiet and legible at a glance, with colour reserved for action,
+selection, data series and status. A screen where six things shout at once has
+told you nothing about which one to look at.
 
 ## Colors
 
-**Brand.** `primary` (`#9F23EF`) and `secondary` (`#0F90EE`) come from the RLinf
-logo gradient and appear in the docs theme. They carry brand identity and mark
-the primary data series — they do *not* mean anything about health. `tertiary`
-(`#CF9BFF`) is the light purple already used for links in the docs' dark theme.
+**Brand and action.** Arco blue is the action and selection colour: `#165DFF` in
+light and `#3C7EFF` in dark. The header uses RLinf's official purple-blue gradient
+wordmark; purple also remains the second data series, so the product retains its
+identity without turning every active control purple. Neither colour means
+anything about health.
+`primary-solid` is the darker blue reserved for filled buttons, where white label
+text needs more contrast than the selection swatch provides. `tertiary` is the
+theme-adjusted link and inline-code blue.
 
-**Surfaces** form a four-step ladder on a near-black blue-tinted base:
-`bg` → `surface` → `surface-raised` → and `surface-sunken` *below* the base for
-inset wells (code blocks, progress troughs, chart backgrounds). The tint is
-deliberate: pure `#000` with pure `#fff` text is high-strain over hours, and a
-slight blue cast reads as "instrument" rather than "unstyled".
+**Surfaces** follow Arco's neutral ladder. Light uses `#F7F8FA` canvas, white
+containers and `#E5E6EB` boundaries; dark uses `#17171A` canvas and stepped
+`#232324` / `#2A2A2B` containers. `surface-sunken` holds code, progress troughs
+and chart wells. Neither palette uses pure black against pure white for the main
+reading surface.
 
 **Status is the only semantic axis, and it has exactly four values** because the
 server's `health` field has exactly four:
 
 | Token | Meaning |
 |---|---|
-| `healthy` (teal) | heartbeat, progress and metrics all current |
+| `healthy` (green) | heartbeat, progress and metrics all current |
 | `degraded` (amber) | alive but something is wrong — hung thread, dead metric path, degrading step time |
 | `unreachable` (red) | no heartbeat; the driver process is probably gone |
 | `unknown` (grey) | no readable snapshot — we genuinely do not know |
 
-Teal rather than green for `healthy`, and amber rather than yellow for
-`degraded`: the most common form of colour-vision deficiency is red-green, and
-teal-versus-amber-versus-red survives it where green-versus-amber-versus-red
-does not. Status is never carried by colour alone regardless — every status
-badge pairs its colour with a word.
+The semantic backgrounds follow Arco's success, warning and danger ramps. Each
+has a separate `*-text` token, darker in light mode and lighter in dark mode, so
+12px badge labels clear 4.5:1 without distorting the full-strength status strip.
+Status is never carried by colour alone — every badge pairs its colour with a
+word, and the health card carries the server's reason.
 
 **Series colours** are an ordered eight-slot ramp, assigned by position, and
 they mean nothing except "a different line from the one next to it". Slots 1 and
 2 are the brand hues so a single-series chart looks like it belongs to RLinf.
 Neighbouring slots alternate hue family rather than shading, because two
 adjacent lines are told apart by hue far more reliably than by lightness.
-Series colours overlap the status palette by design — a *line* is never a
-verdict, so there is no ambiguity to resolve.
+Light-theme series use deeper steps from the same ramps so even yellow and cyan
+lines clear 3:1 on a white chart. Series colours overlap the status palette by
+design — a *line* is never a verdict, so there is no ambiguity to resolve.
 
 ## Typography
 
@@ -302,12 +358,12 @@ console runs on clusters that may have no egress, and a page whose numbers
 render in a fallback face while waiting on a font request is worse than one that
 never asked.
 
-Nine levels, which is at the low end of a typical system and intentional. Scale
-steps are large enough to be unambiguous (`32 / 20 / 15 / 14 / 13 / 12 / 11`)
-because a hierarchy that needs a ruler to perceive is not a hierarchy. Weight
-does more work than size: `label-sm` at 11px, uppercase-tracked, weight 550, in
-`text-faint` is the standard card label, and it recedes without shrinking to
-unreadable.
+Ten roles share seven deliberately distinct sizes (`32 / 28 / 20 / 15 / 14 / 13
+/ 12`). Weight does more work than adding near-duplicate sizes: `label-sm` at
+12px and weight 550 in `text-faint` is the standard structural label, and it
+recedes without shrinking below Arco's minimum readable size.
+Card and table labels use sentence case; compact status tags keep uppercase
+tracking so state is visually distinct from navigation.
 
 `numeric-lg` at 28px is the hero number on a card. It is smaller than `display`
 on purpose — the card's *label* tells you what you are looking at, and a number
@@ -321,10 +377,9 @@ progress, timing, checkpoint, health, north-star metric, anomalies. Below
 1200px it becomes two columns, below 720px one; the card order is the reading
 order, so reflow degrades gracefully without media-query-specific rules.
 
-**Spacing is a 4px scale**, with 12px (`card-gap`) as the gap between cards and
-16px as their internal padding. Interior padding exceeding the gutter would make
-cards read as one mass; the current ratio keeps them distinct without visible
-dividers.
+**Spacing is a 4px scale**, with 12px (`card-gap`) between dense overview cards,
+16px inside cards, and a 24px page gutter. This is the rhythm Arco uses to keep
+enterprise surfaces compact without making controls feel accidental.
 
 **Charts are 180px tall by default** — enough to read a trend, short enough that
 four rows fit a laptop screen without scrolling. `chart-height-tall` (260px) is
@@ -347,18 +402,18 @@ row stretches into a shape where scanning left to right costs a head turn.
 
 ## Elevation & Depth
 
-**No shadows.** On a near-black surface a drop shadow is invisible; simulating
-one with a lighter halo reads as a rendering artefact. Depth comes from three
-other means, in order of preference:
+**Static surfaces do not need shadows.** Arco's neutral fills and 1px boundaries
+carry hierarchy more reliably across both themes. Depth comes from three other
+means, in order of preference:
 
 1. **Surface lightness.** The four-step ladder is the primary depth cue. Raised
    things are lighter; inset things are darker than the page.
 2. **1px borders** in `border`, for cards that must be distinct where a
    lightness step alone is too subtle (a card on `surface` inside a `surface`
    section). `border-strong` is for focus rings and the active item in a list.
-3. **Nothing else.** No blur, no glass, no gradient overlays. Every one of them
-   costs legibility on a page whose reason for existing is a number you can
-   trust at a glance.
+3. **Nothing else for static content.** No blur or glass, and gradients stay in
+   the brand mark rather than behind data. Popovers may use a restrained shadow
+   when they have to separate from content in both themes.
 
 Overlays (a video player, a metric picker) darken the page behind them with a
 60%-opacity black scrim and sit on `surface-raised`. The scrim is the only
@@ -368,9 +423,9 @@ place a semi-transparent black is used.
 
 Corners are uniformly rounded per role, never mixed within one component:
 
-- `sm` (4px) — inline code, tiny inset chips
-- `md` (8px) — buttons, inputs, select controls
-- `lg` (12px) — cards, chart panels, modals
+- `sm` (2px) — inline code and tiny inset chips
+- `md` (4px) — buttons, inputs and select controls
+- `lg` (8px) — cards, chart panels and modals
 - `full` — status badges and progress bars, where a pill shape reads as "state"
   rather than "container"
 
@@ -388,14 +443,14 @@ pixel level, and this console is read for values.
 
 ## Components
 
-**Cards** are the Overview's unit. Each is a label (`label-sm`, faint,
-uppercase-tracked), a value (`numeric-lg`), and an optional hint (`body-sm`,
-muted) explaining or qualifying the value. The hint is where a health card
+**Cards** are the Overview's unit. Each is a sentence-case label (`label-sm`,
+faint), a value (`numeric-lg`), and an optional hint (`body-sm`, muted)
+explaining or qualifying the value. The hint is where a health card
 explains *why* it is amber. A badge with no explanation gets ignored after the
 second time you see it, so the reason string the server already returns is
 rendered, not dropped.
 
-**Status badges** are a coloured word on a 16%-opacity wash of the same hue, in
+**Status badges** are a coloured word on a 14%-opacity wash of the same hue, in
 a `full`-rounded pill. Four variants, one per health value, plus the same
 treatment reused for lifecycle state (`running` / `finished` / `failed` /
 `stopped` / `pending`). Lifecycle and health are visually parallel because they
@@ -424,15 +479,15 @@ every chart in a group: moving the pointer over one reads out all of them at
 that step, which is how a person correlates a loss spike with an entropy
 collapse.
 
-**Tables** (the run list, the checkpoint list) are borderless, with a
-`surface-raised` hover row and `label-sm` faint headers. Numeric columns are
+**Tables** (the run list, the checkpoint list) sit in one bordered surface, with
+a neutral header fill and `surface-raised` hover row. Numeric columns are
 right-aligned and monospaced; text columns left-aligned in Inter. Row height is
-36px — dense enough to see twenty runs, loose enough to hit with a pointer.
+40px — dense enough to scan a node's runs, loose enough to hit with a pointer.
 
-**Buttons** come in two weights only. `button-primary` in brand purple is for
-the one action a view has, if any; `button-ghost` for everything else. This
-console mostly reads, so most of its controls are ghost, and a page full of
-filled buttons would imply a page full of consequences.
+**Buttons** come in two weights only. `button-primary` in Arco blue is for the
+one action a view has, if any; `button-ghost` for everything else. This console
+mostly reads, so most controls stay neutral, and a page full of filled buttons
+would imply a page full of consequences.
 
 **Inline code** (`code-inline`) is `tertiary` on `surface-sunken`. Run IDs,
 metric keys, paths and the assembled resume command all use it, since all four
@@ -449,9 +504,9 @@ browser reintroduces exactly that.
 values and five lifecycle states. `unknown` is not a loading state and must not
 be styled as one.
 
-**Do** reserve `primary` for brand and for the first data series. **Don't** use
-it for status. A purple badge on a page whose only semantic axis is
-teal/amber/red/grey means the reader has to learn a fifth colour.
+**Do** reserve `primary` for action, selection and the first data series, and
+`secondary` for the RLinf brand accent and second series. **Don't** use either
+for status; success, warning, danger and unknown are a separate semantic axis.
 
 **Do** pair every status colour with a word. Colour alone excludes readers with
 red-green deficiency and is invisible in a screenshot pasted into a chat.
@@ -460,8 +515,9 @@ red-green deficiency and is invisible in a screenshot pasted into a chat.
 between values — the intermediate digits are not data, and a value mid-tween
 cannot be read.
 
-**Don't** add a shadow, blur, or gradient to a surface. Depth is the lightness
-ladder plus 1px borders; the palette is built for exactly that and nothing else.
+**Don't** add blur or decorative gradients to a surface. Static depth is the
+lightness ladder plus 1px borders; a restrained shadow is only for an overlay
+that must visibly float above data.
 
 **Do** keep the page geometry constant across SSE updates. **Don't** let a card
 resize, a chart re-fit its axes on every push, or a list reorder itself while
@@ -471,6 +527,7 @@ someone is reading it.
 two runs with different step semantics on one axis without saying so — the
 comparison is meaningless and the chart will be believed anyway.
 
-**Do** hold WCAG AA (4.5:1) for body text and 3:1 for large text and UI
-boundaries. `text-muted` on `surface` and every status colour on its own wash
-were chosen against that bar; a new colour has to clear it before it ships.
+**Do** hold WCAG AA (4.5:1) for body and label text and 3:1 for large text, chart
+lines and functional UI boundaries. `text-muted`, `text-faint`, the `*-text`
+badge roles, filled-button labels and light-theme series were chosen against
+those bars; a new role colour has to clear its bar before it ships.

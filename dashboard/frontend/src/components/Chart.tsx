@@ -24,6 +24,7 @@ import "uplot/dist/uPlot.min.css";
 import type { PlotData } from "../lib/series";
 import { resolveColor, xExtent, yGrowth } from "../lib/series";
 import { metric as formatMetric } from "../lib/format";
+import { useTheme } from "../lib/theme";
 
 /**
  * Charts that share a cursor group also share a zoom, so they share its reset.
@@ -157,6 +158,7 @@ export function Chart(props: ChartProps) {
     props;
   const hostRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const theme = useTheme();
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [hover, setHover] = useState<{ left: number; idx: number } | null>(null);
   /**
@@ -167,6 +169,26 @@ export function Chart(props: ChartProps) {
    * stopped, and those call for opposite reactions. The badge is the difference.
    */
   const [zoomed, setZoomed] = useState(false);
+  const previousThemeRef = useRef(theme);
+  const themeZoomExtentRef = useRef<{ min: number; max: number } | null>(null);
+
+  // uPlot paints literal colours into a canvas, so changing CSS variables alone
+  // cannot recolour an existing plot. Capture a user-selected x window before
+  // the old canvas is destroyed; the new plot restores it below, so changing an
+  // appearance preference never moves the data under inspection.
+  useLayoutEffect(() => {
+    if (previousThemeRef.current === theme) return;
+    previousThemeRef.current = theme;
+    const scale = plotRef.current?.scales.x;
+    const min = scale?.min;
+    const max = scale?.max;
+    themeZoomExtentRef.current =
+      zoomed && typeof min === "number" && typeof max === "number" &&
+      Number.isFinite(min) && Number.isFinite(max)
+        ? { min, max }
+        : null;
+    setHover(null);
+  }, [theme, zoomed]);
 
   const pointCount = countPoints(data);
   const useLog = logScale === true && logIsUsable(data);
@@ -330,6 +352,7 @@ export function Chart(props: ChartProps) {
     // without rebuilding, so it is intentionally not a dependency of the rebuild.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    theme,
     size.width,
     size.height,
     xLabel,
@@ -352,6 +375,11 @@ export function Chart(props: ChartProps) {
     const host = hostRef.current;
     if (!host || size.width <= 0 || size.height <= 0) return;
     const plot = new uPlot(options, data as unknown as uPlot.AlignedData, host);
+    const themeZoomExtent = themeZoomExtentRef.current;
+    if (themeZoomExtent !== null) {
+      plot.setScale("x", themeZoomExtent);
+      themeZoomExtentRef.current = null;
+    }
     plotRef.current = plot;
     return () => {
       plot.destroy();

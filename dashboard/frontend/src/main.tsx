@@ -2,7 +2,7 @@
  * Entry point.
  *
  * Import order matters: the fonts and the generated tokens must land before the
- * application sheet, since `app.css` reads `--font-*` and every colour from
+ * application sheet, since `app.css` reads `--font-*` and both theme palettes from
  * `tokens.css`, and Vite preserves import order when it concatenates the bundle's
  * CSS. `tokens.css` is generated from DESIGN.md front matter and is never edited by
  * hand -- see `scripts/gen_tokens.py`.

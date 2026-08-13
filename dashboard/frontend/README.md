@@ -1,7 +1,8 @@
 # RLinf Dashboard — frontend
 
-The browser half of the dashboard: a dark-first operator console that answers
-"should I be worried about this run" before it answers anything else.
+The browser half of the dashboard: an Arco-inspired operator console with dark
+and light themes that answers "should I be worried about this run" before it
+answers anything else.
 
 It talks to the Python service over HTTP only. There is no shared code,
 no build-time coupling, and nothing here imports from the Python side — the

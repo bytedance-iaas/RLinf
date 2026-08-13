@@ -12,7 +12,7 @@ import type { Health, HealthVerdict, RunState } from "../api/types";
 import { age, EMPTY } from "../lib/format";
 
 /**
- * A status pill: a coloured word on a 16% wash of the same hue.
+ * A status pill: a coloured word on a 14% wash of the same hue.
  *
  * `tone` accepts both health values and lifecycle states, because DESIGN.md wants
  * them visually parallel -- they are genuinely different questions, and a
@@ -67,7 +67,7 @@ export function HealthBar(props: { verdict: HealthVerdict | null }) {
   );
 }
 
-/** A card: a faint uppercase label, a monospaced value, an optional hint. */
+/** A card: a faint sentence-case label, a monospaced value, an optional hint. */
 export function Card(props: {
   label: string;
   /** Right-aligned adornment in the label row, e.g. a badge. */
