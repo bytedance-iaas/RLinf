@@ -63,7 +63,7 @@ COPY --from=dashboard-frontend-build /src/frontend/dist ./frontend/dist
 RUN python scripts/bundle_frontend.py
 RUN --mount=type=cache,target=/root/.cache/pip \
     mkdir -p /wheels && \
-    python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' \
+    python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' \
         > /wheels/.python-version && \
     python -m pip wheel --wheel-dir /wheels .
 
@@ -590,9 +590,11 @@ FROM ${BUILD_TARGET}-image AS final-image
 # Dashboard runtime
 ##################################################################################################
 COPY --from=dashboard-wheel-build /wheels /tmp/rlinf-dashboard-wheels
-# Keep Python downloads on uv's default Astral CDN. Sending the standalone
-# archive back through the GitHub URL proxy is slower and prone to timeouts.
+# Install the standalone dashboard without inheriting RLinf's dependency
+# overrides from /opt/venv/pyproject.toml. Wheels are compatible across Python
+# patch releases, so reuse any interpreter with the builder's major.minor ABI.
 RUN set -eux; \
+    export UV_NO_CONFIG=1; \
     dashboard_python_version=$(cat /tmp/rlinf-dashboard-wheels/.python-version); \
     if ! uv python find "$dashboard_python_version" >/dev/null 2>&1; then \
         UV_HTTP_TIMEOUT=300 uv python install "$dashboard_python_version"; \
