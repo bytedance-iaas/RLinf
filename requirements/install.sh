@@ -516,7 +516,15 @@ configure_nvidia() {
                 echo "[install.sh] No NVIDIA driver or CUDA toolkit detected; using CPU-only torch."
             fi
         fi
-        if [ "$USE_MIRRORS" -eq 1 ]; then
+        # The mirror only proxies the index pages; every link on them points back
+        # at download-r2.pytorch.org, which is slow enough from some networks
+        # (measured ~200 KB/s on Volcengine, vs ~4.9 MB/s going straight to
+        # download.pytorch.org) that a multi-venv build appears to hang. Export
+        # RLINF_TORCH_INDEX_BASE to route the torch wheels elsewhere.
+        if [ -n "${RLINF_TORCH_INDEX_BASE:-}" ]; then
+            _index_base="${RLINF_TORCH_INDEX_BASE%/}"
+            echo "[install.sh] Using RLINF_TORCH_INDEX_BASE=${_index_base} for the torch wheel index."
+        elif [ "$USE_MIRRORS" -eq 1 ]; then
             _index_base="https://mirrors.tencent.com/pytorch-wheels/whl"
         else
             _index_base="https://download.pytorch.org/whl"
@@ -1243,7 +1251,9 @@ install_uv() {
 setup_mirror() {
     if [ "$USE_MIRRORS" -eq 1 ]; then
         export USE_MIRRORS
-        export GITHUB_PREFIX="${GITHUB_PREFIX:-https://gh-proxy.com/}"
+        # gh-proxy.org rather than ghfast.top: the latter is not reachable from
+        # the Volcengine network.
+        export GITHUB_PREFIX="${GITHUB_PREFIX:-https://gh-proxy.org/}"
         export UV_PYTHON_INSTALL_MIRROR=${GITHUB_PREFIX}https://github.com/astral-sh/python-build-standalone/releases/download
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
@@ -1490,6 +1500,29 @@ EOF
     fi
 }
 
+git_clone_shallow() {
+    # Shallow git clone. Args: [GIT_CLONE_ARGS...] GIT_URL TARGET_DIR
+    #
+    # Defaults to --depth 1 unless the caller already set a depth or passed
+    # --full-clone. The git object stream is a single non-resumable packfile,
+    # so shrinking it is the most effective way to avoid mid-transfer drops on
+    # large repos (e.g. LIBERO, whose notebook-heavy history is huge). Callers
+    # that check out an arbitrary commit afterwards (which a shallow clone would
+    # not contain) must pass --full-clone.
+    local args=() full_clone=0 a
+    for a in "$@"; do
+        if [ "$a" = "--full-clone" ]; then
+            full_clone=1
+        else
+            args+=("$a")
+        fi
+    done
+    if [ "$full_clone" -eq 0 ] && [[ " ${args[*]} " != *" --depth "* ]]; then
+        args=(--depth 1 "${args[@]}")
+    fi
+    git clone "${args[@]}" >&2
+}
+
 clone_or_reuse_repo() {
     # Usage: clone_or_reuse_repo ENV_VAR_NAME DEFAULT_DIR GIT_URL [GIT_CLONE_ARGS...]
     # - If ENV_VAR_NAME is set, use it as the checkout location: reuse it when it
@@ -1513,7 +1546,7 @@ clone_or_reuse_repo() {
         target_dir="$env_value"
         if [ ! -d "$target_dir" ]; then
             echo "$env_var_name=$target_dir does not exist yet; cloning $git_url into it..." >&2
-            git clone "$@" "$git_url" "$target_dir" >&2
+            git_clone_shallow "$@" "$git_url" "$target_dir"
         else
             echo "Reusing existing checkout at $env_var_name=$target_dir." >&2
             local want_ref="" prev="" arg current_ref
@@ -1531,7 +1564,7 @@ clone_or_reuse_repo() {
     else
         target_dir="$default_dir"
         if [ ! -d "$target_dir" ]; then
-            git clone "$@" "$git_url" "$target_dir" >&2
+            git_clone_shallow "$@" "$git_url" "$target_dir"
         elif [ -d "$target_dir/.git" ]; then
             echo "Checking git repo $target_dir..." >&2
             local git_intact=1
@@ -1541,7 +1574,7 @@ clone_or_reuse_repo() {
             else
                 echo "Git repo $target_dir is corrupted. Re-cloning..." >&2
                 rm -rf "$target_dir"
-                git clone "$@" "$git_url" "$target_dir" >&2
+                git_clone_shallow "$@" "$git_url" "$target_dir"
             fi
         fi
     fi
@@ -2149,7 +2182,9 @@ install_abot_m0_model() {
 
 install_dreamzero_deps() {
     local dreamzero_path
-    dreamzero_path=$(clone_or_reuse_repo DREAMZERO_PATH "$VENV_DIR/dreamzero" https://github.com/dreamzero0/dreamzero.git)
+    # --full-clone: this env checks out an arbitrary commit below, which a
+    # shallow clone would not contain.
+    dreamzero_path=$(clone_or_reuse_repo DREAMZERO_PATH "$VENV_DIR/dreamzero" https://github.com/dreamzero0/dreamzero.git --full-clone)
     if [ -z "${DREAMZERO_PATH:-}" ]; then
         git -C "$dreamzero_path" checkout "${DREAMZERO_GIT_REF:-ab790c198fbce33503358efbbd4187ce9a89adf3}" >&2
     fi
@@ -2340,9 +2375,29 @@ retry_cmd() {
     done
 }
 
+# Stage the shared LIBERO assets tree and point LIBERO_ASSET_PATH at it, so
+# libero-download-assets symlinks to it instead of pulling ~286MB from
+# HuggingFace into every venv. No-op when the object store is unreachable, in
+# which case libero-download-assets falls back to HuggingFace as before.
+stage_libero_assets() {
+    [ "$USE_MIRRORS" -eq 1 ] || return 0
+    command -v oniond &>/dev/null || return 0
+    [ -n "${LIBERO_ASSET_PATH:-}" ] && return 0
+
+    local assets_root="${LIBERO_ASSETS_ROOT:-/opt/assets}"
+    bash "$SCRIPT_DIR/embodied/download_assets.sh" \
+        --use-mirror --dir "$assets_root" --assets libero
+    local staged="$assets_root/.libero_assets/LIBERO-assets"
+    if [ -d "$staged/scenes" ]; then
+        export LIBERO_ASSET_PATH="$staged"
+        echo "[install.sh] Using staged LIBERO assets at $staged (LIBERO_ASSET_PATH)."
+    fi
+}
+
 install_libero_env() {
     uv pip install rlinf-libero
     materialize_package_files rlinf-libero
+    stage_libero_assets
     retry_cmd libero-download-assets --skip-existing
     reset_libero_config
 }
@@ -2421,7 +2476,10 @@ install_liberopro_env() {
     uv pip install rlinf-libero rlinf-liberopro
     materialize_package_files rlinf-libero
     materialize_package_files rlinf-liberopro
+    stage_libero_assets
     retry_cmd libero-download-assets --skip-existing
+    # LIBERO-pro assets have no object-store copy yet, so this one still goes to
+    # HuggingFace.
     retry_cmd liberopro-download-assets --skip-existing
     reset_libero_config
 }
@@ -2430,7 +2488,10 @@ install_liberoplus_env() {
     uv pip install rlinf-libero "rlinf-liberoplus>=0.1.3"
     materialize_package_files rlinf-libero
     materialize_package_files rlinf-liberoplus
+    stage_libero_assets
     retry_cmd libero-download-assets --skip-existing
+    # LIBERO-plus assets have no object-store copy yet, so this one still goes to
+    # HuggingFace.
     export LIBERO_PLUS_ASSETS_REPO="${LIBERO_PLUS_ASSETS_REPO:-RLinf/LIBERO-plus-assets}"
     retry_cmd liberoplus-download-assets --skip-existing
     reset_libero_config
