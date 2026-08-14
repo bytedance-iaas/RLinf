@@ -294,3 +294,63 @@ debate.
 **Why long-horizon tasks are structurally harder here:** noise is injected per decision, so staying on the BC ridge is a product over decisions. Decisions per episode = `max_episode_steps / num_action_chunks`: official ManiSkill 80/5 = **16**, official LIBERO 240/5 = **48**, this SO101 task 640/5 = **128**. At a per-decision on-ridge probability of 0.97 that is 61% / 23% / **2%**. Copying a reference recipe's noise parameters onto an 8x longer horizon is not "aligning with the reference" — it is a materially different amount of injected noise per trajectory.
 
 **Do NOT use `runner.only_eval=True` as the probe.** It is not a "skip training" switch: `rlinf/config.py:826-830` sources the model spec from `cfg.rollout.model` instead of `cfg.actor.model`, and `env_worker.py:108` / `huggingface_worker.py:70` skip training-env creation. Three coupled changes, so a training config run under it exercises a different path (and typically dies on missing keys — which is the lucky outcome; a config with just enough keys would silently build a DIFFERENT model and hand back a number you would believe).
+
+## 1d. PPO from a BC start: the three knobs that decided it, and the one that was inert
+
+A campaign that failed seven times and then worked, on the same task and start.
+What separated the working run from the failing ones, in order of impact:
+
+**Updates per epoch is the decisive quantity — recalibrate it, do not inherit it.**
+`updates = num_envs × (max_episode_steps / num_action_chunks) × rollout_epoch / global_batch_size`.
+The published recipe's 12 updates/epoch destroyed the policy (61.7% → 7.0% by
+epoch 9); the same start at **1 update/epoch** climbed to 73.4%. Set
+`global_batch_size = samples per epoch` to force exactly one. The published
+value is calibrated on benchmarks with 16-48 noisy decisions per episode; a
+task with 64-128 is a different regime, and this is the parameter that
+expresses the difference.
+
+**Check whether you are discarding half the model's predicted horizon.** The
+policy was SFT-trained with `action_horizon: 10` but the eval/RL configs
+executed `num_action_chunks: 5` — copied from the reference examples and never
+derived. Executing all 10 raised the DETERMINISTIC score 55% → 66.4% (free, and
+it applies to deployment too) and halved noisy decisions per episode, which
+raised rollout success 1.0% → 4.7%. Whenever `num_action_chunks < action_horizon`,
+ask why.
+
+**Confirm a knob is live before sweeping it.** `noise_params` belongs to
+flow-SDE; with `noise_method: flow_noise` the magnitude comes from
+`noise_logvar_range` through a learned noise head (`openpi_action_model.py:47-58`).
+An 8x sweep of `noise_params` moved nothing — the correct knob then took rollout
+success 4.7% → 39.1%. This also retroactively voids the "halve the exploration
+noise" item of the old conservative bundle: it never did anything, and the runs
+it was credited with succeeded for other reasons.
+
+**Order of operations:** freeze-probe the rollout precondition (§1c) → fix the
+chunk/noise settings until `env/success_once` ≥ 5% → then and only then tune the
+update schedule. Fixing the precondition alone is not enough: a variant with 39%
+rollout success still collapsed at 12 updates/epoch.
+
+## 7. sim2real: measure the gap offline before the robot moves
+
+A sim-trained policy has no right to be trusted on real observations, and you
+can find out for free. Feed recorded REAL observations (images + proprioception)
+to the policy and compare its predicted actions against what the human
+teleoperator actually did. Two controls make the number interpretable: the same
+measurement on SIM episodes (in-distribution reference) and a "hold still"
+predictor (action = current state), which is the scale of motion. Report the
+ratio policy-error / hold-still-error: below 1 the policy beats doing nothing,
+at or above 1 it does not.
+> Evidence: the SO101 policy measured 0.10 on sim and **4.47 on real** — its
+> actions were 4.5x worse than freezing the arm. Cost: 20 minutes, no hardware.
+> `tools_so101_session/offline_replay_check.py` is the implementation.
+
+**Do not stop at the first suspect.** The obvious culprit was a known defect
+(the sim wrist camera pointed at the robot's own body, so that input channel was
+near-constant in training while it carries real information on the robot). But
+re-running with the wrist channel removed changed nothing (4.47 → 4.59): the gap
+is broader than the one defect. Had the check stopped at "fix the wrist camera",
+a 30-hour retrain would have bought nothing.
+
+**Render your training data and LOOK at it.** The wrist defect was invisible in
+code review and in every metric for weeks; it took one grid of frames sampled
+from actual training episodes. Do this once per camera when a new env is built.
