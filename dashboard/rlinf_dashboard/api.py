@@ -36,6 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
 from . import __version__
+from .auth import BasicAuthMiddleware
 from .discovery import DiscoveredRun, RunDiscovery
 from .media import MediaService, content_type_for
 from .metrics import MetricGateway, worker_label
@@ -96,6 +97,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.services = services
 
+    if settings.auth_enabled:
+        assert settings.auth_username is not None
+        assert settings.auth_password is not None
+        app.add_middleware(
+            BasicAuthMiddleware,
+            username=settings.auth_username,
+            password=settings.auth_password,
+            public_paths=("/healthz",),
+        )
+        _declare_basic_auth(app)
+
+    # Added after BasicAuthMiddleware so Starlette places CORS on the outside:
+    # browser preflight requests are answered without exposing protected data,
+    # while the actual cross-origin request must still authenticate.
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -107,6 +122,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _register_routes(app)
     _mount_frontend(app, settings)
     return app
+
+
+def _declare_basic_auth(app: FastAPI) -> None:
+    """Describe middleware-enforced Basic Auth in the generated OpenAPI schema."""
+    base_openapi = app.openapi
+
+    def authenticated_openapi() -> dict:
+        schema = base_openapi()
+        security_schemes = schema.setdefault("components", {}).setdefault(
+            "securitySchemes", {}
+        )
+        security_schemes["basicAuth"] = {"type": "http", "scheme": "basic"}
+        schema["security"] = [{"basicAuth": []}]
+        return schema
+
+    app.openapi = authenticated_openapi
 
 
 #: Where the built frontend lives, checked in order.
@@ -204,6 +235,11 @@ def _require_run(services: Services, run_id: str) -> DiscoveredRun:
 
 
 def _register_routes(app: FastAPI) -> None:  # noqa: C901 - one function per route
+    @app.get("/healthz", include_in_schema=False)
+    def healthz() -> dict[str, str]:
+        """Report process liveness without scanning or exposing run metadata."""
+        return {"status": "ok"}
+
     @app.get("/api/health", summary="Liveness of this server")
     def health(services: ServicesDep) -> dict:
         """Report the server's own health, not any run's.

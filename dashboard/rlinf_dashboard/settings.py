@@ -22,9 +22,9 @@ NFS mount without a config file.
 from __future__ import annotations
 
 import json
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -122,6 +122,52 @@ class Settings(BaseSettings):
     #: is not an error: the API alone is useful, and requiring a Node toolchain
     #: to read run status would be a worse default.
     frontend_dist: str = ""
+
+    #: Authentication is deliberately explicit: Helm sets ``basic`` so missing
+    #: or misspelled Secret env vars fail closed, while source development keeps
+    #: its backwards-compatible ``disabled`` default.
+    auth_mode: Literal["disabled", "basic"] = "disabled"
+
+    #: Static HTTP Basic credentials. Both values are required in ``basic`` mode
+    #: and forbidden in ``disabled`` mode, so a partially applied deployment
+    #: cannot silently choose its own security posture.
+    #: The password is secret-typed so settings reprs and validation diagnostics
+    #: cannot accidentally print it.
+    auth_username: str | None = None
+    auth_password: SecretStr | None = None
+
+    @model_validator(mode="after")
+    def _validate_auth_pair(self) -> "Settings":
+        """Require one complete, unambiguous Basic Auth credential pair."""
+        username = self.auth_username
+        password = (
+            self.auth_password.get_secret_value()
+            if self.auth_password is not None
+            else None
+        )
+        if self.auth_mode == "disabled":
+            if username is not None or password is not None:
+                raise ValueError(
+                    "Set RLINF_DASHBOARD_AUTH_MODE=basic when providing "
+                    "dashboard auth credentials."
+                )
+            return self
+        if username is None or password is None:
+            raise ValueError(
+                "RLINF_DASHBOARD_AUTH_MODE=basic requires both "
+                "RLINF_DASHBOARD_AUTH_USERNAME and "
+                "RLINF_DASHBOARD_AUTH_PASSWORD."
+            )
+        if not username.strip() or not password.strip():
+            raise ValueError("Dashboard auth username and password must not be blank.")
+        if ":" in username:
+            raise ValueError("Dashboard auth username must not contain ':'.")
+        return self
+
+    @property
+    def auth_enabled(self) -> bool:
+        """Whether the validated static credential pair is configured."""
+        return self.auth_mode == "basic"
 
     @field_validator("cors_origins", mode="before")
     @classmethod
