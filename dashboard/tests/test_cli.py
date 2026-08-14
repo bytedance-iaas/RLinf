@@ -31,6 +31,9 @@ from rlinf_dashboard.__main__ import main
 def _no_inherited_config(monkeypatch, tmp_path):
     monkeypatch.delenv("RLINF_DASHBOARD_SCAN_ROOT", raising=False)
     monkeypatch.delenv("RLINF_DASHBOARD_SCAN_ROOTS", raising=False)
+    monkeypatch.delenv("RLINF_DASHBOARD_AUTH_MODE", raising=False)
+    monkeypatch.delenv("RLINF_DASHBOARD_AUTH_USERNAME", raising=False)
+    monkeypatch.delenv("RLINF_DASHBOARD_AUTH_PASSWORD", raising=False)
     monkeypatch.chdir(tmp_path)
 
 
@@ -70,4 +73,17 @@ def test_a_comma_separated_root_is_refused(monkeypatch, capsys):
     message = capsys.readouterr().err
     # The validator's own sentence, not a pydantic traceback.
     assert "single directory" in message
+    assert "ValidationError" not in message
+
+
+def test_incomplete_auth_is_refused_without_printing_the_secret(monkeypatch, capsys):
+    monkeypatch.setenv("RLINF_DASHBOARD_AUTH_MODE", "basic")
+    monkeypatch.setenv("RLINF_DASHBOARD_AUTH_PASSWORD", "do-not-print-this")
+
+    code = main([])
+
+    assert code == 2
+    message = capsys.readouterr().err
+    assert "requires both" in message
+    assert "do-not-print-this" not in message
     assert "ValidationError" not in message
