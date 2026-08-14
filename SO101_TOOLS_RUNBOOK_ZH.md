@@ -46,9 +46,10 @@
 
 | 脚本 | 干什么 | 要解决的问题 |
 |---|---|---|
-| `convert_v10_demos.py` | **最新版**：复制上一版数据集再**追加**新集，不重编码旧集 | 视频编码占转换 90% 时间（3.3 集/分）。重编码已有的 672 集要 2.75 h，产出**逐字节相同**的文件 |
-| `convert_v9_demos.py` | 从零重建：规划器 h5 + 策略 npz 混合 | 需要全新数据集时用。**单位不对称**：npz 的 `state` 已归一化而 `action` 是弧度，h5 两者都是弧度 |
-| `convert_v4_demos.py` / `convert_v7_demos.py` / `convert_v8_demos.py` | 各阶段的转换 | 复现历史结果 |
+| `convert_v10_demos.py` | **阶段 E 的转换器**：复制上一版数据集再**追加**新集，不重编码旧集 | 视频编码占转换 90% 时间。重编码已有的 672 集要 2.75 h 且产出**逐字节相同**的文件。**只在已有数据集可追加时适用**，不能用于从零构建 |
+| `convert_v9_demos.py` | **阶段 D 的转换器**：规划器 h5 + 策略 npz 混合，从零重建 | 专家迭代必须混两种来源，而它们**单位不对称**：npz 的 `state` 已归一化而 `action` 是弧度，h5 两者都是弧度 |
+| `convert_v4_demos.py` / `convert_v8_demos.py` | **阶段 B / C 的转换器，复现流程里必须用** | 每个阶段的数据来源不同，转换逻辑也不同：v4 是纯规划器 h5，v8 是窄框规划器 h5。`convert_v10_demos.py` 的追加式**不能取代**它们——从零复现时前面没有可追加的数据集 |
+| `convert_v7_demos.py` | 阶段 v7（分带课程）的转换 | 该路线已证伪，仅存档 |
 | `convert_demos_to_lerobot.py` | 最早的通用转换器 | 参考用 |
 | `convert_pp5_rollouts.py` / `convert_pp6_rollouts.py` / `convert_pp7_rollouts.py` | 早期的策略轨迹转换 | 历史 |
 | `merge_mix_v5.py` | 合并两个数据集 | **注意**：早期版本用 cv2 读 AV1 视频会静默失败（得到 0 条），已加计数闸门 |

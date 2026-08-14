@@ -180,14 +180,21 @@ for XI in 0 1 2 3; do for YI in 0 1 2 3; do
   SEED=$((SEED+100)); done; done; wait
 ```
 
-**B3 转换 + 计算 norm_stats（整条血统只算这一次）**：
+**B3 转换 + 计算 norm_stats（仿真域只算这一次）**：
 
 ```bash
 .venv/bin/python tools_so101_session/convert_v4_demos.py
 .venv/bin/python -m toolkits.lerobot.calculate_norm_stats --config-name pi05_so101_v4
 ```
 
-> **此后 C/D/E/G 一律沿用 `assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json`，绝不重算。**
+> **这是第二次调用 `calculate_norm_stats`，但不是重复劳动。** 归一化统计量定义"模型看到的数值世界"，而真机与仿真是两个不同的分布：
+>
+> | 调用 | 产出 | 谁用 |
+> |---|---|---|
+> | 阶段 A 的 `--config-name pi05_so101` | `assets/pi05_so101/henry-guo/so101-pick-place-v2/norm_stats.json` | **只有阶段 A** |
+> | 这一次 `--config-name pi05_so101_v4` | `assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json` | **阶段 B 之后全部**，且从此冻结 |
+>
+> **此后 C/D/E/G 一律沿用 v4 那份，绝不重算**（各阶段 yaml 里都硬写着这个路径，注释是 `lineage frozen: continuing v4`）。
 
 **B4/B5 SFT + 门评**（`so101_sft_v4`，lr 2.5e-5、4000 步、save 1000）：
 
