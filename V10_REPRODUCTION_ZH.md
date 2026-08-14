@@ -149,7 +149,7 @@ export EMBODIED_PATH=$PWD/examples/sft
 
 **产出**：`$RESULTS/so101_sft_openpi_pi05/checkpoints/global_step_8000`
 **耗时**：约 3 小时
-**验收**：这一步**不做仿真评测**——真机数据训出的策略直接扔进仿真是 0 成功率（实测 5 次运行、约 2000 轮、零抓取）。它只是阶段 B 的热启动权重。
+**验收**：这一步的产物**在仿真里独立评测为 0.0%**（`success_once`/`success_at_end` 均为 0，见 `eval_sft_fixed.out`）；从它起跑的两次 RL 分别为全程 0 与峰值 3–4%。它只是阶段 B 的热启动权重，不是可用策略。
 
 ---
 
