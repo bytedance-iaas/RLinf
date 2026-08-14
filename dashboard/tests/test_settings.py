@@ -36,6 +36,9 @@ def _settings(monkeypatch, **env) -> Settings:
     ``_env_file=None`` so a developer's own ``.env`` beside the repo cannot
     change the answer.
     """
+    monkeypatch.delenv("RLINF_DASHBOARD_AUTH_USERNAME", raising=False)
+    monkeypatch.delenv("RLINF_DASHBOARD_AUTH_PASSWORD", raising=False)
+    monkeypatch.delenv("RLINF_DASHBOARD_AUTH_MODE", raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     return Settings(_env_file=None)
@@ -45,7 +48,9 @@ def _settings(monkeypatch, **env) -> Settings:
 
 
 def test_the_scan_root_is_read_from_the_environment(monkeypatch):
-    assert _settings(monkeypatch, RLINF_DASHBOARD_SCAN_ROOT="/logs").scan_root == "/logs"
+    assert (
+        _settings(monkeypatch, RLINF_DASHBOARD_SCAN_ROOT="/logs").scan_root == "/logs"
+    )
 
 
 def test_a_comma_separated_scan_root_is_refused(monkeypatch):
@@ -101,6 +106,84 @@ def test_an_unknown_prefixed_variable_is_ignored(monkeypatch):
     """``extra="ignore"``: a stale variable from an older version must not block boot."""
     settings = _settings(monkeypatch, RLINF_DASHBOARD_SOMETHING_REMOVED="1")
     assert settings.scan_root == "./logs"
+
+
+# ---------------------------------------------------------------- authentication
+
+
+def test_auth_credentials_are_read_as_a_pair(monkeypatch):
+    settings = _settings(
+        monkeypatch,
+        RLINF_DASHBOARD_AUTH_MODE="basic",
+        RLINF_DASHBOARD_AUTH_USERNAME="operator",
+        RLINF_DASHBOARD_AUTH_PASSWORD="correct horse battery staple",
+    )
+
+    assert settings.auth_enabled
+    assert settings.auth_username == "operator"
+    assert settings.auth_password.get_secret_value() == "correct horse battery staple"
+    assert "correct horse battery staple" not in repr(settings)
+
+
+def test_auth_is_disabled_only_when_both_values_are_unset(monkeypatch):
+    assert not _settings(monkeypatch).auth_enabled
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        (
+            {
+                "RLINF_DASHBOARD_AUTH_MODE": "basic",
+                "RLINF_DASHBOARD_AUTH_USERNAME": "operator",
+            },
+            "requires both",
+        ),
+        (
+            {
+                "RLINF_DASHBOARD_AUTH_MODE": "basic",
+                "RLINF_DASHBOARD_AUTH_PASSWORD": "secret",
+            },
+            "requires both",
+        ),
+        (
+            {
+                "RLINF_DASHBOARD_AUTH_MODE": "basic",
+                "RLINF_DASHBOARD_AUTH_USERNAME": "",
+                "RLINF_DASHBOARD_AUTH_PASSWORD": "",
+            },
+            "must not be blank",
+        ),
+        (
+            {
+                "RLINF_DASHBOARD_AUTH_MODE": "basic",
+                "RLINF_DASHBOARD_AUTH_USERNAME": "operator",
+                "RLINF_DASHBOARD_AUTH_PASSWORD": "   ",
+            },
+            "must not be blank",
+        ),
+        (
+            {
+                "RLINF_DASHBOARD_AUTH_MODE": "basic",
+                "RLINF_DASHBOARD_AUTH_USERNAME": "team:operator",
+                "RLINF_DASHBOARD_AUTH_PASSWORD": "secret",
+            },
+            "must not contain ':'",
+        ),
+    ],
+)
+def test_incomplete_or_ambiguous_auth_is_refused(monkeypatch, env, message):
+    with pytest.raises(Exception, match=message):
+        _settings(monkeypatch, **env)
+
+
+def test_credentials_are_refused_when_auth_mode_is_disabled(monkeypatch):
+    with pytest.raises(Exception, match="AUTH_MODE=basic"):
+        _settings(
+            monkeypatch,
+            RLINF_DASHBOARD_AUTH_USERNAME="operator",
+            RLINF_DASHBOARD_AUTH_PASSWORD="secret",
+        )
 
 
 # ------------------------------------------------------------------- the accessor

@@ -110,7 +110,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"Scanning: {settings.scan_root}", file=sys.stderr)
-    print(f"Dashboard: http://{args.host}:{args.port}/api/health", file=sys.stderr)
+    print(f"Dashboard: http://{args.host}:{args.port}/", file=sys.stderr)
+    print(f"Health: http://{args.host}:{args.port}/healthz", file=sys.stderr)
 
     # `--reload` needs an import string so the reloader can re-import; the direct
     # object path is used otherwise so the app is built once, in this process,

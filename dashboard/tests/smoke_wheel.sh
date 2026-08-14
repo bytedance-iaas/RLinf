@@ -22,6 +22,8 @@ set -euo pipefail
 
 PYTHON="${1:-python3}"
 PORT="${PORT:-8434}"
+AUTH_USER="wheel-operator"
+AUTH_PASSWORD="wheel-password"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DASHBOARD="$(dirname "$HERE")"
 WORK="$(mktemp -d)"
@@ -106,18 +108,25 @@ PY
 # the very reason this test exists to rule out.
 mkdir -p "$WORK/root"
 cd /
-"$WORK/venv/bin/rlinf-dashboard" "$WORK/root" --host 127.0.0.1 --port "$PORT" \
+RLINF_DASHBOARD_AUTH_MODE=basic \
+RLINF_DASHBOARD_AUTH_USERNAME="$AUTH_USER" \
+RLINF_DASHBOARD_AUTH_PASSWORD="$AUTH_PASSWORD" \
+  "$WORK/venv/bin/rlinf-dashboard" "$WORK/root" --host 127.0.0.1 --port "$PORT" \
   > "$WORK/server.log" 2>&1 &
 SERVER_PID=$!
 
 for _ in $(seq 1 40); do
-  if curl -fsS "http://127.0.0.1:$PORT/api/health" > /dev/null 2>&1; then break; fi
+  if curl -fsS "http://127.0.0.1:$PORT/healthz" > /dev/null 2>&1; then break; fi
   sleep 0.5
 done
-curl -fsS "http://127.0.0.1:$PORT/api/health" > /dev/null || fail "server never became ready"
+curl -fsS "http://127.0.0.1:$PORT/healthz" > /dev/null || fail "server never became ready"
 
 # --------------------------------------------------------------------- assert
-curl -fsS "http://127.0.0.1:$PORT/" -o "$WORK/index.html" || fail "GET / failed"
+code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/")"
+[ "$code" = "401" ] || fail "anonymous GET / returned $code, expected 401"
+
+curl -fsS --user "$AUTH_USER:$AUTH_PASSWORD" \
+  "http://127.0.0.1:$PORT/" -o "$WORK/index.html" || fail "GET / failed"
 grep -qi "<div id=\"root\"" "$WORK/index.html" \
   || fail "GET / did not return the app shell"
 
@@ -127,18 +136,21 @@ grep -qi "<div id=\"root\"" "$WORK/index.html" \
 ASSETS="$(grep -o '/assets/[A-Za-z0-9_.-]*' "$WORK/index.html" | sort -u)"
 [ -n "$ASSETS" ] || fail "index.html references no /assets/ files"
 for asset in $ASSETS; do
-  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT$asset")"
+  code="$(curl -s --user "$AUTH_USER:$AUTH_PASSWORD" -o /dev/null \
+    -w '%{http_code}' "http://127.0.0.1:$PORT$asset")"
   [ "$code" = "200" ] || fail "asset $asset returned $code"
 done
 echo "verified $(echo "$ASSETS" | wc -w | tr -d ' ') referenced asset(s)"
 
 # A deep link must serve the shell too, or a reload on any route 404s.
-curl -fsS "http://127.0.0.1:$PORT/runs/does-not-exist/metrics" -o "$WORK/deep.html" \
+curl -fsS --user "$AUTH_USER:$AUTH_PASSWORD" \
+  "http://127.0.0.1:$PORT/runs/does-not-exist/metrics" -o "$WORK/deep.html" \
   || fail "deep link failed"
 grep -qi "<div id=\"root\"" "$WORK/deep.html" || fail "deep link did not return the shell"
 
 # ...but the API must still fail as an API.
-code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/nope")"
+code="$(curl -s --user "$AUTH_USER:$AUTH_PASSWORD" -o /dev/null \
+  -w '%{http_code}' "http://127.0.0.1:$PORT/api/nope")"
 [ "$code" = "404" ] || fail "unknown API endpoint returned $code, expected 404"
 
 echo "WHEEL SMOKE PASS"

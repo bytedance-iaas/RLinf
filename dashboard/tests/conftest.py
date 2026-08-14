@@ -31,9 +31,7 @@ FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "run_state"
 def fixture_names() -> list[str]:
     if not FIXTURE_DIR.is_dir():
         return []
-    return sorted(
-        path.stem for path in FIXTURE_DIR.iterdir() if path.suffix == ".json"
-    )
+    return sorted(path.stem for path in FIXTURE_DIR.iterdir() if path.suffix == ".json")
 
 
 def load_fixture(name: str) -> dict:
@@ -144,6 +142,9 @@ def settings_for(tmp_path):
             "scan_root": str(tmp_path / "logs"),
             "discovery_cache_ttl_s": 0.0,
             "cors_origins": [],
+            "auth_mode": "disabled",
+            "auth_username": None,
+            "auth_password": None,
             "_env_file": None,
         }
         kwargs.update(overrides)

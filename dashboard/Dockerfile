@@ -34,7 +34,7 @@ VOLUME ["/runs"]
 EXPOSE 8420
 
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
-  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8420/api/health', timeout=2)"]
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8420/healthz', timeout=2)"]
 
 ENTRYPOINT ["rlinf-dashboard"]
 CMD ["/runs", "--host", "0.0.0.0", "--port", "8420"]
