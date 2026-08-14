@@ -18,6 +18,8 @@ set -euo pipefail
 
 PYTHON="${1:-python3}"
 PORT="${PORT:-8421}"
+AUTH_USER="smoke-operator"
+AUTH_PASSWORD="smoke-password"
 ROOT="$(mktemp -d)"
 RUN_ROOT="$ROOT/_rlinf/runs/smoke-run"
 SERVER_LOG="$ROOT/server.log"
@@ -121,20 +123,23 @@ echo "Serving $ROOT on port $PORT"
 RLINF_DASHBOARD_SCAN_ROOT="$ROOT" \
 RLINF_DASHBOARD_SSE_INTERVAL_S=0.2 \
 RLINF_DASHBOARD_DISCOVERY_CACHE_TTL_S=0 \
+RLINF_DASHBOARD_AUTH_MODE=basic \
+RLINF_DASHBOARD_AUTH_USERNAME="$AUTH_USER" \
+RLINF_DASHBOARD_AUTH_PASSWORD="$AUTH_PASSWORD" \
   "$PYTHON" -m rlinf_dashboard --host 127.0.0.1 --port "$PORT" > "$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
 for _ in $(seq 1 60); do
-  if curl -fsS "http://127.0.0.1:$PORT/api/health" > /dev/null 2>&1; then
+  if curl -fsS "http://127.0.0.1:$PORT/healthz" > /dev/null 2>&1; then
     break
   fi
   kill -0 "$SERVER_PID" 2>/dev/null || fail "server exited during startup"
   sleep 0.5
 done
-curl -fsS "http://127.0.0.1:$PORT/api/health" > /dev/null || fail "server never became ready"
+curl -fsS "http://127.0.0.1:$PORT/healthz" > /dev/null || fail "server never became ready"
 
 get() {
-  curl -fsS "http://127.0.0.1:$PORT$1"
+  curl -fsS --user "$AUTH_USER:$AUTH_PASSWORD" "http://127.0.0.1:$PORT$1"
 }
 
 # Every assertion below is on a JSON body, so it is checked in Python rather
@@ -154,6 +159,13 @@ print('OK: $label')
 check "health finds the run" "$(get /api/health)" \
   "body['status'] == 'ok' and body['run_count'] == 1"
 
+check "healthz is public and contains no run metadata" "$(curl -fsS "http://127.0.0.1:$PORT/healthz")" \
+  "body == {'status': 'ok'}"
+
+check "the dashboard is closed without credentials" \
+  "$(curl -sS -o /dev/null -w '{"code": %{http_code}}' "http://127.0.0.1:$PORT/api/health")" \
+  "body['code'] == 401"
+
 check "run is listed and healthy" "$(get /api/runs)" \
   "len(body) == 1 and body[0]['run_id'] == 'smoke-run' and body[0]['health'] == 'healthy' and body[0]['step'] == 7"
 
@@ -170,7 +182,7 @@ check "a template is bound for the run" "$(get /api/runs/smoke-run/template)" \
   "body['name'] in {'embodied', 'fallback'} and 'groups' in body"
 
 check "an unknown run is a 404, not a 500" \
-  "$(curl -sS -o /dev/null -w '{"code": %{http_code}}' "http://127.0.0.1:$PORT/api/runs/nope")" \
+  "$(curl -sS --user "$AUTH_USER:$AUTH_PASSWORD" -o /dev/null -w '{"code": %{http_code}}' "http://127.0.0.1:$PORT/api/runs/nope")" \
   "body['code'] == 404"
 
 check "openapi is generated" "$(get /openapi.json)" \
@@ -210,16 +222,30 @@ cmp -s "$ROOT/served.mp4" "$ROOT/videos/won.mp4" \
   || fail "the streamed bytes differ from the file on disk"
 echo "OK: an indexed clip streams byte-for-byte"
 
+curl -fsS --user "$AUTH_USER:$AUTH_PASSWORD" --range 0-3 \
+  -D "$ROOT/range.headers" "http://127.0.0.1:$PORT$MEDIA_URL" \
+  -o "$ROOT/range.bin" || fail "an authenticated media range did not stream"
+grep -q '206 Partial Content' "$ROOT/range.headers" \
+  || fail "an authenticated range request did not return 206"
+head -c 4 "$ROOT/videos/won.mp4" > "$ROOT/range.expected"
+cmp -s "$ROOT/range.bin" "$ROOT/range.expected" \
+  || fail "the authenticated media range returned the wrong bytes"
+echo "OK: authenticated media ranges preserve 206 semantics"
+
 check "an unindexed file is refused" \
-  "$(curl -sS -o /dev/null -w '{"code": %{http_code}}' \
+  "$(curl -sS --user "$AUTH_USER:$AUTH_PASSWORD" -o /dev/null -w '{"code": %{http_code}}' \
     "http://127.0.0.1:$PORT/api/runs/smoke-run/media/file?path=/etc/passwd")" \
   "body['code'] == 404"
 
 # The part that needs a real server: a stream that stays open, delivers an
 # initial event, and delivers a second one after the file underneath changes.
 echo "Checking SSE delivery"
+check "an unauthenticated stream is refused before it opens" \
+  "$(curl -sS -o /dev/null -w '{"code": %{http_code}}' "http://127.0.0.1:$PORT/api/stream/runs/smoke-run")" \
+  "body['code'] == 401"
 STREAM_OUT="$ROOT/stream.txt"
-curl -sS -N -D "$ROOT/stream.headers" "http://127.0.0.1:$PORT/api/stream/runs/smoke-run" \
+curl -sS -N --user "$AUTH_USER:$AUTH_PASSWORD" -D "$ROOT/stream.headers" \
+  "http://127.0.0.1:$PORT/api/stream/runs/smoke-run" \
   > "$STREAM_OUT" 2>/dev/null &
 CURL_PID=$!
 sleep 1

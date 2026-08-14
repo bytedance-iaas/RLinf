@@ -101,6 +101,9 @@ variables:
 | `RLINF_DASHBOARD_POSTER_MAX_CONCURRENCY` | `2` | Simultaneous frame decodes |
 | `RLINF_DASHBOARD_POSTER_WIDTH` | `320` | Preview width in pixels |
 | `RLINF_DASHBOARD_POSTER_CACHE_MAX_MB` | `100` | Poster cache budget; `0` disables trimming |
+| `RLINF_DASHBOARD_AUTH_MODE` | `disabled` | `disabled` for local compatibility or `basic` to require static credentials |
+| `RLINF_DASHBOARD_AUTH_USERNAME` | unset | Static HTTP Basic username; required when auth mode is `basic` |
+| `RLINF_DASHBOARD_AUTH_PASSWORD` | unset | Static HTTP Basic password; required in `basic` mode and kept out of settings representations |
 
 For example:
 
@@ -108,6 +111,31 @@ For example:
 RLINF_DASHBOARD_SCAN_ROOT=/mnt/runs \
   .venv/bin/rlinf-dashboard --host 0.0.0.0 --port 8420
 ```
+
+### Authentication
+
+Set both auth variables to protect the browser app, API, SSE streams, media,
+and OpenAPI documentation with HTTP Basic authentication:
+
+```bash
+RLINF_DASHBOARD_AUTH_MODE=basic \
+RLINF_DASHBOARD_AUTH_USERNAME=operator \
+RLINF_DASHBOARD_AUTH_PASSWORD='replace-with-a-secret' \
+  .venv/bin/rlinf-dashboard /mnt/runs --host 0.0.0.0 --port 8420
+
+curl -u operator \
+  http://127.0.0.1:8420/api/health
+```
+
+`curl` prompts for the password, keeping it out of the command line.
+
+The default `disabled` mode preserves the unauthenticated local workflow and
+refuses credential values. `basic` mode requires both credentials; setting only
+one, using a blank value, or putting `:` in the username makes the server refuse
+to start. Basic Auth does not encrypt credentials, so use it only behind HTTPS
+outside localhost. In Kubernetes, set the mode explicitly and inject both
+values from Secret keys into the dashboard sidecar; do not put credentials in
+container args, probe headers, URLs, or a ConfigMap.
 
 ## Run and health semantics
 
@@ -129,6 +157,7 @@ valid step duration varies substantially across reasoning and embodied jobs.
 
 | Path | Returns |
 | --- | --- |
+| `GET /healthz` | Minimal process liveness for container and Kubernetes probes |
 | `GET /api/health` | Service status and scan-root diagnostics |
 | `GET /api/runs` | Filterable run summaries |
 | `GET /api/runs/{run_id}` | Manifest, snapshot, health, and capabilities |
@@ -145,6 +174,10 @@ valid step duration varies substantially across reasoning and embodied jobs.
 | `GET /api/stream/runs/{run_id}` | Live status for one run over SSE |
 
 OpenAPI documentation is available at `/docs`.
+
+When authentication is enabled, `/healthz` is the only anonymous path. It does
+not scan the log tree or reveal the scan root or run count. All other paths in
+the table and the browser application require the same Basic credentials.
 
 Long metric series use an extrema-preserving min/max envelope. First, last,
 non-finite, minimum, and maximum samples receive explicit priority so a short
