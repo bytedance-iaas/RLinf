@@ -122,7 +122,7 @@ export RAY_local_fs_capacity_threshold=0.99
 
 ## 2. Stage A — planner demonstrations (CPU, ~3 h)
 
-Script: `scratchpad/gen_so101_demos.py` (in `SO101_SESSION_LOG.md` Part 3).
+Script: `tools_so101_session/gen_so101_demos.py` (in `SO101_SESSION_LOG.md` Part 3).
 
 Settings that mattered:
 - gripper CLOSED command `-0.8`; grasp from above via `compute_grasp_info_by_obb`
@@ -1173,7 +1173,7 @@ One `TrainConfig` per dataset generation, in `dataconfig/__init__.py::_CONFIGS`:
 
 ### Step 7 — demonstration generator (the planner)
 
-`scratchpad/gen_so101_demos.py` — grasp, micro-lift verification, payload-offset compensation, two-stage FK transport, closed-loop pre-drop refinement, homing.
+`tools_so101_session/gen_so101_demos.py` — grasp, micro-lift verification, payload-offset compensation, two-stage FK transport, closed-loop pre-drop refinement, homing.
 
 ```python
 def solve_grab_red_cube(env, seed=None, vis=False, xoff=0.0, yoff=0.0, drop_z=0.08, gjx=0.0, gjy=0.0):
@@ -1327,7 +1327,7 @@ def solve_grab_red_cube(env, seed=None, vis=False, xoff=0.0, yoff=0.0, drop_z=0.
 
 ### Step 8 — dataset conversion
 
-`scratchpad/convert_v4_demos.py` — successful episodes only, units via the SAME calib module used at RL time, `FPS` = the generator's real control frequency.
+`tools_so101_session/convert_v4_demos.py` — successful episodes only, units via the SAME calib module used at RL time, `FPS` = the generator's real control frequency.
 
 ```python
 """Convert stratified planner demos (h5, TRUE-task env) -> LeRobot so101-sim-demos-v4.

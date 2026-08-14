@@ -33,19 +33,12 @@ clean(){
   sleep 8
 }
 
-# --- wait for the v10 gate (option B: no queue jump) ---
-v10_done(){ grep -q 'V10 FINAL' "$V10"; }
-DEADLINE=$(( $(date +%s) + 12*3600 ))
-while ! v10_done; do
-  [ "$(date +%s)" -gt "$DEADLINE" ] && { log "REPRO ABORT: v10 never reached its gate"; exit 1; }
-  if ! pgrep -f 'bash .*v10_rest.sh' >/dev/null; then
-    sleep 5
-    v10_done && break
-    log "REPRO ABORT: v10 pipeline exited without reaching its gate"; exit 1
-  fi
-  sleep 120
-done
-sleep 30
+# Run immediately: the box is idle (v4b finished 18:53, control 19:00).
+# The previous attempt died because its wait-sentinel matched a STALE failure
+# marker left by an earlier attempt of the same upstream stage, so it started
+# while the v4b gate still owned the GPUs and got killed by that gate's clean().
+# Sentinels must be unique per attempt -- a re-queued stage inherits its own
+# old failure marker otherwise.
 log "reproduction eval starting (official ckpt, official protocol; paper SFT = 0.401)"
 
 EV=""

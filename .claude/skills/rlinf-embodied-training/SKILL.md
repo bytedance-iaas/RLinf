@@ -243,3 +243,54 @@ Long overnight pipelines are chains of `stage A finishes -> stage B starts`. Eve
 
 Round 2 of the collect-own-successes-and-distil loop is planned from a MEASURED competence frontier, not a guess. Evaluate the current policy on the region you intend to expand into, then invert the measurement to size the data: with in-region success `p_in` over area A and success `p_ring` over 2A, the outer annulus rate is `2*p_ring - p_in`, which tells you how many self-collected successes will land out there and therefore how many planner demos you must add to hold the density-law spacing in the new territory. Self-collection is biased toward the region already learned; the annulus is exactly where it under-delivers.
 > Evidence: v9 (76.6% honest, in-box) measured 51.6% over 2x area => outer half ~27% => ~136 self-collected successes out there = 0.59 cm spacing, short of the proven 0.44 cm, so ~112 targeted planner demos were generated in four boundary strips instead of uniformly over the ring.
+
+## 6f. Refuted: "coarse IK grid causes the placement error" (2026-08-13)
+
+Symptom: a scripted planner's failures were 100% `drop-missed`, with a measured
+median release-to-target error of 3.9 cm and a 46% tail beyond 5 cm, growing
+with spawn distance (r=+0.51 between spawn y and error x). The closed-loop
+pre-drop refinement had a 1.2 cm stop threshold it never reached, and its
+search grid was coarse (0.25 rad elbow steps) with unchecked return values.
+
+Fix attempted: fine local grid around the current pose, 4 passes, return value
+checked, 2 cm accept tolerance. Pre-registered acceptance: +10 points of demo
+yield. **Result: 20/24 vs 20/24 — zero improvement; pooled release error got
+slightly WORSE (3.9 -> 4.8 cm median, tail 46% -> 48%).**
+
+What the refutation teaches: the refinement loop reported converging (3.1 cm
+pre-drop error at its own last measurement) while the LANDED position was 4.8
+cm off, so the error is generated **after the gripper opens** — release
+dynamics (residual velocity/pose as the cube leaves the jaws), not position
+control. Search resolution was never the binding constraint. Next hypotheses
+to test would be release height and gripper-open timing, not IK.
+
+Two method errors worth repeating out loud: (1) per-ATTEMPT failure counts were
+read as per-DEMO yield — a generator that retries 3 variants makes those differ
+by 2x (35% vs 74%), inverting the apparent severity; (2) "all failures share
+one stage" was read as "that stage is the bottleneck", when the median error
+was already inside the target and only the tail failed. Decompose the
+distribution before naming a root cause, and always run the A/B against a
+pre-registered acceptance threshold so a null result is a decision, not a
+debate.
+
+## 1c. The PPO precondition must be measured IN THE ROLLOUT DISTRIBUTION, not deterministically
+
+§1 says PPO needs the start policy to "already succeed sometimes in the target environment". That sentence hid an ambiguity that cost a full run: **which success — the deterministic eval, or the noisy rollouts PPO actually learns from?** They can differ by 50+ points.
+
+**Measured on 2026-08-13 (freeze test, lr=1e-9, real training path):** the same checkpoint scored `eval/success_once` **0.539** (deterministic) and `env/success_once` **0.010** (under the official flow-noise `[0.16,0.12,200]`). PPO saw ~1% success in 24,576 samples/iteration, had almost no success signal to amplify, optimised the dense reward instead, and by step 9 (~108 updates) had destroyed the policy — the deterministic eval fell to 0.0 too.
+
+**The threshold was already in this project's own logs**, unread until now (tensorboard `env/success_once`, first epochs):
+
+| run | noisy-rollout success at start | deterministic eval at start | outcome |
+|---|---|---|---|
+| pp4 | 5-9% | 36.7% | amplified to 75.0% |
+| v10 | 10-15% | 61.7% | amplified to 68.8% |
+| pp5 | ~20% | 31.2% | still collapsed (necessary, not sufficient) |
+| v11 | **1.0%** | 53.9% | destroyed by step 9 |
+| v6 | 0.5% | 0.0% | never left zero |
+
+**Rule: before launching PPO, measure `env/success_once` under the exact rollout noise you will train with. Below ~5% do not launch.** Cheapest probe: the freeze test (`actor.optim.lr=actor.optim.value_lr=1e-9`, `runner.val_check_interval=1`) — it exercises the REAL training path (same workers, env creation, model construction, weight sync) while leaving weights unchanged, and it reports both numbers in one epoch (~15 min).
+
+**Why long-horizon tasks are structurally harder here:** noise is injected per decision, so staying on the BC ridge is a product over decisions. Decisions per episode = `max_episode_steps / num_action_chunks`: official ManiSkill 80/5 = **16**, official LIBERO 240/5 = **48**, this SO101 task 640/5 = **128**. At a per-decision on-ridge probability of 0.97 that is 61% / 23% / **2%**. Copying a reference recipe's noise parameters onto an 8x longer horizon is not "aligning with the reference" — it is a materially different amount of injected noise per trajectory.
+
+**Do NOT use `runner.only_eval=True` as the probe.** It is not a "skip training" switch: `rlinf/config.py:826-830` sources the model spec from `cfg.rollout.model` instead of `cfg.actor.model`, and `env_worker.py:108` / `huggingface_worker.py:70` skip training-env creation. Three coupled changes, so a training config run under it exercises a different path (and typically dies on missing keys — which is the lucky outcome; a config with just enough keys would silently build a DIFFERENT model and hand back a number you would believe).

@@ -1,5 +1,6 @@
 # V8 全流程命令与参数说明(中文)
 
+> **路径说明**：脚本的持久位置是仓库内的 `tools_so101_session/`（用途索引见该目录的 `README.md`）。文中出现的 `scratchpad/*.status` 是运行时的状态日志，路径可自定。
 **目标配置**:保持与真机完全同构的保真度(**640×480 @ 30 Hz**、实测板面几何、8 g 方块、
 成功判据 = 方块入盒 **且** 机械臂回到初始位),**只把红方块的出生区收窄到 pp 时代的
 6 × 8 cm 小框**。收窄是唯一的简化,目的是把示范密度恢复到 pp 时代水平
@@ -47,7 +48,7 @@ export SO101_SPAWN_MODE=legacy          # 唯一的收窄项:6×8 cm 出生框
 
 for W in 0 1 2 3 4 5 6 7; do
   SEED=$((90000 + W*1000))
-  .venv/bin/python scratchpad/gen_so101_demos.py \
+  .venv/bin/python tools_so101_session/gen_so101_demos.py \
       --num 32 \
       --seed0 $SEED \
       --out /data08/henryg/pai/data/v8_demos_w$W &
@@ -76,7 +77,7 @@ wait
 ## 第 2 步 — 转换成 LeRobot 数据集(CPU,约 1 小时)
 
 ```bash
-.venv/bin/python scratchpad/convert_v8_demos.py
+.venv/bin/python tools_so101_session/convert_v8_demos.py
 ```
 
 | 脚本内参数 | 取值 | 为什么 |
@@ -263,8 +264,8 @@ checkpoint 时崩溃。
 整个流程由两个脚本无人值守完成(全文见 `SO101_SESSION_LOG.md` 第 3 部分):
 
 ```bash
-setsid bash scratchpad/gen_v8_legacy.sh </dev/null >/dev/null 2>&1 &   # 第 1 步
-setsid bash scratchpad/v8_pipeline.sh   </dev/null >/dev/null 2>&1 &   # 第 2–10 步
+setsid bash tools_so101_session/gen_v8_legacy.sh </dev/null >/dev/null 2>&1 &   # 第 1 步
+setsid bash tools_so101_session/v8_pipeline.sh   </dev/null >/dev/null 2>&1 &   # 第 2–10 步
 ```
 
 每个阶段自带 `timeout` 与一次重试、数值门槛(示范条数、示范长度、episode 数、preflight),
@@ -362,7 +363,7 @@ done
 ## 第 2 步 — 混合转换(CPU,约 1.5 小时)
 
 ```bash
-.venv/bin/python scratchpad/convert_v9_demos.py
+.venv/bin/python tools_so101_session/convert_v9_demos.py
 ```
 
 | 数据源 | 条数 | 单位处理 |
@@ -446,6 +447,6 @@ find /dev/shm -maxdepth 1 -type f \( -name 'cuda.shm.*' -o -name 'nccl-*' \) -de
 ## 全自动执行
 
 ```bash
-setsid bash scratchpad/v9_expert_iter.sh </dev/null >/dev/null 2>&1 &
+setsid bash tools_so101_session/v9_expert_iter.sh </dev/null >/dev/null 2>&1 &
 ```
 状态写入 `scratchpad/v9.status`;各阶段自带门槛(采集 ≥300 条、转换 DONE、preflight OK)。

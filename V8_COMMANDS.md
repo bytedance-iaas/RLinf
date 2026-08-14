@@ -1,5 +1,6 @@
 # V8 — every command, every parameter, with rationale
 
+> **Paths**: the scripts live in `tools_so101_session/` inside the repo (see its `README.md` for what each one is for). The `scratchpad/*.status` files referenced below are just runtime status logs; put them wherever you like.
 Target configuration: **full real-camera fidelity (640×480 @ 30 Hz, measured board
 geometry, 8 g cube, success = in-box AND arm home) with the red-cube spawn narrowed
 to the pp-era 6 × 8 cm box.** The narrowing is the only simplification; it exists to
@@ -47,7 +48,7 @@ export SO101_SPAWN_MODE=legacy          # THE only narrowing: 6x8 cm spawn box
 
 for W in 0 1 2 3 4 5 6 7; do
   SEED=$((90000 + W*1000))
-  .venv/bin/python scratchpad/gen_so101_demos.py \
+  .venv/bin/python tools_so101_session/gen_so101_demos.py \
       --num 32 \
       --seed0 $SEED \
       --out /data08/henryg/pai/data/v8_demos_w$W &
@@ -77,7 +78,7 @@ Gate: ≥120 successes, demo median length ≤530 steps. **Actual: 247 successes
 ## Step 2 — convert to a LeRobot dataset (CPU, ~1 h)
 
 ```bash
-.venv/bin/python scratchpad/convert_v8_demos.py
+.venv/bin/python tools_so101_session/convert_v8_demos.py
 ```
 
 | parameter (inside the script) | value | why |
@@ -266,8 +267,8 @@ resolution match, budget headroom, action chunking, eval-seed disjointness.
 The whole sequence runs unattended as two scripts (both in `SO101_SESSION_LOG.md` Part 3):
 
 ```bash
-setsid bash scratchpad/gen_v8_legacy.sh    </dev/null >/dev/null 2>&1 &   # Step 1
-setsid bash scratchpad/v8_pipeline.sh      </dev/null >/dev/null 2>&1 &   # Steps 2-10
+setsid bash tools_so101_session/gen_v8_legacy.sh    </dev/null >/dev/null 2>&1 &   # Step 1
+setsid bash tools_so101_session/v8_pipeline.sh      </dev/null >/dev/null 2>&1 &   # Steps 2-10
 ```
 
 Each stage carries its own `timeout` plus one retry, a numeric gate (demo count, demo
@@ -360,7 +361,7 @@ trajectories**. Gate: ≥300.
 ## Step 2 — mixed conversion (CPU, ~1.5 h)
 
 ```bash
-.venv/bin/python scratchpad/convert_v9_demos.py
+.venv/bin/python tools_so101_session/convert_v9_demos.py
 ```
 
 | source | count | unit handling |
@@ -411,5 +412,5 @@ mid-eval (`SYSTEM_ERROR: Worker unexpectedly exits`) with the driver waiting for
 neither GPU memory nor shm was exhausted. A long total pipeline timeout is not a substitute.
 
 ```bash
-setsid bash scratchpad/v9_expert_iter.sh </dev/null >/dev/null 2>&1 &   # fully automated
+setsid bash tools_so101_session/v9_expert_iter.sh </dev/null >/dev/null 2>&1 &   # fully automated
 ```

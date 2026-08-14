@@ -81,7 +81,16 @@ def main() -> int:
         gbs = int(cfg.actor.global_batch_size)
         mbs = int(cfg.actor.micro_batch_size)
         world = 8  # single-node H200 box
-        samples = envs * (steps // chunks)
+        # rollout_epoch multiplies the per-iteration sample count: the actor
+        # calls merge_rollout_epochs(), which reshapes [rollout_epoch, B, ...]
+        # into [rollout_epoch*B, ...] before the update. Omitting it under-reports
+        # updates/epoch by exactly that factor -- and updates/epoch is the
+        # quantity the conservative-PPO bundle is calibrated in, so an
+        # under-report here is the difference between "1 update/epoch" (safe)
+        # and "3 updates/epoch" (BC erosion). Found 2026-08-13 when the tool
+        # printed 8192 samples for a config whose own arithmetic said 24,576.
+        rollout_epoch = int(cfg.env.train.get("rollout_epoch", 1) or 1)
+        samples = envs * (steps // chunks) * rollout_epoch
         if steps % chunks != 0:
             problems.append(f"steps {steps} % num_action_chunks {chunks} != 0")
         if samples % gbs != 0:
@@ -95,7 +104,7 @@ def main() -> int:
             problems.append(f"per-rank samples {per_rank} % micro_batch {mbs} != 0")
         updates = samples // gbs if gbs and samples % gbs == 0 else None
         if updates is not None:
-            print(f"batch arithmetic: {samples} samples/epoch -> {updates} update(s)/epoch")
+            print(f"batch arithmetic: {envs} envs x {steps // chunks} chunks x rollout_epoch {rollout_epoch} = {samples} samples/epoch -> {updates} update(s)/epoch")
     except Exception as e:  # reasoning/non-embodied configs lack these keys
         print(f"(batch arithmetic skipped: {e})")
 
