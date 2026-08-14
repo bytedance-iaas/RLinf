@@ -41,6 +41,25 @@ curl -fsS http://127.0.0.1:8420/api/health | python3 -m json.tool
 curl -fsS http://127.0.0.1:8420/api/runs | python3 -m json.tool
 ```
 
+需要认证时，同时设置静态用户名和密码；只设置一项或留空会拒绝启动：
+
+```bash
+RLINF_DASHBOARD_AUTH_MODE=basic \
+RLINF_DASHBOARD_AUTH_USERNAME=operator \
+RLINF_DASHBOARD_AUTH_PASSWORD='replace-with-a-secret' \
+  .venv/bin/rlinf-dashboard /tmp/rlinf-dashboard-demo \
+  --host 127.0.0.1 --port 8420
+
+curl -fsS -u operator \
+  http://127.0.0.1:8420/api/health | python3 -m json.tool
+```
+
+`curl` 会交互读取密码，避免把密码写进命令行。
+
+认证会覆盖 UI、API、SSE、视频和 OpenAPI。`/healthz` 是唯一无需认证的接口，
+只返回进程是否存活，不会暴露扫描目录或 run 数。Basic Auth 本身不加密传输，
+非本机部署必须放在 HTTPS ingress 后面。
+
 演示树中的 heartbeat 会随时间过期；重新标记时间而不重建 metrics：
 
 ```bash
@@ -83,8 +102,21 @@ docker run --rm \
   --read-only --tmpfs /tmp \
   -p 8420:8420 \
   -v /path/to/logs:/runs:ro \
+  --env-file /secure/path/dashboard-auth.env \
   rlinf-dashboard:local
 ```
+
+其中 `dashboard-auth.env` 权限应限制为当前用户读取，内容为：
+
+```text
+RLINF_DASHBOARD_AUTH_MODE=basic
+RLINF_DASHBOARD_AUTH_USERNAME=operator
+RLINF_DASHBOARD_AUTH_PASSWORD=replace-with-a-secret
+```
+
+Kubernetes/Helm 部署应从 Secret 通过 `secretKeyRef` 注入这两个环境变量，
+不要把密码写进 args、ConfigMap、URL 或 probe。健康探针使用 `/healthz`，不需要
+也不应携带认证头。
 
 容器以非 root 用户运行，训练日志建议始终只读挂载。完整 image smoke：
 

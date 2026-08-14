@@ -8,6 +8,8 @@ DASHBOARD="$(dirname "$HERE")"
 REPO_ROOT="$(dirname "$DASHBOARD")"
 IMAGE="${IMAGE:-rlinf-dashboard:smoke}"
 PORT="${PORT:-8435}"
+AUTH_USER="container-operator"
+AUTH_PASSWORD="container-password"
 WORK="$(mktemp -d)"
 CONTAINER="rlinf-dashboard-smoke-$$"
 
@@ -54,14 +56,25 @@ docker run --detach --rm \
   --tmpfs /tmp \
   --publish "127.0.0.1:${PORT}:8420" \
   --volume "$WORK:/runs:ro" \
+  --env "RLINF_DASHBOARD_AUTH_MODE=basic" \
+  --env "RLINF_DASHBOARD_AUTH_USERNAME=$AUTH_USER" \
+  --env "RLINF_DASHBOARD_AUTH_PASSWORD=$AUTH_PASSWORD" \
   "$IMAGE" >/dev/null
 
 for _ in $(seq 1 60); do
-  if curl -fsS "http://127.0.0.1:${PORT}/api/health" > "$WORK/health.json"; then
+  if curl -fsS "http://127.0.0.1:${PORT}/healthz" > /dev/null 2>&1; then
     break
   fi
   sleep 0.5
 done
+curl -fsS "http://127.0.0.1:${PORT}/healthz" > /dev/null \
+  || { docker logs "$CONTAINER"; exit 1; }
+
+code="$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/api/health")"
+[ "$code" = "401" ] || { docker logs "$CONTAINER"; exit 1; }
+
+curl -fsS --user "$AUTH_USER:$AUTH_PASSWORD" \
+  "http://127.0.0.1:${PORT}/api/health" > "$WORK/health.json"
 
 python3 - "$WORK/health.json" <<'PY'
 import json
@@ -73,7 +86,8 @@ assert body["status"] == "ok", body
 assert body["run_count"] == 1, body
 PY
 
-curl -fsS "http://127.0.0.1:${PORT}/" | grep -q '<div id="root"' \
+curl -fsS --user "$AUTH_USER:$AUTH_PASSWORD" "http://127.0.0.1:${PORT}/" \
+  | grep -q '<div id="root"' \
   || { docker logs "$CONTAINER"; exit 1; }
 
 echo "CONTAINER SMOKE PASS"
