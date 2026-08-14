@@ -1,0 +1,25 @@
+{{/*
+Headless Service. The StatefulSet needs it for stable per-pod DNS (<release>-0.<release>...),
+which is what Ray uses for node discovery.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rlinf.fullname" . }}
+  labels:
+    {{- include "rlinf.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "rlinf.selectorLabels" . | nindent 4 }}
+  ports:
+    # Carries no traffic. Kept so the rendered Service still matches one deployed before this
+    # chart existed, which is what lets an existing release be adopted in place.
+    - name: placeholder
+      port: 1
+    # APIG Ingress backends. A headless Service still produces an EndpointSlice, and APIG routes
+    # straight to the pod IP.
+    - name: ray-dashboard
+      port: {{ .Values.rayDashboardPort }}
+      targetPort: {{ .Values.rayDashboardPort }}
+      protocol: TCP
