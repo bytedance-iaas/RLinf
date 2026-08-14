@@ -1,0 +1,95 @@
+# v4b = the CONTROLLED TEST of the one unverified link in V10_REPRODUCTION_ZH.md.
+# History warm-started the full-board sim-demo SFT from a pp-era checkpoint
+# trained under a SUPERSEDED task spec (160x120 cameras, 20 Hz, no homing).
+# The reproduction doc replaces that with the real-data SFT checkpoint.
+# Everything else here is byte-identical to so101_sft_v4.yaml: same dataset
+# (so101-sim-demos-v4, 420 eps), same FROZEN v4 norm_stats, same lr 2.5e-5,
+# same 4000 steps. The ONLY variable is the warm start.
+# Target to beat/match: v4 step_1000 = 12.5% full board (honest, seed 909).
+defaults:
+  - model/pi0_5@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0-7   # SFT on all 8 H200 GPUs
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "so101_sft_openpi_pi05"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: -1
+  max_steps: 4000
+  val_check_interval: -1
+  save_interval: 500   # v4 used 1000; 500 here so the early peak cannot be missed
+
+data:
+  # Self-distillation dataset: on-policy SUCCESS rollouts from pp4 step_100.
+  train_data_paths: "so101-sim-demos-v4"
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 16
+  global_batch_size: 128    # must be world_size (8) multiple of micro_batch_size
+  seed: 0
+
+  # Override the default values in model/pi0_5
+  model:
+    precision: null
+    # Warm start = the pp4 RL PEAK checkpoint (75% deterministic eval). The
+    # openpi loader accepts actor/model_state_dict/full_weights.pt and drops
+    # the value-head keys via strict=False.
+    model_path: "/data08/henryg/pai/results/so101_sft_openpi_pi05/checkpoints/global_step_8000"
+    num_action_chunks: 10   # action horizon H (keep == RL openpi.action_horizon)
+    action_dim: 6           # SO101: 5 arm joints + gripper
+    add_value_head: False
+    openpi:
+      config_name: "pi05_so101_v4"
+      detach_critic_input: True
+      num_images_in_input: 2         # front + wrist
+      train_expert_only: False       # full fine-tune
+    # REUSE the pp norm stats: the step_100 policy was trained under these
+    # stats; distilling under the same stats avoids an input-distribution
+    # shift. Do NOT recompute for the pp5 rollout dataset.
+    openpi_data:
+      norm_stats_path: "/data08/henryg/pai/RLinf/assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json"
+
+  optim:
+    # Gentler than fresh-BC (2.5e-5): we are sharpening an already-good
+    # policy on its own successes, not teaching new behavior.
+    lr: 2.5e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1e-10
+    clip_grad: 1.0
+    total_training_steps: 20000
+    lr_warmup_steps: 200
+    lr_scheduler: "cosine"
+    num_cycles: 0.5
+    min_lr: 2.5e-6
+
+  # Override the default values in hybrid_engines/fsdp
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "full_shard"
+    use_orig_params: False
+    gradient_checkpointing: False # for openpi, gradient checkpointing is not supported
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}

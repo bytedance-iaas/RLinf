@@ -133,5 +133,15 @@ FB=$(run_eval "$BESTCK" 2323 fullboard pi05_so101_v9 "" "");   log "FULL-BOARD r
 log "V9 FINAL: ckpt=$(basename "$BESTCK") gate=$BESTAVG verify=${V1:-?}/${V2:-?} fullboard=${FB:-?} | v8 honest was 0.567, pp-era arc ended at ~0.80"
 
 # ---- S5: hygiene ----
-for C in $CKS; do [ "$C" = "$BESTCK" ] || rm -rf "$C"; done
+# Checkpoint hygiene: ONLY when disk is actually tight. Deleting the non-best
+# checkpoints on 2026-08-13 with 1.5 TB free destroyed the ability to ask
+# "does another checkpoint keep the full-board score while matching the gate?"
+# -- the single most useful follow-up question after a negative result.
+FREE_G=$(df --output=avail -BG /data08 | tail -1 | tr -dc '0-9')
+if [ "${FREE_G:-0}" -lt 400 ]; then
+  for C in $CKS; do [ "$C" = "$BESTCK" ] || rm -rf "$C"; done
+  log "hygiene: disk ${FREE_G}G < 400G, kept only $(basename "$BESTCK")"
+else
+  log "hygiene: disk ${FREE_G}G free, ALL checkpoints kept for post-hoc diagnosis"
+fi
 log "v9 done; disk free $(df -h /data08 | tail -1 | awk '{print $4}')"
