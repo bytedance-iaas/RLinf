@@ -1,0 +1,47 @@
+{{/*
+Provisions a NEW gateway (its own CLB and public IP, billed). Omitting spec.id is what tells the
+operator to provision rather than adopt; spec.id appears only after the two-step bootstrap, once
+you feed the resulting instance id back in as apig.existingId.
+
+⚠️ `helm uninstall` deletes this gateway and its auto-assigned *.volceapi.com domain with it.
+*/}}
+{{- include "rlinf.apig.validate" . -}}
+{{- if and .Values.apig.enabled .Values.apig.create }}
+apiVersion: loadbalancer.vke.volcengine.com/v1beta1
+kind: APIGInstance
+metadata:
+  name: {{ printf "%s-apig" (include "rlinf.fullname" .) }}
+  labels:
+    {{- include "rlinf.labels" . | nindent 4 }}
+spec:
+  name: {{ default (printf "%s-apig" (include "rlinf.fullname" .)) .Values.apig.instanceName }}
+  {{- with .Values.apig.existingId }}
+  # Set after the first install: adopts the gateway that was provisioned above, making this
+  # release idempotent instead of provisioning again.
+  id: {{ . | quote }}
+  {{- end }}
+  common:
+    network:
+      subnetIds:
+        {{- toYaml .Values.apig.subnetIds | nindent 8 }}
+    {{- $res := dict }}
+    {{- with .Values.apig.replicas }}{{ $_ := set $res "replicas" . }}{{ end }}
+    {{- with .Values.apig.instanceSpecCode }}{{ $_ := set $res "instanceSpecCode" . }}{{ end }}
+    {{- with .Values.apig.clbSpecCode }}{{ $_ := set $res "clbSpecCode" . }}{{ end }}
+    {{- with .Values.apig.publicNetworkBillingType }}{{ $_ := set $res "publicNetworkBillingType" . }}{{ end }}
+    {{- with .Values.apig.publicNetworkBandwidth }}{{ $_ := set $res "publicNetworkBandwidth" . }}{{ end }}
+    {{- if $res }}
+    # Only the fields you set explicitly; anything omitted is the platform's own default.
+    resource:
+      {{- toYaml $res | nindent 6 }}
+    {{- end }}
+  ingress:
+    enable: true
+    # Scoped to this release's namespace and class, so the gateway never picks up someone else's
+    # Ingress.
+    enableAllNamespaces: false
+    watchNamespaces:
+      - {{ .Release.Namespace }}
+    ingressClasses:
+      - {{ include "rlinf.apig.ingressClassName" . }}
+{{- end }}

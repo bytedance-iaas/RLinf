@@ -1,0 +1,19 @@
+RLinf is deployed as {{ include "rlinf.fullname" . }} in namespace {{ .Release.Namespace }}.
+
+Pod:       {{ include "rlinf.fullname" . }}-0
+Container: rlinf (training shell)
+Storage:   workspace-{{ include "rlinf.fullname" . }}-0 ({{ .Values.persistence.size }}, {{ .Values.persistence.storageClass }}) at /workspace
+
+Wait for the pod, then exec in:
+
+  kubectl rollout status statefulset/{{ include "rlinf.fullname" . }} -n {{ .Release.Namespace }}
+  kubectl exec -it {{ include "rlinf.fullname" . }}-0 -n {{ .Release.Namespace }} -- bash
+
+{{- if .Values.apig.enabled }}
+The Ray dashboard APIG route uses {{ include "rlinf.apig.rayHost" . }} and port
+{{ .Values.rayDashboardPort }}. It returns 503 until `ray start` runs in the pod.
+{{- else }}
+Reach Ray locally after it starts:
+
+  kubectl port-forward -n {{ .Release.Namespace }} {{ include "rlinf.fullname" . }}-0 {{ .Values.rayDashboardPort }}:{{ .Values.rayDashboardPort }}
+{{- end }}
