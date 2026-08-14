@@ -1,7 +1,7 @@
 #!/bin/bash
 # Overnight PPO exploration (user granted full autonomy 2026-08-13 23:15).
 #
-# PHASE 1 (already running as noise_sweep.sh): rollout success vs noise level.
+# PHASE 1 (already running as ppo_noise_sweep_inert_knob.sh): rollout success vs noise level.
 # PHASE 2 (here): rollout success vs DECISIONS PER EPISODE. Direct test of the
 #   structural explanation: noise is injected per decision, so staying on the BC
 #   ridge is a product over decisions. decisions = max_episode_steps/chunks:
@@ -63,7 +63,7 @@ sweep_done(){ grep -q 'noise sweep done' "$SWEEP" 2>/dev/null; }
 DL=$(( $(date +%s) + 3*3600 ))
 while ! sweep_done; do
   [ "$(date +%s)" -gt "$DL" ] && { log "ABORT: phase 1 never finished"; exit 1; }
-  if ! pgrep -f 'bash .*noise_sweep.sh' >/dev/null; then
+  if ! pgrep -f 'bash .*ppo_noise_sweep_inert_knob.sh' >/dev/null; then
     sleep 5; sweep_done && break
     log "ABORT: noise sweep exited without its marker"; exit 1
   fi

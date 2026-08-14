@@ -73,7 +73,7 @@ prev_done(){ grep -qE 'V10 FINAL|S5 GATE FAIL|S4 GATE FAIL|S3 FAIL|S3 ABORT' "$S
 DEADLINE=$(( $(date +%s) + 14*3600 ))
 while ! prev_done; do
   [ "$(date +%s)" -gt "$DEADLINE" ] && { log "ABORT: upstream never finished"; exit 1; }
-  if ! pgrep -f 'bash .*v10_rest.sh' >/dev/null; then
+  if ! pgrep -f 'bash .*pipeline_region_expand.sh' >/dev/null; then
     sleep 5
     prev_done && break
     log "ABORT: upstream exited without a result marker"; exit 1

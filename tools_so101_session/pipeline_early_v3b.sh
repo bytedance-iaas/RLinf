@@ -25,7 +25,7 @@ worker(){
     local FRAC=${SPEC%%;*}; local REST=${SPEC#*;}; local SEED=${REST%%;*}; local NUM=${REST##*;}
     local TAG=B$(echo "$FRAC" | tr ',.' '_-')
     rm -rf /data08/henryg/pai/data/v3_demos_cell$TAG
-    SO101_SPAWN_FRAC=$FRAC timeout 7200 .venv/bin/python "$SCRATCH/gen_so101_demos.py" \
+    SO101_SPAWN_FRAC=$FRAC timeout 7200 .venv/bin/python "$SCRATCH/gen_planner_demos.py" \
       --num $NUM --seed0 $SEED --out /data08/henryg/pai/data/v3_demos_cell$TAG \
       > "$SCRATCH/v3b_gen_${TAG}.out" 2>&1
     local N=$(grep -oE 'TOTAL success [0-9]+' "$SCRATCH/v3b_gen_${TAG}.out" | grep -oE '[0-9]+$' || echo 0)

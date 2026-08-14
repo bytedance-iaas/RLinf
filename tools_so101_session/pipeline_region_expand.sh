@@ -74,7 +74,7 @@ gen_done(){ grep -q 'S2 DONE:' "$STATUS"; }
 DEADLINE=$(( $(date +%s) + 6*3600 ))
 while ! gen_done; do
   [ "$(date +%s)" -gt "$DEADLINE" ] && { log "S3 ABORT: generation never finished"; exit 1; }
-  if ! pgrep -f 'bash .*v10_gen.sh' >/dev/null; then
+  if ! pgrep -f 'bash .*gen_demos_annulus.sh' >/dev/null; then
     sleep 5
     gen_done && break
     log "S3 ABORT: generator exited without its completion marker"; exit 1
@@ -85,7 +85,7 @@ log "S3 conversion starting (append-to-v9-copy; no re-encode of the 672 base epi
 
 FREE=$(df --output=avail -BG /data08 | tail -1 | tr -dc '0-9')
 [ "$FREE" -lt 200 ] && { log "S3 ABORT: disk <200G"; exit 3; }
-timeout 21600 .venv/bin/python "$SCRATCH/convert_v10_demos.py" > "$SCRATCH/convert_v10.out" 2>&1
+timeout 21600 .venv/bin/python "$SCRATCH/convert_append_region.py" > "$SCRATCH/convert_v10.out" 2>&1
 grep -qa '^DONE:' "$SCRATCH/convert_v10.out" || { log "S3 FAIL: conversion"; tail -3 "$SCRATCH/convert_v10.out" >> "$STATUS"; exit 1; }
 log "S3 $(grep -a '^DONE:' "$SCRATCH/convert_v10.out" | tail -1)"
 NEP=$(grep -oaE 'DONE: [0-9]+' "$SCRATCH/convert_v10.out" | grep -oE '[0-9]+' | tail -1)

@@ -3,7 +3,7 @@
 # Autonomy lives in THIS script, not in the agent's session (skill §6: a
 # disconnected session freezes the agent's reactions).
 #
-#  A. Watch the v6 run (rl_v6.sh already carries the auto-stop rules).
+#  A. Watch the v6 run (ppo_early_v6.sh already carries the auto-stop rules).
 #  B. FALLBACK (pre-declared): if it dies before the first training step AND the
 #     log shows CUDA OOM, relaunch ONCE with a smaller memory footprint
 #     (micro_batch 16, 32 train envs, rollout_epoch 6 -> SAME 24,576 samples/iter,
@@ -74,7 +74,7 @@ while [ $D -lt 3000 ]; do
 done
 [ "$FIRST" = "1" ] || { log "ABORT: no first training step and no OOM signature — needs human"; exit 1; }
 
-# ---------- wait for the run to end (rl_v6.sh auto-stop, or trainer death) ----------
+# ---------- wait for the run to end (ppo_early_v6.sh auto-stop, or trainer death) ----------
 while true; do
   sleep 600
   ALIVE=0

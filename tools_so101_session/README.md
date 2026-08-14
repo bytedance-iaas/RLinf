@@ -1,124 +1,74 @@
-# SO101 + PI0.5 工具箱
+# SO101 工具目录
 
-这个目录是 SO101 real2sim 训练过程中写的全部脚本（59 个）。它们原本在会话的临时目录里，那个目录是**易失的**，所以复制到仓库内保存。
+**用途索引在 `../SO101_TOOLS_RUNBOOK_ZH.md`** —— 每个脚本干什么、要解决什么问题，按任务分类。
+这里只保留一份新旧文件名对照表。
 
-按"**你现在想做什么**"组织。每条给出：做什么、什么时候用、怎么用、注意什么。
+## 为什么改名
 
-**通用前置**：所有脚本都假设 `cd /data08/henryg/pai/RLinf`，用 `.venv/bin/python`，并需要一组环境变量（Vulkan ICD、`MUJOCO_GL=egl`、`HF_LEROBOT_HOME`、`REPO_PATH`/`PYTHONPATH`）。成套的流水线脚本（`v*_pipeline.sh`、`v10_*.sh` 等）自己在开头导出这些变量，可以直接 `setsid nohup bash <脚本> &` 启动；单独的 `.py` 工具需要你先导出。
+原来的文件名带着内部实验版本号（`v4`/`v8`/`v9`/`v10`/`pp*`），那是这轮实验的流水编号，对读者没有信息量：
+看到 `convert_v8_demos.py` 不知道它转的是什么，也不知道它和 `convert_v9_demos.py` 有什么区别。
+现在按**功能**命名。
 
----
+**没有改的是数据集名、注册表条目名（`pi05_so101_v4` 等）和结果目录名**——它们是磁盘上的真实路径，
+而且被写进了已有检查点内部（openpi 按 `<model_path>/<repo_id>/` 查找 norm_stats），改名会让现有产物全部失效。
 
-## 1. 我要做一个新的仿真环境 / 改了环境之后要验证
+## 新旧对照（读历史日志时用）
 
-| 脚本 | 做什么 | 什么时候用 |
-|---|---|---|
-| `so101_smoke.py` | 建环境、reset、随机动作走几步，打印观测形状和关节维度 | 改完任务文件的**第一件事**。崩溃或形状不对就不用往下走了 |
-| `render_so101.py` | 渲染当前场景的前视/腕部图像存成 png | 想用眼睛核对场景几何、相机视角时。与真机照片并排看 |
-| `gen_pickonly.py` | 只做"抓起来"的简化规划器探针 | 怀疑任务**物理上做不到**时的最小验证。规划器都抓不起来，RL 更不可能 |
-| `replay_demo.py` | 把真机数据集某一集的动作在仿真里重放 | 标定关节符号/偏置。逐帧对比真机视频 |
-| `verify_calib.py` | 真机 vs 仿真的前视+腕部并排对比图 | 每次改了标定参数之后 |
-| `calib_test.py` / `calib_wflex.py` | 关节符号/偏置的扫描测试；腕部俯仰角专项 | 标定不对、夹爪指向不对时 |
-| `wrist_sweep.py` / `wrist_remount.py` | 腕部相机位姿扫描 / 重新安装点 | 改了腕关节偏置后相机跟着转了，需要重新指向 |
-| `diag_spawn.sh` | 记录方块生成位置与成败的对应关系（CSV） | 想知道"失败集中在哪个区域"时 |
-
-**教训**：改了环境事实（复位姿态、物体位置）之后，**先重跑规划器探针**再解读任何别的东西。设成真实复位姿态那次，规划器的隐含前提被破坏，成功率从 45/64 掉到 1/60，而错误信息完全指向别处。
-
----
-
-## 2. 我要生成示范数据
-
-| 脚本 | 做什么 | 什么时候用 |
-|---|---|---|
-| `gen_so101_demos.py` | **主力规划器**：抓取→抬起→搬运→放进盒子→回位，成功才留。支持 `--num/--seed0/--out`，生成区域由环境变量 `SO101_SPAWN_MODE` / `SO101_SPAWN_FRAC` 控制 | 需要新区域的示范时 |
-| `gen_so101_demos_v2.py` | 同上，但放置阶段的闭环修正改成局部细网格、4 次、检查返回值 | **已验收：无效，别再试**。2026-08-13 A/B：成功率 20/24 vs 20/24 完全持平，落点误差中位反而从 3.9cm 变 4.8cm。误差产生在**松爪之后**（脱手动力学），不是 IK 精度。下次要改先动放置高度和松爪时机 |
-| `gen_v8_legacy.sh` | 8 worker 并行生成 legacy 6×8cm 框内的示范 | 复现 v8 的数据 |
-| `v10_gen.sh` | 8 worker 并行生成**环形带**（ring1 减去内框）的示范，四条边带按面积配额 | 扩域时只补新增区域，不重复生成已有区域 |
-| `measure_chunk_motion.py` | 测量相邻动作块之间图像的变化量 | 怀疑动作块太短、相邻块看到的画面几乎没动时 |
-
-**必守的密度律**：BC 的地板由**示范间距** = √(生成面积 / 示范条数) 决定，不是由总量决定。方块 2.9cm、抓取容差 ±0.7cm；实测 1.01cm→12.5%、0.91cm→7.0%、0.44cm→56.7%。**每次扩大生成区域，示范条数必须按面积同比例增加**。
-
----
-
-## 3. 我要把原始记录转成训练数据集
-
-| 脚本 | 做什么 | 什么时候用 |
-|---|---|---|
-| `convert_v10_demos.py` | **最新、最省时的版本**：复制上一版数据集再**追加**新集，不重编码旧集（省约 2.75 小时）。同时处理 npz（策略自采）和 h5（规划器）两种来源 | 新一轮扩域数据准备。**优先用这个当模板** |
-| `convert_v9_demos.py` | 从零重建：规划器 h5 + 策略 npz 混合 | 需要全新数据集（不基于已有数据集）时 |
-| `convert_v4_demos.py` / `convert_v7_demos.py` / `convert_v8_demos.py` | 各版本的历史转换脚本 | 复现历史结果 |
-| `convert_demos_to_lerobot.py` | 最早的通用转换器 | 参考用 |
-| `convert_pp5_rollouts.py` / `convert_pp6_rollouts.py` / `convert_pp7_rollouts.py` | pp 时代的策略轨迹转换 | 历史 |
-| `merge_mix_v5.py` | 合并两个数据集 | 需要混合不同来源时。**注意**：早期版本用 cv2 读 AV1 视频会静默失败（得到 sim=0），已加计数闸门 |
-| `normstats_sub.py` | 计算/替换 norm_stats | **慎用**，见下 |
-
-**单位不对称的坑**：npz 的 `state` 已经是归一化值，而 `action` 是弧度；h5 则两者都是弧度。转换时必须分别处理。
-
-**norm_stats 血统纪律**：同一条血统内**绝不重算** norm_stats。A/B 实测：只换统计量、其它全不变，成绩从 19.5% 掉到 9.4%。v4 之后的所有版本一律沿用 `assets/pi05_so101_v4/.../norm_stats.json`。
-
----
-
-## 4. 我要跑一轮完整的训练
-
-| 脚本 | 做什么 | 什么时候用 |
-|---|---|---|
-| `v9_expert_iter.sh` | **专家迭代模板**：采集策略自己的成功 → 与规划器示范混合 → 轻量 SFT → 门评 | 想在不冒险的前提下提升现有策略。v9 靠它 +20 点 |
-| `v10_collect.sh` | 在指定区域采集当前策略的成功轨迹（`SO101_COLLECT_DIR` 打开录制器） | 专家迭代的第一步；也可单独用来量策略在新区域的能力 |
-| `v10_rest.sh` | 转换 → 轻量 SFT → 环形门评 → 清理 | 接在 `v10_gen.sh` 之后 |
-| `v8_pipeline.sh` / `v4_pipeline.sh` / `v5_pipeline.sh` / `v3d_pipeline.sh` | 各版本的完整流水线 | 复现历史；也是写新流水线的模板 |
-| `v7_curriculum.sh` / `v7_orchestrator.sh` | 分区域课程式训练 | 想按区域分批训练时（**已证伪**："去掉够不到的区域能抬高地板"这个假设不成立） |
-| `overnight_v3.sh` / `overnight_v3b.sh` / `overnight_v3c.sh` | 早期整夜流水线 | 历史 |
-| `sft_sim.sh` / `sft_pp.sh` | 单独跑一次 SFT | 只想训练、不要整套流水线时 |
-| `rl_v6.sh` / `rl_sft_restart.sh` / `rl_resume750.sh` | PPO 训练启动器 | **当前路线不用**。RL 从 BC 起点极易崩塌，见下 |
-| `phase2_pipeline.sh` | pp 时代的第二阶段 | 历史 |
-
-**RL 的前提**：PPO 是放大器不是发现器。起点成功率为 0 就没有东西可放大（实测 5 次运行、2000 轮、零抓取）。而且高起点上手搓的保守参数组会**掉 53 个点**——优先用专家迭代，要用 PPO 就照抄官方配方（`examples/embodiment/config/so101_ppo_v6_official.yaml`）。
-
----
-
-## 5. 我要评测 / 判断结果可不可信
-
-| 脚本 | 做什么 | 什么时候用 |
-|---|---|---|
-| `v8_verify.sh` | 独立的验证评测：full clean + 超时 + 3 次重试 | 流水线里的评测被 Ray worker 猝死卡住时，单独补跑 |
-| `eval_pp.sh` / `eval_sft_fixed.sh` / `eval_simsft.sh` / `eval750_fixed.sh` | 各版本的单次评测 | 想手动评一个检查点 |
-| `parse_eval_series.py` | 把一串评测日志解析成成绩序列 | 判断是在爬升还是在衰减 |
-| `repro_eval.sh` | 用**官方检查点**在**官方基准**上评测，对照论文的 40.1% | 怀疑自己这套栈有系统性问题时。**这是校准标尺，不是比成绩** |
-| `dl_official_sft.sh` | 下载官方 SFT 检查点（7.5 GB，走代理） | 上一条的前置 |
-| `planner_ab.sh` | 规划器新旧版本的对照实验（同区域同种子） | 改了规划器之后，验收改动是否真的有用 |
-
-**种子纪律**：门评种子（777/888）用来从多个检查点里**挑**；诚实数字必须来自**从未参与挑选**的种子（1313/1414 → 2323/2424 → 3131/3232，用完作废）；采集种子（3001-3008）单独一套，因为采过的局面已经进了训练集。历史上门评与诚实值差 2–6 点。
-
-**判读纪律**：看**最好的检查点**，不是前两个。v8 的 step_250 只有 7.8%、step_500 只有 0.8%，而 step_2500 是 61.7%；v9 的峰值在 step_1250（74.2%），最后一个点 step_2000 只有 7.8%。只看头尾都会得出相反结论。
-
----
-
-## 6. 我要检查配置 / 找隐藏的错误
-
-| 脚本 | 做什么 | 什么时候用 |
-|---|---|---|
-| `toolkits/preflight_config.py`（在仓库主目录，不在这里） | hydra 组装 + 校验 + 路径存在性 + batch 算术 | **每次启动训练前**。它能挡掉路径写错、批量整除不了这类会浪费整晚的问题 |
-| `toolkits/invariant_audit.py`（同上） | 9 项静默错误检查：时序链、相机链、生成区覆盖率、成功语义、norm_stats 血统、数据集/环境一致性、预算余量、动作分块、评测种子隔离 | 换了任务规格、换了数据集、或者"数字说不通"的时候。第一次跑就查出 3 个真问题 |
-| `supervisor_v2.sh` / `overnight_v6_supervisor.sh` | 训练监工：失败分类（shm/显存/端口/未知）后走对应诊断 | 整夜无人值守时 |
-| `v3d_gate_resume.sh` / `v9_rest.sh` | 从中途接管一条断掉的流水线 | 流水线某一段挂了但产物还在，不想从头再来 |
-
----
-
-## 7. 我要归档 / 出文档
-
-| 脚本 | 做什么 |
+| 旧名 | 新名 |
 |---|---|
-| `export_session_md.py` | 把整个会话导出成一个 Markdown（对话 + 所有文件内容 + 所有脚本） |
-| `build_code_appendix.py` | 从活文件里抽取代码，生成 runbook 的代码附录 |
-
-配套文档（在仓库根目录）：`SO101_PP_80PCT_RUNBOOK.md`（含每一步的代码改动）、`V8_COMMANDS.md` / `V8_COMMANDS_ZH.md`（每条命令 + 为什么这么设）、`RLINF_PI05_REAL2SIM_BEST_PRACTICES.md`、`SO101_SESSION_LOG.md`（全量流水帐）。工程纪律沉淀在 `.claude/skills/rlinf-embodied-training/SKILL.md`。
-
----
-
-## 写新流水线时必须抄的四条
-
-这四条每一条都对应一次实际的整夜浪费：
-
-1. **超时按实测速率定**，不要拍整数。转换 3.3 集/分 × 724 集 = 3h20m，写 `timeout 10800`（3h）会在离终点 25 分钟处杀掉它。留 ≥50% 余量并把算术写进注释。
-2. **等待哨兵的写法**：发现上游进程消失后，**必须再查一次完成标记**才能判定失败——上游写标记和退出之间只差微秒。另外**别把哨兵字符串写进自己的日志文案**，否则后续 grep 会匹配到自己。
-3. **判进程存活别用会匹配到自身的 `pgrep -f`**；用启动时记下的 pid 读 `/proc/<pid>/stat` 的状态位——setsid 下退出的 bash 会变成**僵尸**，`/proc/<pid>` 目录还在。
-4. **一个阶段结束时如果没有预先武装好的后继，就是一次静默停摆**。后继脚本要在前一阶段还没结束时就挂上去轮询。
+| `bisect2.sh` | `bisect_rl_settings.sh` |
+| `bisect_v10.sh` | `bisect_checkpoint_vs_env.sh` |
+| `control_v4_rerun.sh` | `verify_env_drift.sh` |
+| `convert_pp5_rollouts.py` | `convert_rollouts_early_pp5.py` |
+| `convert_pp6_rollouts.py` | `convert_rollouts_early_pp6.py` |
+| `convert_pp7_rollouts.py` | `convert_rollouts_early_pp7.py` |
+| `convert_v10_demos.py` | `convert_append_region.py` |
+| `convert_v14_cotrain.py` | `convert_cotrain_simreal.py` |
+| `convert_v4_demos.py` | `convert_fullboard.py` |
+| `convert_v7_demos.py` | `convert_band_curriculum_refuted.py` |
+| `convert_v8_demos.py` | `convert_narrow_box.py` |
+| `convert_v9_demos.py` | `convert_expert_iter.py` |
+| `cotrain_v14.sh` | `pipeline_cotrain_simreal.sh` |
+| `eval750_fixed.sh` | `eval_single_ckpt_750.sh` |
+| `eval_pp.sh` | `eval_single_ckpt_early.sh` |
+| `eval_sft_fixed.sh` | `eval_realdata_sft_in_sim.sh` |
+| `eval_simsft.sh` | `eval_simdemo_sft.sh` |
+| `freeze_v11.sh` | `ppo_freeze_probe.sh` |
+| `gen_pickonly.py` | `probe_grasp_only.py` |
+| `gen_so101_demos.py` | `gen_planner_demos.py` |
+| `gen_so101_demos_v2.py` | `gen_planner_demos_finegrid_rejected.py` |
+| `gen_v8_legacy.sh` | `gen_demos_narrow_box.sh` |
+| `merge_mix_v5.py` | `merge_datasets.py` |
+| `noise_sweep.sh` | `ppo_noise_sweep_inert_knob.sh` |
+| `offline_check.sh` | `offline_check_run.sh` |
+| `onlyeval_v11.sh` | `ppo_onlyeval_probe_deprecated.sh` |
+| `overnight_v3.sh` | `pipeline_early_v3.sh` |
+| `overnight_v3b.sh` | `pipeline_early_v3b.sh` |
+| `overnight_v3c.sh` | `pipeline_early_v3c.sh` |
+| `overnight_v6_supervisor.sh` | `supervisor_early_v6.sh` |
+| `phase2_pipeline.sh` | `pipeline_early_phase2.sh` |
+| `ppo_night.sh` | `ppo_param_search_inert_knob.sh` |
+| `ppo_night2.sh` | `ppo_param_search.sh` |
+| `rl_resume750.sh` | `ppo_resume_early.sh` |
+| `rl_sft_restart.sh` | `ppo_from_realdata_sft.sh` |
+| `rl_v11.sh` | `ppo_train_official_recipe.sh` |
+| `rl_v13.sh` | `ppo_train.sh` |
+| `rl_v6.sh` | `ppo_early_v6.sh` |
+| `sft_pp.sh` | `sft_early_pp.sh` |
+| `sft_sim.sh` | `sft_simdemo_standalone.sh` |
+| `v10_collect.sh` | `collect_policy_successes.sh` |
+| `v10_gen.sh` | `gen_demos_annulus.sh` |
+| `v10_rest.sh` | `pipeline_region_expand.sh` |
+| `v13_baseline.sh` | `verify_baseline_control.sh` |
+| `v13_verify.sh` | `verify_honest_seeds.sh` |
+| `v3d_gate_resume.sh` | `pipeline_gate_resume.sh` |
+| `v3d_pipeline.sh` | `pipeline_early_v3d.sh` |
+| `v4_pipeline.sh` | `pipeline_fullboard.sh` |
+| `v4b_verify.sh` | `verify_warmstart_substitution.sh` |
+| `v5_pipeline.sh` | `pipeline_selfdistill_refuted.sh` |
+| `v7_curriculum.sh` | `pipeline_band_curriculum_refuted.sh` |
+| `v7_orchestrator.sh` | `pipeline_band_curriculum_orchestrator.sh` |
+| `v8_pipeline.sh` | `pipeline_narrow_box.sh` |
+| `v8_verify.sh` | `verify_standalone_retry.sh` |
+| `v9_expert_iter.sh` | `pipeline_expert_iteration.sh` |
+| `v9_rest.sh` | `pipeline_expert_iteration_resume.sh` |

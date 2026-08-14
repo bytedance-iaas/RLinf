@@ -28,7 +28,7 @@ log "v4 pipeline started (pid $$)"
 
 # ---- S0: probe on changed env ----
 rm -rf /data08/henryg/pai/data/v4_probe
-timeout 7200 .venv/bin/python "$SCRATCH/gen_so101_demos.py" --num 12 --seed0 79000 \
+timeout 7200 .venv/bin/python "$SCRATCH/gen_planner_demos.py" --num 12 --seed0 79000 \
   --out /data08/henryg/pai/data/v4_probe > "$SCRATCH/v4_probe.out" 2>&1
 POK=$(grep -oE 'TOTAL success [0-9]+' "$SCRATCH/v4_probe.out" | grep -oE '[0-9]+$' || echo 0)
 log "S0 probe: $POK/12"
@@ -54,7 +54,7 @@ worker(){
     local FRAC=${SPEC%%;*}; local SEED=${SPEC##*;}
     local TAG=$(echo "$FRAC" | tr ',.' '_-')
     rm -rf /data08/henryg/pai/data/v4_demos_cell_$TAG
-    SO101_SPAWN_FRAC=$FRAC timeout 14400 .venv/bin/python "$SCRATCH/gen_so101_demos.py" \
+    SO101_SPAWN_FRAC=$FRAC timeout 14400 .venv/bin/python "$SCRATCH/gen_planner_demos.py" \
       --num 45 --seed0 $SEED --out /data08/henryg/pai/data/v4_demos_cell_$TAG \
       > "$SCRATCH/v4_gen_${TAG}.out" 2>&1
     local N=$(grep -oE 'TOTAL success [0-9]+' "$SCRATCH/v4_gen_${TAG}.out" | grep -oE '[0-9]+$' || echo 0)
@@ -79,7 +79,7 @@ log "S1 DONE: $TOTAL/720 successes"
 [ "${TOTAL:-0}" -ge 250 ] || { log "S1 GATE FAIL: <250 demos"; exit 1; }
 
 # ---- S2: convert + fresh stats ----
-timeout 14400 .venv/bin/python "$SCRATCH/convert_v4_demos.py" > "$SCRATCH/convert_v4.out" 2>&1
+timeout 14400 .venv/bin/python "$SCRATCH/convert_fullboard.py" > "$SCRATCH/convert_v4.out" 2>&1
 grep -q 'DONE:' "$SCRATCH/convert_v4.out" || { log "S2 GATE FAIL: conversion"; tail -3 "$SCRATCH/convert_v4.out" >> "$STATUS"; exit 1; }
 log "S2 convert: $(grep -E '^DONE|^length' "$SCRATCH/convert_v4.out" | tr '\n' ' ')"
 timeout 5400 .venv/bin/python -m toolkits.lerobot.calculate_norm_stats \

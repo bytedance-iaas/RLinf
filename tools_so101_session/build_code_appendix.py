@@ -107,14 +107,14 @@ A("One `TrainConfig` per dataset generation, in `dataconfig/__init__.py::_CONFIG
 A("```python\n" + lines(f"{REPO}/rlinf/models/embodiment/openpi/dataconfig/__init__.py", 546, 563) + "\n```\n")
 
 A("### Step 7 — demonstration generator (the planner)\n")
-A("`scratchpad/gen_so101_demos.py` — grasp, micro-lift verification, payload-offset "
+A("`scratchpad/gen_planner_demos.py` — grasp, micro-lift verification, payload-offset "
   "compensation, two-stage FK transport, closed-loop pre-drop refinement, homing.\n")
-A("```python\n" + func(f"{SCRATCH}/gen_so101_demos.py", "solve_grab_red_cube") + "\n```\n")
+A("```python\n" + func(f"{SCRATCH}/gen_planner_demos.py", "solve_grab_red_cube") + "\n```\n")
 
 A("### Step 8 — dataset conversion\n")
-A("`scratchpad/convert_v4_demos.py` — successful episodes only, units via the SAME "
+A("`scratchpad/convert_fullboard.py` — successful episodes only, units via the SAME "
   "calib module used at RL time, `FPS` = the generator's real control frequency.\n")
-A("```python\n" + whole(f"{SCRATCH}/convert_v4_demos.py") + "\n```\n")
+A("```python\n" + whole(f"{SCRATCH}/convert_fullboard.py") + "\n```\n")
 
 A("### Step 9 — expert iteration (collect → convert → gentle SFT)\n")
 A("Collection is just a deterministic eval with the recorder enabled:\n")

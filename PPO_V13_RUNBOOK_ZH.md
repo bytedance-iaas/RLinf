@@ -20,7 +20,7 @@
 > | 门评（同一套固定评测局面） | 61.7% | 73.4% | +11.7 |
 > | **诚实（从未用过的种子 4141/4242，同块长）** | **52.0%** | **57.8%** | **+5.9** |
 >
-> 门评口径偏乐观，因为峰值是在那套局面上挑出来的。**对外只引用诚实口径的 +5.9。** 起点对照用 `tools_so101_session/v13_baseline.sh` 单独测过（48.4/55.5%），不是估算。
+> 门评口径偏乐观，因为峰值是在那套局面上挑出来的。**对外只引用诚实口径的 +5.9。** 起点对照用 `tools_so101_session/verify_baseline_control.sh` 单独测过（48.4/55.5%），不是估算。
 
 ---
 
@@ -135,7 +135,7 @@ export SO101_SPAWN_FRAC="0.4294,0.9115,0.5142,0.9817"
   "+actor.model.openpi.noise_logvar_range=[0.02,0.04]"
 ```
 
-带自动停机守卫的启动器：`tools_so101_session/rl_v13.sh`（推荐用它，见 §4）。
+带自动停机守卫的启动器：`tools_so101_session/ppo_train.sh`（推荐用它，见 §4）。
 
 **其余参数**（全部来自官方配方，未改）：
 
@@ -160,7 +160,7 @@ export SO101_SPAWN_FRAC="0.4294,0.9115,0.5142,0.9817"
 
 **不能写在会话里**——会话结束守卫就没了，历史上因此白烧过 180 轮。
 
-`tools_so101_session/rl_v13.sh` 每 5 分钟读一次 tensorboard 的 `eval/success_once`：
+`tools_so101_session/ppo_train.sh` 每 5 分钟读一次 tensorboard 的 `eval/success_once`：
 
 | 规则 | 条件 | 动作 |
 |---|---|---|
@@ -212,9 +212,9 @@ export SO101_SPAWN_FRAC="0.4294,0.9115,0.5142,0.9817"
 
 ```bash
 # 诚实验证：从未用过的种子，且用它训练时的 chunks=10
-bash tools_so101_session/v13_verify.sh
+bash tools_so101_session/verify_honest_seeds.sh
 # 起点对照（证明增益不是评测集选择效应）
-bash tools_so101_session/v13_baseline.sh
+bash tools_so101_session/verify_baseline_control.sh
 ```
 
 **产物清单**：
@@ -223,10 +223,10 @@ bash tools_so101_session/v13_baseline.sh
 |---|---|
 | 峰值检查点 | `results/so101_ppo_v13/so101_ppo_v11/checkpoints/global_step_30` |
 | 配置 | `examples/embodiment/config/so101_ppo_v11.yaml` |
-| 启动器（含守卫） | `tools_so101_session/rl_v13.sh` |
-| 探针编排器 | `tools_so101_session/ppo_night2.sh` |
-| 冻结测试模板 | `tools_so101_session/freeze_v11.sh` |
-| 诚实验证 / 起点对照 | `tools_so101_session/v13_verify.sh` / `v13_baseline.sh` |
+| 启动器（含守卫） | `tools_so101_session/ppo_train.sh` |
+| 探针编排器 | `tools_so101_session/ppo_param_search.sh` |
+| 冻结测试模板 | `tools_so101_session/ppo_freeze_probe.sh` |
+| 诚实验证 / 起点对照 | `tools_so101_session/verify_honest_seeds.sh` / `verify_baseline_control.sh` |
 | 代码级流程说明 | `PPO_CODE_WALKTHROUGH_ZH.md` |
 
 ---

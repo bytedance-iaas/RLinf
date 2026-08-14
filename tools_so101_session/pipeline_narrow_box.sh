@@ -3,7 +3,7 @@
 # Full fidelity (640x480, 30 Hz, measured geometry, 8 g cube, homing success)
 # with ONLY the red-cube spawn narrowed to the pp-era 6x8 cm box.
 #
-#   S0 wait for demo generation (gen_v8_legacy.sh, CPU)
+#   S0 wait for demo generation (gen_demos_narrow_box.sh, CPU)
 #   S1 convert -> so101-sim-demos-v8 (fps 30, 480x640)
 #   S2 stats: REUSE v4 (continuing the v4 lineage — never recompute mid-lineage)
 #   S3 BASELINE: eval the warm start (v4_step_1000) IN THE LEGACY BOX — the floor to beat
@@ -52,7 +52,7 @@ until grep -q 'ready for conversion' "$STATUS" 2>/dev/null; do
 done
 
 # ---- S1: convert ----
-timeout 7200 .venv/bin/python "$SCRATCH/convert_v8_demos.py" > "$SCRATCH/convert_v8.out" 2>&1
+timeout 7200 .venv/bin/python "$SCRATCH/convert_narrow_box.py" > "$SCRATCH/convert_v8.out" 2>&1
 grep -q 'DONE:' "$SCRATCH/convert_v8.out" || { log "S1 FAIL: conversion"; tail -3 "$SCRATCH/convert_v8.out" >> "$STATUS"; exit 1; }
 log "S1 $(grep -E '^DONE|^length' "$SCRATCH/convert_v8.out" | tr '\n' ' ')"
 NEP=$(grep -oE 'DONE: [0-9]+' "$SCRATCH/convert_v8.out" | grep -oE '[0-9]+')

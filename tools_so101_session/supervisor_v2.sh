@@ -1,6 +1,6 @@
 #!/bin/bash
 # SUPERVISOR v2 — autonomy that DIAGNOSES instead of pattern-matching one guess.
-# Replaces overnight_v6_supervisor.sh, whose single-branch fallback stalled the
+# Replaces supervisor_early_v6.sh, whose single-branch fallback stalled the
 # night of 2026-08-11 ("needs human") on a failure class it did not know.
 #
 # Loop, up to MAX_ATTEMPTS times:

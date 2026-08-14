@@ -1,6 +1,6 @@
 #!/bin/bash
 # v9_rest — takes over S3 (gentle SFT) + S4 (gate/verify) + S5 (hygiene) from
-# v9_expert_iter.sh, whose S2 `timeout 10800` would have killed the conversion
+# pipeline_expert_iteration.sh, whose S2 `timeout 10800` would have killed the conversion
 # ~30 min before it finishes (measured rate 3.3 ep/min, 724 episodes total).
 # The timeout wrapper was killed so the converter itself survives; this script
 # owns everything after the conversion.
@@ -74,11 +74,11 @@ while :; do
   [ "$(date +%s)" -gt "$DEADLINE" ] && { log "S2 FAIL: 6h deadline"; exit 1; }
   if grep -qa '^DONE:' "$SCRATCH/convert_v9.out" 2>/dev/null; then break; fi
   if alive $PARENT_PID; then sleep 60; continue; fi          # original pipeline alive -> stay out of its way
-  if pgrep -f convert_v9_demos.py >/dev/null; then sleep 60; continue; fi
+  if pgrep -f convert_expert_iter.py >/dev/null; then sleep 60; continue; fi
   if [ "$RESTARTED" = "0" ]; then
     log "S2 converter died without DONE: -> restarting once with a 6h budget"
     RESTARTED=1
-    timeout 21600 .venv/bin/python "$SCRATCH/convert_v9_demos.py" > "$SCRATCH/convert_v9.out" 2>&1 &
+    timeout 21600 .venv/bin/python "$SCRATCH/convert_expert_iter.py" > "$SCRATCH/convert_v9.out" 2>&1 &
     sleep 60; continue
   fi
   log "S2 FAIL (restart also died) — aborting"; exit 1

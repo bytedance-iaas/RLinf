@@ -123,16 +123,16 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 | 工具 | 做什么 | 用在 |
 |---|---|---|
-| `gen_so101_demos.py` | 规划器：抓取→抬起→搬运→入盒→回位，成功才留 | B、C、E |
-| `v10_gen.sh` | 8 worker 并行生成**环形带**示范（只补新区域） | E |
-| `v10_collect.sh` | 采集策略自己的成功轨迹（`SO101_COLLECT_DIR` 打开录制器） | D、E |
-| `convert_v10_demos.py` | 在上一版数据集副本上**追加**新集，不重编码旧集（省 2.75 h） | E |
+| `gen_planner_demos.py` | 规划器：抓取→抬起→搬运→入盒→回位，成功才留 | B、C、E |
+| `gen_demos_annulus.sh` | 8 worker 并行生成**环形带**示范（只补新区域） | E |
+| `collect_policy_successes.sh` | 采集策略自己的成功轨迹（`SO101_COLLECT_DIR` 打开录制器） | D、E |
+| `convert_append_region.py` | 在上一版数据集副本上**追加**新集，不重编码旧集（省 2.75 h） | E |
 | `convert_v4/v8/v9_demos.py` | 各阶段的转换 | B、C、D |
-| `v9_expert_iter.sh` | 专家迭代完整流水线 | D |
-| `v10_rest.sh` | 转换 → SFT → 门评 | E |
-| `freeze_v11.sh` | **冻结探针**（`lr=1e-9`，跑真实训练路径不改权重） | G 的先决条件测量 |
-| `rl_v13.sh` | PPO 启动器，**含自动停机守卫** | G |
-| `v13_verify.sh` / `v13_baseline.sh` | 诚实验证 / 起点对照 | G |
+| `pipeline_expert_iteration.sh` | 专家迭代完整流水线 | D |
+| `pipeline_region_expand.sh` | 转换 → SFT → 门评 | E |
+| `ppo_freeze_probe.sh` | **冻结探针**（`lr=1e-9`，跑真实训练路径不改权重） | G 的先决条件测量 |
+| `ppo_train.sh` | PPO 启动器，**含自动停机守卫** | G |
+| `verify_honest_seeds.sh` / `verify_baseline_control.sh` | 诚实验证 / 起点对照 | G |
 | `offline_replay_check.py` | 用真机数据离线检验策略（sim2real 上机前的门） | 部署前 |
 | `toolkits/preflight_config.py` | 启动前配置校验 | 全程 |
 | `toolkits/invariant_audit.py` | 9 项静默错误检查 | 换规格/换数据集时 |
@@ -165,7 +165,7 @@ export EMBODIED_PATH=$PWD/examples/sft
 **B1 规划器探针**（先证明任务可解）：
 
 ```bash
-.venv/bin/python tools_so101_session/gen_so101_demos.py --num 12 --seed0 79000 --out $DATA/probe
+.venv/bin/python tools_so101_session/gen_planner_demos.py --num 12 --seed0 79000 --out $DATA/probe
 ```
 门槛：≥8/12 成功、中位长度 ≤530 步。**不过就不要往下走**——规划器做不到的，BC 和 RL 都做不到。
 
@@ -175,7 +175,7 @@ export EMBODIED_PATH=$PWD/examples/sft
 SEED=80000
 for XI in 0 1 2 3; do for YI in 0 1 2 3; do
   SO101_SPAWN_FRAC="$(echo "$XI*0.25"|bc -l),$(echo "($XI+1)*0.25"|bc -l),$(echo "$YI*0.25"|bc -l),$(echo "($YI+1)*0.25"|bc -l)" \
-  .venv/bin/python tools_so101_session/gen_so101_demos.py --num 45 --seed0 $SEED \
+  .venv/bin/python tools_so101_session/gen_planner_demos.py --num 45 --seed0 $SEED \
       --out $DATA/v4_demos_cell_${XI}_${YI} &
   SEED=$((SEED+100)); done; done; wait
 ```
@@ -183,7 +183,7 @@ for XI in 0 1 2 3; do for YI in 0 1 2 3; do
 **B3 转换 + 计算 norm_stats（仿真域只算这一次）**：
 
 ```bash
-.venv/bin/python tools_so101_session/convert_v4_demos.py
+.venv/bin/python tools_so101_session/convert_fullboard.py
 .venv/bin/python -m toolkits.lerobot.calculate_norm_stats --config-name pi05_so101_v4
 ```
 
@@ -211,9 +211,9 @@ for XI in 0 1 2 3; do for YI in 0 1 2 3; do
 ```bash
 export SO101_SPAWN_MODE=legacy      # 唯一的收窄项：6×8 cm = 48 cm²
 for W in 0 1 2 3 4 5 6 7; do
-  .venv/bin/python tools_so101_session/gen_so101_demos.py \
+  .venv/bin/python tools_so101_session/gen_planner_demos.py \
     --num 32 --seed0 $((90000 + W*1000)) --out $DATA/v8_demos_w$W & done; wait
-.venv/bin/python tools_so101_session/convert_v8_demos.py     # 不重算 norm_stats
+.venv/bin/python tools_so101_session/convert_narrow_box.py     # 不重算 norm_stats
 .venv/bin/python examples/sft/train_vla_sft.py --config-name so101_sft_v8 ...
 ```
 
@@ -230,7 +230,7 @@ for W in 0 1 2 3 4 5 6 7; do
 
 ## 6. 阶段 D/E —— 专家迭代与扩域
 
-**D（专家迭代，+20 点）**：用当前策略在 8 个**从未用过**的种子上采集自己的成功轨迹（`v10_collect.sh` 的做法），与原始规划器示范**混合**后轻量 SFT。
+**D（专家迭代，+20 点）**：用当前策略在 8 个**从未用过**的种子上采集自己的成功轨迹（`collect_policy_successes.sh` 的做法），与原始规划器示范**混合**后轻量 SFT。
 
 ```bash
 export SO101_COLLECT_DIR=$DATA/v9_rollouts
@@ -238,7 +238,7 @@ for SEED in 2001 2002 2003 2004 2005 2006 2007 2008; do
   SO101_SPAWN_MODE=legacy .venv/bin/python evaluations/eval_embodied_agent.py \
     --config-name so101_eval_openpi_pi05 rollout.model.model_path=$V8 ... env.eval.seed=$SEED
 done
-.venv/bin/python tools_so101_session/convert_v9_demos.py    # 247 规划器 + 425 策略 = 672 集
+.venv/bin/python tools_so101_session/convert_expert_iter.py    # 247 规划器 + 425 策略 = 672 集
 .venv/bin/python examples/sft/train_vla_sft.py --config-name so101_sft_v9 ...   # lr 1e-5, 2000 步
 ```
 
@@ -285,7 +285,7 @@ done
 
 ```bash
 export SO101_SPAWN_FRAC="0.4294,0.9115,0.5142,0.9817"
-bash tools_so101_session/rl_v13.sh        # 含自动停机守卫，推荐
+bash tools_so101_session/ppo_train.sh        # 含自动停机守卫，推荐
 ```
 
 守卫每 5 分钟读 `eval/success_once`：低于峰值 20 点 → 停；连续 3 次低于起点 5 点 → 停。**必须写在启动器里**，写在会话里会随会话消失（历史上因此白烧 180 轮）。

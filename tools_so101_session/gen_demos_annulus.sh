@@ -40,7 +40,7 @@ DEADLINE=$(( $(date +%s) + 4*3600 ))
 done_yet(){ grep -q 'S1 DONE' "$STATUS"; }
 while ! done_yet; do
   [ "$(date +%s)" -gt "$DEADLINE" ] && { log "S2 ABORT: stage-1 never finished"; exit 1; }
-  if ! pgrep -f 'bash .*v10_collect.sh' >/dev/null; then
+  if ! pgrep -f 'bash .*collect_policy_successes.sh' >/dev/null; then
     sleep 5
     done_yet && break
     log "S2 ABORT: collector exited without its completion marker"; exit 1
@@ -53,7 +53,7 @@ log "S2 annulus generation started (4 strips x 2 workers x 30 attempts)"
 worker(){  # id frac seed
   local W=$1 FRAC=$2 SEED=$3
   rm -rf /data08/henryg/pai/data/v10_demos_w$W
-  SO101_SPAWN_FRAC="$FRAC" timeout 14400 .venv/bin/python "$SCRATCH/gen_so101_demos.py" \
+  SO101_SPAWN_FRAC="$FRAC" timeout 14400 .venv/bin/python "$SCRATCH/gen_planner_demos.py" \
     --num 30 --seed0 $SEED --out /data08/henryg/pai/data/v10_demos_w$W \
     > "$SCRATCH/v10_gen_w$W.out" 2>&1
   local N=$(grep -oE 'TOTAL success [0-9]+' "$SCRATCH/v10_gen_w$W.out" | grep -oE '[0-9]+$' || echo 0)

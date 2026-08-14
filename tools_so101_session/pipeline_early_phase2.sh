@@ -39,10 +39,10 @@ log "stage0 env validation OK"
 
 # ---- stage 1: generate pp demos (probe 2, then 180) ----
 export CUDA_VISIBLE_DEVICES=7
-.venv/bin/python "$SCRATCH/gen_so101_demos.py" --num 2 --seed0 5000 --out /data08/henryg/pai/data/so101_pp_demos_probe >> "$STATUS" 2>&1
+.venv/bin/python "$SCRATCH/gen_planner_demos.py" --num 2 --seed0 5000 --out /data08/henryg/pai/data/so101_pp_demos_probe >> "$STATUS" 2>&1
 grep -q "TOTAL success [12]/2" "$STATUS" || { log "STAGE1 PROBE FAILED - aborting"; exit 1; }
 log "stage1 probe OK; generating 180 demos"
-.venv/bin/python "$SCRATCH/gen_so101_demos.py" --num 180 --seed0 6000 --out /data08/henryg/pai/data/so101_pp_demos > "$SCRATCH/gen_pp.out" 2>&1
+.venv/bin/python "$SCRATCH/gen_planner_demos.py" --num 180 --seed0 6000 --out /data08/henryg/pai/data/so101_pp_demos > "$SCRATCH/gen_pp.out" 2>&1
 NOK=$(grep -oE 'TOTAL success [0-9]+' "$SCRATCH/gen_pp.out" | grep -oE '[0-9]+$' || echo 0)
 log "stage1 done: $NOK/180 successful demos"
 [ "${NOK:-0}" -ge 80 ] || { log "STAGE1 too few successes - aborting"; exit 1; }

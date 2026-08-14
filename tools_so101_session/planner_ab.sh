@@ -2,8 +2,8 @@
 # A/B for the planner drop fix, on the two strips where the current planner is
 # worst (LEFT and TOP: 33% hit rate, 5.6-7.0 cm median drop error over 298
 # logged attempts). Same strips, same seeds, only the planner differs.
-#   A = gen_so101_demos.py     (current, coarse refinement, 2 passes, unchecked)
-#   B = gen_so101_demos_v2.py  (fine local grid, 4 passes, return checked)
+#   A = gen_planner_demos.py     (current, coarse refinement, 2 passes, unchecked)
+#   B = gen_planner_demos_finegrid_rejected.py  (fine local grid, 4 passes, return checked)
 # Runs AFTER the annulus generation finishes so the two never share the GPUs.
 set -uo pipefail
 SCRATCH=/tmp/claude-0/-data08-henryg-pai-RLinf/3e748c24-1f70-49ee-a01c-395d2f1161dd/scratchpad
@@ -22,7 +22,7 @@ gen_done(){ grep -q 'S2 DONE:' "$STATUS"; }
 DEADLINE=$(( $(date +%s) + 3*3600 ))
 while ! gen_done; do
   [ "$(date +%s)" -gt "$DEADLINE" ] && { log "AB ABORT: generation never finished"; exit 1; }
-  if ! pgrep -f 'bash .*v10_gen.sh' >/dev/null; then
+  if ! pgrep -f 'bash .*gen_demos_annulus.sh' >/dev/null; then
     sleep 5; gen_done && break
     log "AB ABORT: generator exited without its completion marker"; exit 1
   fi
@@ -39,9 +39,9 @@ run(){  # tag script frac seed0
   local N=$(grep -oE 'TOTAL success [0-9]+' "$SCRATCH/ab_$1.out" | grep -oE '[0-9]+$' || echo 0)
   log "A/B $1: ${N:-0}/12"
 }
-run oldleft gen_so101_demos.py    "$LEFT" 500000 &
-run newleft gen_so101_demos_v2.py "$LEFT" 500000 &
-run oldtop  gen_so101_demos.py    "$TOP"  600000 &
-run newtop  gen_so101_demos_v2.py "$TOP"  600000 &
+run oldleft gen_planner_demos.py    "$LEFT" 500000 &
+run newleft gen_planner_demos_finegrid_rejected.py "$LEFT" 500000 &
+run oldtop  gen_planner_demos.py    "$TOP"  600000 &
+run newtop  gen_planner_demos_finegrid_rejected.py "$TOP"  600000 &
 wait
 log "A/B DONE: $(for t in oldleft newleft oldtop newtop; do printf "%s=%s " $t "$(grep -oE 'TOTAL success [0-9]+' $SCRATCH/ab_$t.out | grep -oE '[0-9]+$')"; done)"

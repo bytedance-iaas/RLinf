@@ -1,5 +1,5 @@
 #!/bin/bash
-# Re-run of the ENV-DRIFT CONTROL that v4b_verify.sh fumbled: it placed the
+# Re-run of the ENV-DRIFT CONTROL that verify_warmstart_substitution.sh fumbled: it placed the
 # control eval BEFORE the line that exports EMBODIED_PATH, so all three tries
 # died instantly with KeyError: 'EMBODIED_PATH' and the script fell back to the
 # historical 0.125 -- i.e. the very number the control exists to re-check.
@@ -39,7 +39,7 @@ v4b_done(){ grep -qE 'V4B FINAL|GATE FAIL|PREFLIGHT FAIL|ABORT:' "$STATUS" 2>/de
 DEADLINE=$(( $(date +%s) + 8*3600 ))
 while ! v4b_done; do
   [ "$(date +%s)" -gt "$DEADLINE" ] && { log "CONTROL-RERUN ABORT: v4b never finished"; exit 1; }
-  if ! pgrep -f 'bash .*v4b_verify.sh' >/dev/null; then
+  if ! pgrep -f 'bash .*verify_warmstart_substitution.sh' >/dev/null; then
     sleep 5; v4b_done && break
     log "CONTROL-RERUN ABORT: v4b exited without a completion marker"; exit 1
   fi

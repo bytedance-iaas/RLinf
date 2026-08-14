@@ -160,7 +160,7 @@ export EMBODIED_PATH=$PWD/examples/sft
 ### B1. 规划器探针（先验证任务可解）
 
 ```bash
-.venv/bin/python tools_so101_session/gen_so101_demos.py \
+.venv/bin/python tools_so101_session/gen_planner_demos.py \
   --num 12 --seed0 79000 --out $DATA/probe
 ```
 
@@ -176,7 +176,7 @@ for XI in 0 1 2 3; do for YI in 0 1 2 3; do
   X0=$(echo "$XI*0.25" | bc -l); X1=$(echo "($XI+1)*0.25" | bc -l)
   Y0=$(echo "$YI*0.25" | bc -l); Y1=$(echo "($YI+1)*0.25" | bc -l)
   SO101_SPAWN_FRAC="$X0,$X1,$Y0,$Y1" \
-    .venv/bin/python tools_so101_session/gen_so101_demos.py \
+    .venv/bin/python tools_so101_session/gen_planner_demos.py \
       --num 45 --seed0 $SEED --out $DATA/v4_demos_cell_${XI}_${YI} &
   SEED=$((SEED+100))
 done; done
@@ -196,7 +196,7 @@ wait
 ### B3. 转换 + 计算 norm_stats（**整条血统只算这一次**）
 
 ```bash
-.venv/bin/python tools_so101_session/convert_v4_demos.py     # -> so101-sim-demos-v4
+.venv/bin/python tools_so101_session/convert_fullboard.py     # -> so101-sim-demos-v4
 .venv/bin/python -m toolkits.lerobot.calculate_norm_stats --config-name pi05_so101_v4
 # 产出 assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json
 ```
@@ -260,7 +260,7 @@ done
 ```bash
 export SO101_SPAWN_MODE=legacy     # 唯一的收窄项：6×8 cm = 48 cm²
 for W in 0 1 2 3 4 5 6 7; do
-  .venv/bin/python tools_so101_session/gen_so101_demos.py \
+  .venv/bin/python tools_so101_session/gen_planner_demos.py \
     --num 32 --seed0 $((90000 + W*1000)) --out $DATA/v8_demos_w$W &
 done; wait
 ```
@@ -276,7 +276,7 @@ done; wait
 ### C2. 转换（**不重算 norm_stats**）
 
 ```bash
-.venv/bin/python tools_so101_session/convert_v8_demos.py     # -> so101-sim-demos-v8
+.venv/bin/python tools_so101_session/convert_narrow_box.py     # -> so101-sim-demos-v8
 ```
 
 ### C3. SFT + 门评
@@ -335,7 +335,7 @@ done
 ### D2. 混合转换
 
 ```bash
-.venv/bin/python tools_so101_session/convert_v9_demos.py    # -> so101-sim-demos-v9
+.venv/bin/python tools_so101_session/convert_expert_iter.py    # -> so101-sim-demos-v9
 ```
 
 混合内容：247 条规划器示范 + 425 条策略轨迹（477 条里 52 条被 80-580 帧的长度闸挡掉）= **672 集**，间距 **0.27 cm**。
@@ -420,7 +420,7 @@ TOP="0.5000,0.8410,0.9132,0.9817"     # 6.00 ×  1.66 cm =  9.9 cm²
 
 SEED=110000; W=0
 for FRAC in "$LEFT" "$LEFT" "$RIGHT" "$RIGHT" "$BOTTOM" "$BOTTOM" "$TOP" "$TOP"; do
-  SO101_SPAWN_FRAC="$FRAC" .venv/bin/python tools_so101_session/gen_so101_demos.py \
+  SO101_SPAWN_FRAC="$FRAC" .venv/bin/python tools_so101_session/gen_planner_demos.py \
     --num 30 --seed0 $SEED --out $DATA/v10_demos_w$W &
   W=$((W+1)); SEED=$((SEED+1000))
 done; wait
@@ -437,7 +437,7 @@ done; wait
 ### E3. 转换（在上一版数据集副本上追加）
 
 ```bash
-.venv/bin/python tools_so101_session/convert_v10_demos.py    # -> so101-sim-demos-v10
+.venv/bin/python tools_so101_session/convert_append_region.py    # -> so101-sim-demos-v10
 ```
 
 不从零重建：复制 `so101-sim-demos-v9` 后只追加新集。v9 那 672 集重新编码要约 2.75 小时而产出**逐字节相同**的视频，纯浪费。
@@ -470,7 +470,7 @@ done; wait
 # 4) 另加两个参照：框内（SO101_SPAWN_MODE=legacy）与全板
 ```
 
-直接用脚本：`tools_so101_session/v10_rest.sh`（含 full clean、超时 1800、3 次重试——Ray worker 曾经猝死卡住整条流水线 24 分钟）。
+直接用脚本：`tools_so101_session/pipeline_region_expand.sh`（含 full clean、超时 1800、3 次重试——Ray worker 曾经猝死卡住整条流水线 24 分钟）。
 
 > **框内参照必须用 `SO101_SPAWN_MODE=legacy`**，不能用等价的比例矩形：legacy 模式下**蓝色干扰块的分布不同**，两者的数字不可比。
 
@@ -807,7 +807,7 @@ export SO101_SPAWN_FRAC="0.4294,0.9115,0.5142,0.9817"
 ```
 
 配置文件 `examples/embodiment/config/so101_ppo_v11.yaml`（πRL 官方配方 + 起点换成 v10），命令行只覆盖上面这几项。
-起点：`so101_sft_v10/.../global_step_1000`。启动器（含自动停机守卫）：`tools_so101_session/rl_v13.sh`。
+起点：`so101_sft_v10/.../global_step_1000`。启动器（含自动停机守卫）：`tools_so101_session/ppo_train.sh`。
 
 | 其余参数 | 值 | 来源 |
 |---|---|---|
@@ -831,7 +831,7 @@ export SO101_SPAWN_FRAC="0.4294,0.9115,0.5142,0.9817"
 
 ### G.4 自动停机守卫（必须写在启动器里，不能写在会话里）
 
-`tools_so101_session/rl_v13.sh` 每 5 分钟读一次 tensorboard 的 `eval/success_once`：
+`tools_so101_session/ppo_train.sh` 每 5 分钟读一次 tensorboard 的 `eval/success_once`：
 
 - **崩塌**：某次评测低于历史峰值 **20 点** → 立即杀训练；
 - **无收益**：连续 **3 次**低于第一次评测 5 点以上 → 停。
