@@ -1,0 +1,62 @@
+{{- include "rlinf.image.validate" . }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "rlinf.fullname" . }}
+  labels:
+    {{- include "rlinf.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "rlinf.fullname" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rlinf.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rlinf.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # StatefulSet only allows Always; spelled out to document the workload contract.
+      restartPolicy: Always
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Idles until you exec in and launch training by hand. Deliberately not configurable:
+          # the image ENTRYPOINT is tini (PID 1, reaps the children `ray stop` leaves behind), and
+          # anything that replaced this would have to keep tini as PID 1 to avoid piling up
+          # <defunct> processes. Set `args`, never `command`.
+          args: ["sleep", "infinity"]
+          {{- with .Values.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.dshmSize | quote }}
+  # Binds an existing workspace-<release>-<ordinal> PVC if there is one and only creates it
+  # otherwise, so checkpoints survive a reinstall. IMMUTABLE after creation: changing size or
+  # storageClass fails the upgrade.
+  volumeClaimTemplates:
+    - metadata:
+        name: workspace
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: {{ .Values.persistence.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
