@@ -1,0 +1,27 @@
+{{/* Optional Volcengine APIG route for Ray's own dashboard. */}}
+{{- include "rlinf.apig.validate" . -}}
+{{- if .Values.apig.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "rlinf.apig.rayIngressName" . }}
+  labels:
+    {{- include "rlinf.labels" . | nindent 4 }}
+  {{- with (include "rlinf.apig.annotations" . | trim) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ include "rlinf.apig.ingressClassName" . }}
+  rules:
+    - host: {{ include "rlinf.apig.rayHost" . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "rlinf.fullname" . }}
+                port:
+                  number: {{ .Values.rayDashboardPort }}
+{{- end }}

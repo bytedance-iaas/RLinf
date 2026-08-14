@@ -1,0 +1,23 @@
+apiVersion: v2
+name: rlinf
+description: RLinf training workload (StatefulSet + GPU + persistent workspace) with optional APIG access to Ray
+type: application
+
+# Chart version. Bump on every packaging change. Independent of the RLinf release below: the
+# chart can change without the application changing, and vice versa.
+version: 0.1.0
+
+# RLinf release this chart targets. Not the image tag — the chart pins no image (image.tag is
+# required at install time), so this tracks the repository version instead.
+appVersion: "0.3.1-bytedance"
+
+keywords:
+  - rlinf
+  - reinforcement-learning
+  - gpu
+  - kubernetes
+  - helm
+
+home: https://rlinf.readthedocs.io/en/latest/
+sources:
+  - https://github.com/RLinf/RLinf
