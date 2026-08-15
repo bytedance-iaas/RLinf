@@ -354,3 +354,26 @@ a 30-hour retrain would have bought nothing.
 **Render your training data and LOOK at it.** The wrist defect was invisible in
 code review and in every metric for weeks; it took one grid of frames sampled
 from actual training episodes. Do this once per camera when a new env is built.
+
+## 8. Gate on both axes when an intervention trades one metric against another
+
+A gate that selects checkpoints on a single number is fine while every stage
+optimises the same thing. It stops being fine the moment an intervention targets
+metric A while being able to damage metric B — then a single-axis gate will
+happily hand you a checkpoint that bought A with B, and the trade is invisible
+in the number you looked at.
+
+Sim+real co-training is exactly that shape: it targets real-observation
+performance and can eat the simulator competence that took days to build. So
+every checkpoint got BOTH the offline real-observation ratio (the objective,
+starting at 4.47, target <1) and the sim ring-1 success rate (the constraint,
+must not fall from 57.8%).
+
+It caught the trade in flight. At 750 steps the real ratio had improved to 1.16
+while sim had dropped to 52.3% — progress on the axis being optimised, paid for
+on the axis that was not being watched. By 1500 steps both were healthy (0.85
+and 60.2%), so the win was real rather than a transfer.
+
+The rule generalises: **name the constraint before the run, measure it at the
+same cadence as the objective, and log both side by side.** If the constraint
+is only checked at the end, the gate has already chosen for you.

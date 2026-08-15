@@ -108,7 +108,18 @@ for CK in $CKS; do
   SIMR=$(echo "$R" | awk '{print $1}'); REALR=$(echo "$R" | awk '{print $2}')
   S1=$(sim_eval "$CK" 4141)
   log "$(basename $CK): offline sim=${SIMR:-?} real=${REALR:-?} | sim ring-1 seed4141=${S1:-FAIL}"
-  if [ -n "${REALR:-}" ] && awk -v a="$REALR" -v b="$BESTR" 'BEGIN{exit !(a<b)}'; then BESTR=$REALR; BEST=$CK; fi
+  # Selection must use BOTH axes, not just the one being optimised. Measuring
+  # the constraint and then ignoring it at selection time is how you end up
+  # shipping a checkpoint that bought the objective with the constraint: this
+  # run produced 1750 (real 0.84, sim 63.3%) and 2000 (real 0.84, sim 30.5%),
+  # identical on the objective and 33 points apart on the constraint. The first
+  # version of this line would have separated them only by tie-break order.
+  SIM_FLOOR=0.50            # ring-1 was 0.578 before co-training; allow ~1 sd of slack
+  if [ -n "${REALR:-}" ] && [ -n "${S1:-}" ] \
+     && awk -v s="$S1" -v f="$SIM_FLOOR" 'BEGIN{exit !(s>=f)}' \
+     && awk -v a="$REALR" -v b="$BESTR" 'BEGIN{exit !(a<b)}'; then
+    BESTR=$REALR; BEST=$CK
+  fi
 done
 [ -n "$BEST" ] || { log "S3 FAIL: no checkpoint produced an offline number"; exit 1; }
 S2v=$(sim_eval "$BEST" 4242)
