@@ -1,5 +1,6 @@
 # Defaults are installable-anywhere, not tuned for any one cluster: no node pin, no image tag and
-# APIG off. The pod runs `rlinf`, the training shell you exec into.
+# APIG off. The pod runs two containers — `rlinf`, the training shell you exec into, and
+# `dashboard`, a sidecar serving the web UI off the shared workspace.
 
 # Resource names come from the RELEASE name. ⚠️ The name also determines the PVC
 # (workspace-<name>-0) and the per-pod DNS (<name>-0.<name>.<ns>.svc) that Ray uses for node
@@ -42,7 +43,8 @@ resources:
 persistence:
   # A block storage class from your cluster. Must support ReadWriteOnce.
   storageClass: ""
-  # Mounted at /workspace for code, checkpoints and logs.
+  # Mounted at /workspace: code, checkpoints and logs. Read-write for the training container,
+  # read-only for the dashboard sidecar.
   # The claim is a StatefulSet volumeClaimTemplate, which binds if-exists: the PVC name is derived
   # as workspace-<release>-<ordinal>, and an existing one is REUSED with all its data rather than
   # replaced. So a reinstall keeps checkpoints, and `helm uninstall` deliberately leaves the PVC
@@ -64,18 +66,87 @@ dshmSize: 256Gi
 # pod, so its APIG route returns 503 until then. That is expected, not a broken ingress.
 rayDashboardPort: 8265
 
+# Web UI sidecar. Its own container so that a dashboard crash restarts only the dashboard and
+# leaves the training process untouched; kubelet restarts it in place.
+dashboard:
+  # false drops the sidecar, its Service port and its APIG route together.
+  enabled: true
+
+  image:
+    # Built from dashboard/Dockerfile in this repository.
+    repository: rlinf/rlinf-dashboard
+    # Empty means "follow image.tag" — both images come out of the same build and should move
+    # together. Set it only to deliberately pin them apart.
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  # HTTP port. Default: 8420. Also the Service port and the APIG dashboard backend, so changing it
+  # here changes all three.
+  port: 8420
+
+  # Log directory the dashboard scans, inside the shared workspace. Must match where training runs
+  # actually write.
+  logsPath: /workspace/RLinf/logs
+
+  # Optional HTTP Basic authentication. Production should point at an existing Kubernetes Secret;
+  # the inline username/password mode is convenient for a private test deployment, but Helm stores
+  # values in the release history. Both modes inject credentials only through secretKeyRef. When
+  # APIG exposes the dashboard publicly, the chart requires auth to be enabled.
+  auth:
+    enabled: false
+    existingSecret: ""
+    usernameKey: username
+    passwordKey: password
+    username: ""
+    password: ""
+
+  # Tiny by design: it serves a UI and tails logs. Raise memory if the log directory grows into
+  # the tens of GB.
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: "2",  memory: 2Gi }
+
+  # It reads files and serves HTTP; it needs nothing else.
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+
+  # Liveness is deliberately TCP: a full log-discovery scan can be slow on a large workspace, and
+  # an HTTP probe would kill a healthy process mid-scan. With auth disabled, startup is TCP too;
+  # with auth enabled, the chart replaces it with a protected-endpoint contract check so an old
+  # image that silently ignores auth credentials can never become Ready. Readiness uses the
+  # minimal, non-scanning /healthz endpoint.
+  probes:
+    # 30 x 2s = 60s to come up before the container is declared failed.
+    startup:
+      tcpSocket: { port: dashboard }
+      periodSeconds: 2
+      timeoutSeconds: 2
+      failureThreshold: 30
+    readiness:
+      httpGet: { path: /healthz, port: dashboard }
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    liveness:
+      tcpSocket: { port: dashboard }
+      periodSeconds: 10
+      timeoutSeconds: 1
+      failureThreshold: 3
+
 env:
   # An ORDERED LIST, not a map: Helm's `range` sorts map keys, and reordering container env
   # changes the pod-template hash — which would restart the pod on upgrade for no reason.
   # Required for GPU rendering (LIBERO / MuJoCo EGL) inside the container.
   - { name: NVIDIA_DRIVER_CAPABILITIES, value: all }
 
-# Public HTTPS entry point to the Ray dashboard through Volcengine APIG. OFF by default so a first
-# install succeeds on any cluster; Ray stays reachable with `kubectl port-forward` either way.
+# Public HTTPS entry point through Volcengine APIG. OFF by default so a first install succeeds on
+# any cluster; the dashboards stay reachable with `kubectl port-forward` either way.
 #
 # ⚠️ TURNING THIS ON PUBLISHES THE RAY DASHBOARD TO THE INTERNET WITH NO AUTHENTICATION.
-#    There is no auth option for the Ray route and this chart deliberately does not invent one:
-#    anyone who knows the assigned
+#    dashboard.auth covers ONLY the RLinf Dashboard route. There is no auth option for the Ray
+#    route and this chart deliberately does not invent one: anyone who knows the assigned
 #    *.volceapi.com address reaches it directly — no password, no allowlist, no gateway-level
 #    check. And the address is not a secret: the platform issues it and lists it in the APIG
 #    console. Since the Ray dashboard accepts arbitrary job submissions, that URL is remote code
@@ -126,9 +197,9 @@ apig:
   # distinct host is what earns its own managed *.volceapi.com domain. Must not collide with a
   # host already registered on the same gateway.
   # ⚠️ Never put the auto-assigned *.volceapi.com name here.
-  host: ""                        # reserved for the RLinf Dashboard route added later
+  host: ""                        # default: <release>.apig.local
   # The Ray dashboard needs a host of its own to get its own domain.
   # ⚠️ This route is UNAUTHENTICATED — see the warning at the top of this section. It is the one
   # host here that hands a stranger a job-submission endpoint on your GPUs.
-  rayHost: ""                     # default: ray.<release>.apig.local
+  rayHost: ""                     # default: ray.<host>
   annotations: {}                 # binding annotations are added automatically from existingId
