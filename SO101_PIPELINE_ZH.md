@@ -119,23 +119,104 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 ## 2. 工具清单
 
-全部在 `tools_so101_session/`（59 个脚本，`README.md` 是按用途分类的索引）。本流程直接用到的：
+全部在 `tools_so101_session/`（79 个脚本；`SO101_TOOLS_RUNBOOK_ZH.md` 是完整索引，含每个脚本"要解决什么问题"）。
+下面只列本流程直接用到的，并说清**它做什么、怎么用、有什么坑**。
 
-| 工具 | 做什么 | 用在 |
+### 2.1 造数据
+
+**`gen_planner_demos.py` —— 主力示范生成器（阶段 B、C、E）**
+
+脚本化的运动规划器，不含任何神经网络。一条示范的完整流程：复位 → **抬臂到就绪位姿**（24 步插值）→ 用方块的定向包围盒算抓取位姿 → 上方 3cm 下降到 1cm → 闭合夹爪并**保持 10 帧让它物理上真的合拢** → **微提验证**（抬 3cm，方块必须升高 >1.5cm，否则判定抓取失败重试）→ 两段式 FK 搬运（先垂直提升再平移）→ 闭环修正落点 → 松爪 → 30 步插值回到初始位姿。**只有成功的才留下**。
+
+```bash
+SO101_SPAWN_FRAC="x0,x1,y0,y1" python tools_so101_session/gen_planner_demos.py     --num 30 --seed0 90000 --out $DATA/demos_w0
+```
+
+| 参数 | 含义 |
+|---|---|
+| `--num` | 要**多少条示范**，不是尝试多少次——每条最多试 3 个变体（投放点微调、投放高度、抓取点抖动） |
+| `--seed0` | 起始种子；多进程并行时各进程种子区间必须不重叠，否则生成重复轨迹 |
+| `SO101_SPAWN_MODE=legacy` | 把方块限制在 6×8cm 小框 |
+| `SO101_SPAWN_FRAC="x0,x1,y0,y1"` | 按全板比例限制到任意子矩形 |
+
+**两个关键设计**，都是踩坑后加的：**微提验证**——ManiSkill 的 `is_grasping` 靠接触力，夹住一个角、其实拿不起来也会返回 True，没有这一步会有一批"看起来抓住了、一搬运就掉"的假示范混进训练集，而模型会老实把这种失败模式学下来。**抬臂前缀**——真实复位姿态是手臂折叠、夹爪近闭合，而规划器的抓取例程假设张开的夹爪和腕滚 π/2；不加这个前缀，成功率从 45/64 掉到 1/60。
+
+**`gen_demos_annulus.sh` —— 只补新增区域（阶段 E）**
+
+扩大生成区时，旧区域已经有足够示范，重新生成整个区域是浪费。这个脚本把**环形带**（新区域减去旧区域）切成四条边带，按**面积配额**分配生成量（左33/右33/下23/上23），8 个 worker 并行。配额来自密度律：需要多少条 = 面积 ÷ 目标间距²。
+
+**`collect_policy_successes.sh` —— 让策略给自己造数据（阶段 D、E）**
+
+不是新写的采集程序，而是**在评测回路里挂一个录制器**：设 `SO101_COLLECT_DIR` 后，`ManiskillEnv` 每步把 (前视图, 腕视图, 状态, 动作) 追加进**内存缓冲区**；某一路环境**第一次成功**时，才把整段缓冲区**写成一个 `.npz` 文件存到磁盘**。失败的回合一直留在内存里，随下一次 reset 被丢弃，不产生文件。
+
+```bash
+SO101_COLLECT_DIR=$DATA/rollouts SO101_SPAWN_MODE=legacy python evaluations/eval_embodied_agent.py --config-name so101_eval_openpi_pi05     rollout.model.model_path=$CKPT env.eval.seed=2001 env.eval.total_num_envs=128
+```
+
+三条纪律：**只在第一次成功时写文件**（成功之后策略还会继续动，只保留到成功那一刻）；**必须用从未用过的种子**（采过的局面等于进了训练集）；**评测是确定性的**（录的是策略的最好水平，不是抖出来的偶然成功）。
+
+### 2.2 转成训练数据集
+
+仿真产出的是 `.h5`（规划器）和 `.npz`（策略自采），训练器只认 LeRobot 格式。转换做四件事：**统一单位** → **长度过滤** → **编码成视频** → **写索引**。视频编码占 90% 的时间（约 3.3 集/分钟）。
+
+| 脚本 | 用在 | 它的特殊之处 |
 |---|---|---|
-| `gen_planner_demos.py` | 规划器：抓取→抬起→搬运→入盒→回位，成功才留 | B、C、E |
-| `gen_demos_annulus.sh` | 8 worker 并行生成**环形带**示范（只补新区域） | E |
-| `collect_policy_successes.sh` | 采集策略自己的成功轨迹（`SO101_COLLECT_DIR` 打开录制器） | D、E |
-| `convert_append_region.py` | 在上一版数据集副本上**追加**新集，不重编码旧集（省 2.75 h） | E |
-| `convert_v4/v8/v9_demos.py` | 各阶段的转换 | B、C、D |
-| `pipeline_expert_iteration.sh` | 专家迭代完整流水线 | D |
-| `pipeline_region_expand.sh` | 转换 → SFT → 门评 | E |
-| `ppo_freeze_probe.sh` | **冻结探针**（`lr=1e-9`，跑真实训练路径不改权重） | G 的先决条件测量 |
-| `ppo_train.sh` | PPO 启动器，**含自动停机守卫** | G |
-| `verify_honest_seeds.sh` / `verify_baseline_control.sh` | 诚实验证 / 起点对照 | G |
-| `offline_replay_check.py` | 用真机数据离线检验策略（sim2real 上机前的门） | 部署前 |
-| `toolkits/preflight_config.py` | 启动前配置校验 | 全程 |
-| `toolkits/invariant_audit.py` | 9 项静默错误检查 | 换规格/换数据集时 |
+| `convert_fullboard.py` | 阶段 B | 纯规划器 h5；**同时产出这条血统的 norm_stats** |
+| `convert_narrow_box.py` | 阶段 C | 窄框规划器 h5；不重算 norm_stats |
+| `convert_expert_iter.py` | 阶段 D | **混合两种来源**：规划器 h5 + 策略 npz |
+| `convert_append_region.py` | 阶段 E | **在上一版数据集副本上追加**，不重编码旧集 |
+| `convert_cotrain_simreal.py` | sim2real | 把真机集追加进仿真数据集 |
+
+**它们不能互相取代**：`convert_append_region.py` 的追加技巧只在"已有数据集可追加"时成立，从零复现时前面没有可追加的东西。
+
+**单位不对称是这里最容易出错的地方**：
+
+| 来源 | `state` | `action` |
+|---|---|---|
+| 规划器 h5 | 弧度 → 要转 | 弧度 → 要转 |
+| 策略自采 npz | **已归一化** → 直接用 | 弧度 → 要转 |
+| 真机数据 | 已归一化 | 已归一化 |
+
+搞错不会报错，只会让模型学错。
+
+**长度过滤的上限要按数据来源定**：仿真示范用 580（挡掉超时挣扎的轨迹），但真机是人类遥操作、更慢，87 集是 395–825 帧、中位 575——**用 580 会静默丢掉 46% 的真机数据**。这个坑在 sim2real 那步实际发生过，靠启动前先量分布挡住。
+
+### 2.3 成套流水线
+
+| 脚本 | 串起哪几步 |
+|---|---|
+| `pipeline_expert_iteration.sh` | 采集策略成功 → 与规划器示范混合 → 轻量 SFT → 门评（阶段 D） |
+| `pipeline_region_expand.sh` | 转换 → SFT → 环形门评 → 检查点清理（阶段 E） |
+| `pipeline_cotrain_simreal.sh` | 建混合数据集 → SFT → **双轴门评**（sim2real） |
+
+这些脚本都是 `setsid nohup bash <脚本> &` 启动、无人值守跑完。它们内部都遵守同一套约定：**超时按实测速率定**、**阶段间用哨兵串行**、**每次评测前完整清理 Ray 与 /dev/shm**、**评测失败重试 3 次**。
+
+### 2.4 PPO 专用
+
+**`ppo_freeze_probe.sh` —— 启动前的先决条件测量**
+
+跑**真实的训练路径**（同样的 worker、环境创建、模型构建、权重同步），但把学习率设成 `1e-9`，权重实质不变。一轮就同时给出两个数：
+
+- `env/success_once`：**带探索噪声的 rollout 成功率**——PPO 真正学习的分布，**门槛 ≥5%**；
+- `eval/success_once`：确定性评测成功率——用来确认为了抬高前者没有把策略本身改坏。
+
+这两个数在本任务上**可以差 50 个点以上**。不测这个直接启动 PPO，就是七次失败的原因。
+
+**`ppo_train.sh` —— 启动器 + 自动停机守卫**
+
+守卫每 5 分钟读 tensorboard 的 `eval/success_once`：低于历史峰值 20 点 → 立即杀训练；连续 3 次低于第一次评测 5 点以上 → 停。**必须写在启动器里**，写在会话里会随会话消失（历史上因此白烧 180 轮）。
+
+### 2.5 验证与体检
+
+| 脚本 | 回答什么问题 |
+|---|---|
+| `verify_honest_seeds.sh` | "这个成绩能对外说吗"——用**从未参与挑选**的种子重测 |
+| `verify_baseline_control.sh` | "涨的是真本事还是评测集选择效应"——同种子同条件测**起点** |
+| `offline_replay_check.py` | "策略在真实观测下还能不能用"——**上机前的门**，不碰机器人 |
+| `toolkits/preflight_config.py` | "这次启动会不会白跑一夜"——路径存在性、**批量算术**、模型-数据一致性 |
+| `toolkits/invariant_audit.py` | "有没有不报错但结果是错的地方"——9 项静默错误检查 |
+
+`preflight_config.py` 的**批量算术**那一项对 PPO 是命门：`updates/epoch = num_envs × (预算÷块长) × rollout_epoch ÷ global_batch`，这个数决定 PPO 是放大还是摧毁策略。这个工具自己曾漏算 `rollout_epoch` 因子、把 12 次报成 4 次——守门的工具算错，等于没有门。
 
 ---
 
