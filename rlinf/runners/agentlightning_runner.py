@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import typing
 from typing import Any, Optional
 
@@ -169,6 +170,15 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         self.dataloader_channel.put(batch, async_op=True)
 
     def run(self):
+        """Run training, always recording a terminal run state.
+
+        Overrides ``ReasoningRunner.run``, so the lifecycle shell is repeated
+        here rather than inherited.
+        """
+        with self.reporter.run_lifecycle():
+            return self._run_impl()
+
+    def _run_impl(self):
         global_pbar = tqdm(
             initial=self.global_steps,
             total=self.max_steps,
@@ -184,6 +194,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
 
         for _ in epoch_iter:
             for batch in self.train_dataloader:
+                step_started = time.time()
                 with self.timer("step"):
                     with self.timer("sync_weights"):
                         self._sync_weights()
@@ -229,6 +240,11 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                     actor_training_metrics = metrics[0][1]
 
                     self.global_steps += 1
+                    self.reporter.set_progress(
+                        step=self.global_steps,
+                        epoch=self.epoch,
+                        step_duration_s=time.time() - step_started,
+                    )
 
                     run_time_exceeded = self.run_timer.is_finished()
                     _, save_model, is_train_end = check_progress(
@@ -241,7 +257,11 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                     )
 
                     if save_model:
-                        self._save_checkpoint()
+                        self._save_checkpoint(
+                            metrics=actor_training_metrics[-1]
+                            if actor_training_metrics
+                            else None
+                        )
 
                     if is_train_end:
                         logging.info(

@@ -14,6 +14,7 @@
 
 import logging
 import os
+import time
 from typing import TYPE_CHECKING, Optional, Union
 
 from omegaconf.dictconfig import DictConfig
@@ -22,6 +23,7 @@ from tqdm import tqdm
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
+from rlinf.utils.run_state import attach_reporter
 from rlinf.utils.runner_utils import EarlyStopController, check_progress
 
 if TYPE_CHECKING:
@@ -58,6 +60,8 @@ class SFTRunner:
         self.timer = ScopedTimer(reduction="max", sync_cuda=False)
 
         self.metric_logger = MetricLogger(cfg)
+        # Control plane: run state, heartbeat, phase, progress, checkpoints.
+        self.reporter = attach_reporter(self, cfg)
 
     def init_workers(self) -> None:
         # create worker in order to decrease the maximum memory usage
@@ -75,6 +79,15 @@ class SFTRunner:
         self.global_step = int(resume_dir.split("global_step_")[-1])
 
     def run(self) -> None:
+        """Run training, always recording a terminal run state.
+
+        A thin shell so that every ``runner.run()`` entry script gets a
+        ``finished``/``failed``/``stopped`` state without being changed.
+        """
+        with self.reporter.run_lifecycle():
+            return self._run_impl()
+
+    def _run_impl(self) -> None:
         start_step = self.global_step
         global_pbar = tqdm(
             initial=start_step,
@@ -87,11 +100,19 @@ class SFTRunner:
                 # set global step
                 self.actor.set_global_step(self.global_step)
 
+            step_started = time.time()
             with self.timer("step"):
                 actor_handle: Handle = self.actor.run_training()
                 actor_metrics = actor_handle.wait()
 
                 self.global_step += 1
+                # Reported before eval/save so that `step_duration_s` stays the
+                # net step time and the ETA buckets remain independent.
+                self.reporter.set_progress(
+                    step=self.global_step,
+                    epoch=self.epoch,
+                    step_duration_s=time.time() - step_started,
+                )
 
                 eval_model, save_model, _ = check_progress(
                     self.global_step,
@@ -103,19 +124,23 @@ class SFTRunner:
                 )
 
                 if save_model:
-                    self._save_checkpoint()
+                    self._save_checkpoint(
+                        metrics=actor_metrics[0] if actor_metrics else None
+                    )
 
                 should_stop = False
                 if eval_model:
+                    eval_started = time.time()
                     eval_handle: Handle = self.actor.run_eval()
                     eval_metrics = eval_handle.wait()
+                    self.reporter.record_eval_duration(time.time() - eval_started)
 
                     if self.early_stop is not None:
                         should_stop, best_val_acc_improved = self.early_stop.update(
                             eval_metrics[0]
                         )
                         if best_val_acc_improved:
-                            self._save_checkpoint(is_best=True)
+                            self._save_checkpoint(is_best=True, metrics=eval_metrics[0])
 
             time_metrics = self.timer.consume_durations()
             time_metrics["training"] = actor_handle.consume_duration()
@@ -176,7 +201,9 @@ class SFTRunner:
         logger.info(f"Eval metrics: {evaluate_metrics}")
         self.metric_logger.finish()
 
-    def _save_checkpoint(self, is_best: bool = False) -> None:
+    def _save_checkpoint(
+        self, is_best: bool = False, metrics: Optional[dict] = None
+    ) -> None:
         checkpoint_root = os.path.join(
             self.cfg.runner.logger.log_path,
             self.cfg.runner.logger.experiment_name,
@@ -190,7 +217,21 @@ class SFTRunner:
             )
         actor_save_path = os.path.join(base_output_dir, "actor")
         os.makedirs(actor_save_path, exist_ok=True)
-        self.actor.save_checkpoint(actor_save_path, self.global_step).wait()
+        # A `phase`, not a timer scope: this runner can save twice in one step
+        # (periodic plus best-model), and `ScopedTimer` raises on a repeated
+        # scope name before `consume_durations()`.
+        save_started = time.time()
+        with self.reporter.phase("save_ckpt"):
+            self.actor.save_checkpoint(actor_save_path, self.global_step).wait()
+        # Appended only after the save returns, so a reader of checkpoints.jsonl
+        # never sees a half-written checkpoint.
+        self.reporter.record_checkpoint(
+            step=self.global_step,
+            path=base_output_dir,
+            duration_s=time.time() - save_started,
+            is_best=is_best,
+            metrics=metrics,
+        )
         if is_best and self.early_stop is not None:
             logger.info(
                 f"Saved best model (val_acc={self.early_stop.best_val_acc:.4f}) to {base_output_dir}"
