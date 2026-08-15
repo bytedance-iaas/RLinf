@@ -48,10 +48,10 @@ python3 -m venv .venv
 
 The package intentionally has no dependency on RLinf or PyTorch.
 
-To build the standalone image:
+To build the standalone image from the repository root:
 
 ```bash
-docker build -t rlinf-dashboard .
+docker build -f dashboard/Dockerfile -t rlinf-dashboard .
 docker run --rm -p 8420:8420 -v /path/to/logs:/runs:ro rlinf-dashboard
 ```
 
@@ -96,15 +96,15 @@ variables:
 | `RLINF_DASHBOARD_MAX_SERIES_POINTS` | `4000` | Per-series response budget |
 | `RLINF_DASHBOARD_CORS_ORIGINS` | local Vite origins | Allowed development origins |
 | `RLINF_DASHBOARD_FRONTEND_DIST` | auto-detected | Optional external frontend bundle |
+| `RLINF_DASHBOARD_AUTH_MODE` | `disabled` | `disabled` for local compatibility or `basic` to require static credentials |
+| `RLINF_DASHBOARD_AUTH_USERNAME` | unset | Static HTTP Basic username; required when auth mode is `basic` |
+| `RLINF_DASHBOARD_AUTH_PASSWORD` | unset | Static HTTP Basic password; required in `basic` mode and kept out of settings representations |
 | `RLINF_DASHBOARD_POSTER_ENABLED` | `true` | Render a preview frame per clip in the media grid |
 | `RLINF_DASHBOARD_FFMPEG_PATH` | bundled, then `PATH` | Explicit ffmpeg binary |
 | `RLINF_DASHBOARD_POSTER_CACHE_DIR` | `$XDG_CACHE_HOME/rlinf-dashboard/posters` | Where rendered frames are cached |
 | `RLINF_DASHBOARD_POSTER_MAX_CONCURRENCY` | `2` | Simultaneous frame decodes |
 | `RLINF_DASHBOARD_POSTER_WIDTH` | `320` | Preview width in pixels |
 | `RLINF_DASHBOARD_POSTER_CACHE_MAX_MB` | `100` | Poster cache budget; `0` disables trimming |
-| `RLINF_DASHBOARD_AUTH_MODE` | `disabled` | `disabled` for local compatibility or `basic` to require static credentials |
-| `RLINF_DASHBOARD_AUTH_USERNAME` | unset | Static HTTP Basic username; required when auth mode is `basic` |
-| `RLINF_DASHBOARD_AUTH_PASSWORD` | unset | Static HTTP Basic password; required in `basic` mode and kept out of settings representations |
 
 For example:
 
