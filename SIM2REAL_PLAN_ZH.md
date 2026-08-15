@@ -69,7 +69,7 @@
 
 **v14 的 0.84 不可用**——87 集全进了训练集，而检验读的是同一批数据，等于拿训练集当考卷。v15 才是第一个诚实的数字。
 
-**0.70 与 0.79 是同一个检查点的两次测量**，差别在动作时域：0.79 测于 5 步，0.70 测于 10 步。10 步才是训练和部署实际用的（见 §4.5 的插值坑），所以**以 0.70 为准**。时域拉长反而更好，说明策略预测的是一条连贯轨迹，而不是只有头一两步像样。
+**0.70 与 0.79 是同一个检查点的两次测量**，差别在动作时域：0.79 测于 5 步，0.70 测于 10 步。10 步才是训练和部署实际用的（见 §4.4 的插值坑），所以**以 0.70 为准**。时域拉长反而更好，说明策略预测的是一条连贯轨迹，而不是只有头一两步像样。
 
 **仍未解决**：仿真腕部相机指向仍然是错的。协同训练让模型学会了处理真实腕视图像，但**仿真数据里那一路仍然是废的**。这意味着仿真成绩里腕视贡献有限，而真机上它现在很重要——两边的信息量不对称。彻底修它要重录数据并从阶段 B 重训（约 30 小时）；在真机数据证明有必要之前不做。
 
@@ -87,6 +87,75 @@
 
 ## 4. 部署
 
+有两条路。**推荐第一条**——它让 Mac 侧直接用 lerobot 官方的异步客户端，不用自己写控制回路。
+
+### 4.0 路线 A（推荐）：导出成 LeRobot 格式，走 lerobot 官方异步栈
+
+lerobot 的 `async_inference` 是一对组件：`policy_server`（推理端）+ `robot_client`（机械臂端）。服务端加载策略只有一条路径（`policy_server.py:152`）：
+
+```python
+self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
+```
+
+**只吃 LeRobot 格式**。我们的产物是 RLinf 格式，所以要先导出。
+
+**导出几乎是零成本的**——实测比对：RLinf 的 openpi 后端用的就是 LeRobot pi05 的模块命名，813 个键**逐个同名、逐个同形**，没有任何张量需要拆分/合并/转置。lerobot 的 PI05 实现自己也写着 "a direct port of the OpenPI implementation"，连图像预处理都是 `resize_with_pad_torch`（注释标明 "exact copy" of openpi）+ `img * 2.0 - 1.0`，两边一致。
+
+```bash
+.venv/bin/python tools_so101_session/convert_rlinf_to_lerobot.py   --ckpt /data08/henryg/pai/results/so101_sft_v15/so101_sft_openpi_pi05/checkpoints/global_step_1000   --template /data08/henryg/pai/outputs/train/2026-07-14/13-53-42_pi05/checkpoints/last/pretrained_model   --norm-stats assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json   --chunk-size 10 --out /data08/henryg/pai/results/so101_v15_lerobot
+```
+
+`--template` 提供 `config.json` 和两个 processor 文件的结构；要用**同一台机器人**的 LeRobot pi05 微调检查点，这样特征名和维度（`observation.images.front` / `.wrist` / `observation.state` (6) / `action` (6)）本来就对得上。
+
+导出时**必须改**的三处：
+
+| 项 | 从 | 到 | 为什么 |
+|---|---|---|---|
+| `chunk_size` / `n_action_steps` | 50 | **10** | 只在 10 步时域微调过，要 50 步后 40 步没有训练目标 |
+| processor 里的归一化统计量 | 模板自带（来自真机数据集） | **v4 血统的 q01/q99** | 换统计量等于换坐标系，而且**不报错** |
+| `--actions_per_chunk` | 50 | **10** | 同上 |
+
+归一化能直接搬是因为两边约定一致：模板的 `normalization_mapping` 是 `STATE/ACTION: QUANTILES`，而 openpi 的 `norm_stats.json` 正好存 `q01/q99`。
+
+**导出后必须做等价性验证**，键对上不代表行为对上：
+
+```bash
+/root/miniconda3/envs/lerobot/bin/python tools_so101_session/verify_lerobot_export.py   --lerobot-ckpt /data08/henryg/pai/results/so101_v15_lerobot   --real-root /data08/henryg/pai/data/so101-pick-place-v1-trimmed   --ep-start 70 --episodes 5 --frames 10
+```
+
+它在同一批留出集上重跑离线检验，比值应当落回 **0.70**。对不上就是导出改变了策略（最可能是统计量），**不能上机**。
+
+**两个 Python 环境是分开的，这决定了必须走导出**：
+
+| 环境 | lerobot | openpi | 能干什么 |
+|---|---|---|---|
+| RLinf `.venv` (py3.11) | 0.1.0，**无 `async_inference`** | ✅ | 能加载 RLinf ckpt，起不了 lerobot 服务 |
+| lerobot conda (py3.12) | ✅ 新版 | ❌ | 能起服务，读不了 RLinf ckpt |
+
+验证通过后，服务端和客户端都用 lerobot 原样的命令：
+
+```bash
+# H200 侧
+/root/miniconda3/envs/lerobot/bin/python -m lerobot.async_inference.policy_server     --host=0.0.0.0 --port=18080 --fps=30
+
+# Mac 侧（隧道到 18080 之后）
+python -m lerobot.async_inference.robot_client     --robot.type=so101_follower --robot.port=${FOLLOWER_PORT} --robot.id=${FOLLOWER_ID}     --robot.cameras="{front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, \
+                      wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+    --task="Grab the red cube" \
+    --server_address=127.0.0.1:18080 \
+    --policy_type=pi05 \
+    --pretrained_name_or_path=/data08/henryg/pai/results/so101_v15_lerobot \
+    --policy_device=cuda --client_device=cpu \
+    --actions_per_chunk=10 --chunk_size_threshold=0.5 \
+    --aggregate_fn_name=weighted_average
+```
+
+**为什么这条路更好**：`robot_client` 是异步的——动作队列跌到 `chunk_size_threshold` 就提前发下一帧观测（`robot_client.py:406`），新旧动作块重叠部分用 `weighted_average` 聚合（`:224`）。下面路线 B 那个"执行完再要下一批"的同步回路有硬往返预算，块边界还会抖。
+
+### 4.1 路线 B（备用）：RLinf 直接起 websocket 服务
+
+只在路线 A 的等价性验证不通过时用。它绕开格式转换（少一个可能出错的环节），代价是 Mac 侧要自己写控制回路、没有块聚合。
+
 ```
 ┌─ Mac（真机侧）──────────────┐          ┌─ H200 节点（推理侧）──────────┐
 │ LeRobot SO101 follower      │  图像+    │ deploy_policy_server.py       │
@@ -98,7 +167,7 @@
 
 **不需要 `sft2deploy` 转换**。它要两个我们没有的旧格式参考模型目录，而且没必要：离线检验已经证明"直接用 `get_model` 加载检查点"这条路能在真实图像上产出正确动作，服务端复用同一条加载路径，中间少一个可能出错的环节。
 
-### 4.1 H200 侧：起推理服务
+#### B.1 H200 侧：起推理服务
 
 ```bash
 cd /data08/henryg/pai/RLinf
@@ -128,7 +197,7 @@ Mac 侧建隧道：
 ssh -N -L 8000:localhost:8000 <user>@<h200-host>
 ```
 
-### 4.2 Mac 侧：控制回路
+#### B.2 Mac 侧：控制回路
 
 ```python
 import time
@@ -142,7 +211,7 @@ HZ = 30
 
 while not done:
     front = cam_front.read()          # (480, 640, 3) uint8
-    wrist = cam_wrist.read()          # (480, 640, 3) uint8  ← 必须送，见 §4.3
+    wrist = cam_wrist.read()          # (480, 640, 3) uint8  ← 必须送，见 §4.2
     state = robot.get_observation()   # (6,) LeRobot 归一化单位
 
     actions = policy.infer({
@@ -159,7 +228,7 @@ while not done:
 
 **动作单位不需要换算**：策略输出的就是 LeRobot 归一化单位（`shoulder_pan.pos` 等），与 follower 接受的一致。
 
-### 4.3 必须送两路相机
+### 4.2 必须送两路相机（两条路线都适用）
 
 这一条**在协同训练后反转了**，不要沿用旧结论：
 
@@ -170,7 +239,7 @@ while not done:
 
 协同训练之前腕视那一路是废的（仿真里它拍的是机械臂自己），砍掉无所谓；**现在模型见过真实腕视图像并开始使用它**，只送前视会让动作误差差不多翻倍，甚至退回"不如原地不动"。
 
-### 4.4 红方块的摆放范围
+### 4.3 红方块的摆放范围
 
 策略只在**环 1**（96 cm²）训练过。全板成绩仅 14.8%，所以真机上红方块**必须放在这个矩形内**，建议用胶带标出来：
 
@@ -181,7 +250,7 @@ while not done:
 
 蓝色干扰块可放在棕区任意位置。
 
-### 4.5 参数对齐表
+### 4.4 参数对齐表
 
 任何一项不一致都会掉成绩。
 
@@ -224,14 +293,15 @@ while not done:
 |---|---|
 | 策略训练（仿真） | ✅ 完成，环 1 诚实 65.6% |
 | **离线 sim2real 门** | ✅ **通过**（留出集 0.70 < 1，10 步时域） |
-| 部署链路 | ✅ 服务端已实测跑通（自检通过） |
+| 部署链路 B（websocket） | ✅ 服务端已实测跑通（自检返回 `(10, 6)`） |
+| 部署链路 A（LeRobot 导出） | ⏳ 已导出且 `PI05Policy.from_pretrained` 加载通过（813/813 键），**等价性验证待跑** |
 | 上机 | 🔜 按 §5 执行 |
 
 **已知限制**（上机前应当知道）：
 
 | 项 | 内容 |
 |---|---|
-| 覆盖区域 | 只在 96 cm² 的环 1 训练；全板成绩仅 14.8%，真机摆放必须限制在 §4.4 的矩形内 |
+| 覆盖区域 | 只在 96 cm² 的环 1 训练；全板成绩仅 14.8%，真机摆放必须限制在 §4.3 的矩形内 |
 | 生成区边距 | 2 cm 边距排除了约 11% 的真实方块起始位置 |
 | 仿真腕部相机 | 指向仍是错的，两个域的信息量不对称（§2 末） |
 | 离线指标的预测力 | 它证明了"策略在真实观测下动作合理"，**不等于**"能完成任务"——完成任务还要求闭环稳定性，这只有真机能测 |
