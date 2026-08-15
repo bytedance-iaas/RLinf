@@ -121,10 +121,10 @@ RLINF_DASHBOARD_FRONTEND_DIST=/absolute/path/to/dist \
 
 ## 3. 使用独立容器
 
-在 `dashboard/` 目录执行：
+在仓库根目录执行：
 
 ```bash
-docker build -t rlinf-dashboard:local .
+docker build -f dashboard/Dockerfile -t rlinf-dashboard:local .
 docker run --rm \
   --read-only --tmpfs /tmp \
   -p 8420:8420 \
@@ -148,7 +148,7 @@ Kubernetes/Helm 部署应从 Secret 通过 `secretKeyRef` 注入这两个环境�
 容器以非 root 用户运行，训练日志建议始终只读挂载。完整 image smoke：
 
 ```bash
-bash tests/smoke_container.sh
+bash dashboard/tests/smoke_container.sh
 ```
 
 ## 4. 观察真实 RLinf run
