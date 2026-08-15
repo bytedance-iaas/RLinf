@@ -19,6 +19,12 @@ spec:
       port: 1
     # APIG Ingress backends. A headless Service still produces an EndpointSlice, and APIG routes
     # straight to the pod IP.
+    {{- if .Values.dashboard.enabled }}
+    - name: dashboard
+      port: {{ .Values.dashboard.port }}
+      targetPort: {{ .Values.dashboard.port }}
+      protocol: TCP
+    {{- end }}
     - name: ray-dashboard
       port: {{ .Values.rayDashboardPort }}
       targetPort: {{ .Values.rayDashboardPort }}
