@@ -1,6 +1,6 @@
 apiVersion: v2
 name: rlinf
-description: RLinf training workload (StatefulSet + GPU + persistent workspace) with optional APIG access to Ray
+description: RLinf training workload (StatefulSet + GPU + persistent workspace) with a Dashboard sidecar and an optional APIG HTTPS ingress
 type: application
 
 # Chart version. Bump on every packaging change. Independent of the RLinf release below: the
