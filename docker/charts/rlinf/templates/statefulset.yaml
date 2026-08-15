@@ -1,4 +1,5 @@
 {{- include "rlinf.image.validate" . }}
+{{- include "rlinf.dashboard.auth.validate" . }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -20,7 +21,9 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      # StatefulSet only allows Always; spelled out to document the workload contract.
+      # StatefulSet only allows Always; spelled out to document that when the dashboard sidecar
+      # exits, kubelet restarts just that container instead of tearing down the whole pod — and
+      # the training process with it.
       restartPolicy: Always
       containers:
         - name: {{ .Chart.Name }}
@@ -42,6 +45,79 @@ spec:
               mountPath: /workspace
             - name: dshm
               mountPath: /dev/shm
+        {{- if .Values.dashboard.enabled }}
+        - name: dashboard
+          image: "{{ .Values.dashboard.image.repository }}:{{ .Values.dashboard.image.tag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.dashboard.image.pullPolicy }}
+          # The dedicated image already has rlinf-dashboard as its ENTRYPOINT; this is only CMD.
+          args:
+            - {{ .Values.dashboard.logsPath | quote }}
+            - --host
+            - 0.0.0.0
+            - --port
+            - {{ .Values.dashboard.port | quote }}
+          ports:
+            - name: dashboard
+              containerPort: {{ .Values.dashboard.port }}
+              protocol: TCP
+          {{- if .Values.dashboard.auth.enabled }}
+          env:
+            - name: RLINF_DASHBOARD_AUTH_MODE
+              value: basic
+            - name: RLINF_DASHBOARD_AUTH_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rlinf.dashboard.authSecretName" . }}
+                  key: {{ .Values.dashboard.auth.usernameKey | quote }}
+            - name: RLINF_DASHBOARD_AUTH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rlinf.dashboard.authSecretName" . }}
+                  key: {{ .Values.dashboard.auth.passwordKey | quote }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.dashboard.resources | nindent 12 }}
+          {{- with .Values.dashboard.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            # Read-only: the dashboard only ever tails logs.
+            - name: workspace
+              mountPath: /workspace
+              readOnly: true
+          {{- if .Values.dashboard.auth.enabled }}
+          # This is also an image-contract check: auth-capable images return 401
+          # for the protected diagnostics endpoint. Older images return 200 and
+          # must never become Ready with an ignored Secret.
+          startupProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - >-
+                  import http.client;
+                  connection = http.client.HTTPConnection("127.0.0.1", {{ .Values.dashboard.port }}, timeout=1);
+                  connection.request("GET", "/api/health");
+                  raise SystemExit(0 if connection.getresponse().status == 401 else 1)
+            periodSeconds: {{ default 2 .Values.dashboard.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ default 2 .Values.dashboard.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ default 30 .Values.dashboard.probes.startup.failureThreshold }}
+          {{- else }}
+          {{- with .Values.dashboard.probes.startup }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- end }}
+          {{- with .Values.dashboard.probes.readiness }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.dashboard.probes.liveness }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
       volumes:
         - name: dshm
           emptyDir:
