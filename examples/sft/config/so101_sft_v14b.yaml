@@ -1,0 +1,99 @@
+# v14b: 2000 MORE steps on the same co-training data, continuing from v14's
+# best. v14's ratio flattened at 0.84 across its last three checkpoints; this
+# separates 'step-limited' from 'converged on this mixture'.
+# v14 = sim+real CO-TRAINING, the first sim2real step.
+# Start: the PPO peak checkpoint (best sim policy so far).
+# Data: the v10 sim episodes plus the 87 real teleop episodes upsampled 3x.
+# Goal: bring the offline real-observation ratio down from 4.47 (worse than
+# holding still) toward the 0.22 the real-trained policy achieves, WITHOUT
+# losing the sim competence PPO just bought.
+# norm_stats stays the frozen v4 one -- that is what deployment will use.
+defaults:
+  - model/pi0_5@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0-7   # SFT on all 8 H200 GPUs
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "so101_sft_openpi_pi05"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: -1
+  max_steps: 2000
+  val_check_interval: -1
+  save_interval: 250
+
+data:
+  # v10 = v9's 672 episodes + 429 ring-1 policy rollouts (v9_step_1250) +
+  # planner demos in the ring-1 annulus. Spawn area doubled to 96 cm^2.
+  train_data_paths: "so101-cotrain-v14"
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 16
+  global_batch_size: 128    # must be world_size (8) multiple of micro_batch_size
+  seed: 0
+
+  # Override the default values in model/pi0_5
+  model:
+    precision: null
+    # Warm start = the v9 PEAK checkpoint (honest 76.6% in-box, 19.5% full
+    # board). Continuing the same lineage, one ring wider. The
+    # openpi loader accepts actor/model_state_dict/full_weights.pt and drops
+    # the value-head keys via strict=False.
+    model_path: "/data08/henryg/pai/results/so101_sft_v14/so101_sft_openpi_pi05/checkpoints/global_step_1750"
+    num_action_chunks: 10   # action horizon H (keep == RL openpi.action_horizon)
+    action_dim: 6           # SO101: 5 arm joints + gripper
+    add_value_head: False
+    openpi:
+      config_name: "pi05_so101_v14"
+      detach_critic_input: True
+      num_images_in_input: 2         # front + wrist
+      train_expert_only: False       # full fine-tune
+    # REUSE the pp norm stats: the step_100 policy was trained under these
+    # stats; distilling under the same stats avoids an input-distribution
+    # shift. Do NOT recompute for the pp5 rollout dataset.
+    openpi_data:
+      norm_stats_path: "/data08/henryg/pai/RLinf/assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json"  # lineage frozen: continuing v4
+
+  optim:
+    # Same gentle rate that produced v9's +20 points: we are extending an
+    # already-good policy over new territory, not teaching it the task.
+    lr: 1.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1e-10
+    clip_grad: 1.0
+    total_training_steps: 20000
+    lr_warmup_steps: 200
+    lr_scheduler: "cosine"
+    num_cycles: 0.5
+    min_lr: 1.0e-6
+
+  # Override the default values in hybrid_engines/fsdp
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "full_shard"
+    use_orig_params: False
+    gradient_checkpointing: False # for openpi, gradient checkpointing is not supported
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}

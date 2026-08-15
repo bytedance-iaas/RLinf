@@ -377,3 +377,36 @@ and 60.2%), so the win was real rather than a transfer.
 The rule generalises: **name the constraint before the run, measure it at the
 same cadence as the objective, and log both side by side.** If the constraint
 is only checked at the end, the gate has already chosen for you.
+
+## 8b. A hand-built config does not inherit the YAML's interpolations
+
+Offline tools, probes and inference servers are usually written with a
+hand-assembled `OmegaConf.create({...})` instead of composing the real Hydra
+config — it is faster and avoids Hydra's search-path setup. The trap is that
+YAML configs contain **interpolated** fields, and a hand-built dict silently
+falls back to the dataclass default instead.
+
+`examples/embodiment/config/model/pi0_5.yaml:26` reads
+`action_chunk: ${..num_action_chunks}`. Every training and sim-eval run set
+`num_action_chunks=10`, so the model emitted **10** actions per call. The
+offline sim2real tool and the deployment server both set `num_action_chunks`
+in a hand-built dict and never set `action_chunk` — it fell back to its
+dataclass default of **5**. So the tool that authorised the real-robot trial
+was measuring half the horizon the policy was trained to emit, and the server
+would have driven the robot at half the horizon too.
+
+Two lessons:
+
+1. **When a hand-built config mimics a YAML one, diff them field by field.**
+   `compose()` the real config and print the resolved values, then assert your
+   dict matches. Interpolated fields are exactly the ones that will not error.
+2. **When a probe contradicts what the config says, suspect the probe.** The
+   first conclusion here was "the model returns 5, so the docs are wrong" —
+   drawn from a hand-built probe carrying the same defect. Resolving the actual
+   YAML (`compose(config_name=..., overrides=[...])` and printing the field)
+   took one minute and reversed it. Prefer resolving the real config over
+   inferring behaviour from a reimplementation of it.
+
+Re-measuring on the correct horizon moved the gate from 0.79 to **0.70** — it
+still passed, so this one was caught for free. It would not have been free if it
+had gone the other way, and nothing in the run would have flagged it.

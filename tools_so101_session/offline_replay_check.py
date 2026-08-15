@@ -51,6 +51,13 @@ def build_policy(ckpt: str, config_name: str, norm_stats: str, chunks: int):
             "load_to_device": True,
             "openpi": {
                 "config_name": config_name,
+                # The YAML configs define this as `${..num_action_chunks}`, so the
+                # sim evals ran at 10. A hand-built config like this one does not
+                # inherit that and silently falls back to the dataclass default of
+                # 5 -- which is what every ratio reported before 2026-08-15 used.
+                # Setting it explicitly puts this tool on the same horizon as the
+                # sim numbers and as deploy_policy_server.py.
+                "action_chunk": chunks,
                 "num_images_in_input": 2,
                 "action_horizon": 10,
                 "noise_method": "flow_noise",
@@ -66,7 +73,7 @@ def build_policy(ckpt: str, config_name: str, norm_stats: str, chunks: int):
 
 
 def load_episode(root: str, idx: int):
-    """Return (states, actions, front_reader, wrist_reader, video_offset).
+    """Return (states, actions, front_reader, wrist_reader, front_offset, wrist_offset).
 
     Handles BOTH LeRobot layouts:
       v2.0  data/chunk-000/episode_XXXXXX.parquet + one mp4 per episode
@@ -88,7 +95,7 @@ def load_episode(root: str, idx: int):
                                    "observation.images.front", f"episode_{idx:06d}.mp4"))
         wrist = imageio.get_reader(os.path.join(root, "videos", "chunk-000",
                                    "observation.images.wrist", f"episode_{idx:06d}.mp4"))
-        return states, actions, front, wrist, 0
+        return states, actions, front, wrist, 0, 0
 
     # --- v3.0 ---
     meta = pd.read_parquet(glob.glob(os.path.join(root, "meta", "episodes", "*", "*.parquet"))[0])
@@ -106,28 +113,31 @@ def load_episode(root: str, idx: int):
                           f"file-{int(row[f'videos/{key}/file_index']):03d}.mp4")
         readers.append(imageio.get_reader(vf))
         # episodes are concatenated inside one mp4: convert the episode's start
-        # timestamp into a frame offset (fps comes from meta/info.json)
+        # timestamp into a frame offset (fps comes from meta/info.json).
+        # The two cameras are chunked into DIFFERENT numbers of files (front
+        # 29147 frames per file, wrist 37375), so their offsets differ for most
+        # episodes -- an earlier version asserted they were equal, which only
+        # held for the first few episodes and silently blocked every later one.
         fps = json.load(open(os.path.join(root, "meta", "info.json")))["fps"]
         offsets.append(int(round(float(row[f"videos/{key}/from_timestamp"]) * fps)))
-    assert offsets[0] == offsets[1], "front/wrist offsets differ"
-    return states, actions, readers[0], readers[1], offsets[0]
+    return states, actions, readers[0], readers[1], offsets[0], offsets[1]
 
 
-def evaluate(model, root: str, episodes: int, frames: int, label: str, prompt: str, no_wrist: bool = False):
+def evaluate(model, root: str, episodes: int, frames: int, label: str, prompt: str, no_wrist: bool = False, ep_start: int = 0):
     """Mean absolute error (LeRobot normalized units) of predicted vs recorded actions."""
     errs, hold_errs = [], []
-    for ep in range(episodes):
+    for ep in range(ep_start, ep_start + episodes):
         try:
-            states, actions, front, wrist, off = load_episode(root, ep)
+            states, actions, front, wrist, off_f, off_w = load_episode(root, ep)
         except Exception as exc:  # noqa: BLE001
             print(f"  [{label}] episode {ep} unreadable: {exc}", flush=True)
             continue
-        n = min(len(states), front.count_frames() - off)
+        n = min(len(states), front.count_frames() - off_f, wrist.count_frames() - off_w)
         idxs = np.linspace(5, n - 15, frames).astype(int)
         for t in idxs:
             env_obs = {
-                "main_images": torch.from_numpy(front.get_data(t + off)[None]),
-                "wrist_images": None if no_wrist else torch.from_numpy(wrist.get_data(t + off)[None]),
+                "main_images": torch.from_numpy(front.get_data(t + off_f)[None]),
+                "wrist_images": None if no_wrist else torch.from_numpy(wrist.get_data(t + off_w)[None]),
                 "states": torch.from_numpy(states[t][None].astype(np.float32)),
                 "task_descriptions": [prompt],
                 # obs_processor indexes this key unconditionally (see
@@ -165,6 +175,11 @@ def main():
     )
     ap.add_argument("--chunks", type=int, default=10)
     ap.add_argument("--episodes", type=int, default=6)
+    ap.add_argument("--ep-start", type=int, default=0,
+                    help="first episode index to evaluate. Use this to keep the "
+                         "check on episodes the model never trained on: once real "
+                         "data goes into co-training, evaluating from episode 0 is "
+                         "scoring the training set.")
     ap.add_argument("--frames", type=int, default=40)
     ap.add_argument("--prompt", default="Grab the red cube")
     ap.add_argument("--no-wrist", action="store_true",
@@ -197,8 +212,8 @@ def main():
     print(f"sim control: {args.sim_root}")
     model = build_policy(args.ckpt, args.config_name, args.norm_stats, args.chunks)
 
-    sim = evaluate(model, args.sim_root, args.episodes, args.frames, "SIM (in-distribution control)", args.prompt, args.no_wrist)
-    real = evaluate(model, real_root, args.episodes, args.frames, "REAL (the sim2real question)", args.prompt, args.no_wrist)
+    sim = evaluate(model, args.sim_root, args.episodes, args.frames, "SIM (in-distribution control)", args.prompt, args.no_wrist, 0)
+    real = evaluate(model, real_root, args.episodes, args.frames, "REAL (the sim2real question)", args.prompt, args.no_wrist, args.ep_start)
 
     if sim and real:
         print("\n=== verdict ===")

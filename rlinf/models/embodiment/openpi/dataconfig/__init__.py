@@ -706,6 +706,45 @@ _CONFIGS = [
         pytorch_weight_path="checkpoints/torch/pi05_base",
     ),
     TrainConfig(
+        # v15: sim+real co-training with a HELD-OUT real split -- real episodes
+        # 0-69 train, 70-86 are kept out so the offline sim2real check measures
+        # generalisation rather than recall.
+        name="pi05_so101_v15",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-cotrain-v15",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        # v14: sim+real co-training. Same sim episodes as v10 plus the 87 real
+        # teleop episodes upsampled 3x, to close the visual domain gap measured
+        # offline (sim-trained policy scores 4.47 on real observations where the
+        # real-trained one scores 0.22 -- see SIM2REAL_PLAN_ZH.md).
+        name="pi05_so101_v14",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-cotrain-v14",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
         # v10: ring-1 expansion — the v9 data plus ring-1 policy rollouts from
         # v9_step_1250 and planner demos in the ring-1 annulus. Spawn region is
         # 96 cm^2 (2x v8/v9), SO101_SPAWN_FRAC="0.4294,0.9115,0.5142,0.9817".
