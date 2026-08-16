@@ -3,6 +3,7 @@
 Goal: find the offset where the gripper points DOWN at the reach/grab, and the
 sim wrist view matches the real wrist video."""
 import glob
+import os
 import numpy as np
 import pandas as pd
 import torch
@@ -11,7 +12,7 @@ import gymnasium as gym
 import rlinf.envs.maniskill.so101_calib as C
 from rlinf.envs.maniskill import import_all_tasks
 
-OUT = "/tmp/claude-0/-data08-henryg-pai-RLinf/3e748c24-1f70-49ee-a01c-395d2f1161dd/scratchpad"
+OUT = os.environ.get("SCRATCH", "/tmp/so101_runs")
 DS = "/root/.cache/huggingface/lerobot/henry-guo/so101-pick-place-v2"
 
 

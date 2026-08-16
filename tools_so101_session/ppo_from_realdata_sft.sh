@@ -1,5 +1,6 @@
 #!/bin/bash
 set -uo pipefail
+SCRATCH=${SCRATCH:-/tmp/so101_runs}; mkdir -p "$SCRATCH"
 cd /data08/henryg/pai/RLinf
 export REPO_PATH="$PWD"
 export EMBODIED_PATH="$PWD/examples/embodiment"
@@ -16,7 +17,7 @@ export RAY_local_fs_capacity_threshold=0.99
 
 # NOTE: no model_path override -> uses the config default = SFT global_step_8000
 OUT=/data08/henryg/pai/results/so101_ppo_sft_restart
-LOG=/tmp/claude-0/-data08-henryg-pai-RLinf/3e748c24-1f70-49ee-a01c-395d2f1161dd/scratchpad/rl_sft_restart.out
+LOG=${SCRATCH:-/tmp/so101_runs}/rl_sft_restart.out
 
 .venv/bin/python examples/embodiment/train_embodied_agent.py \
   --config-path /data08/henryg/pai/RLinf/examples/embodiment/config/ \

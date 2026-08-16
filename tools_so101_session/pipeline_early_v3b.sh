@@ -3,7 +3,11 @@
 # -> S2b rebuild dataset (all v3_demos_cell* incl. round 1) + norm_stats
 # -> S3b SFT round 2 (from v3 step_3000) -> S4b gate + bands.
 set -uo pipefail
-SCRATCH=/tmp/claude-0/-data08-henryg-pai-RLinf/3e748c24-1f70-49ee-a01c-395d2f1161dd/scratchpad
+# Logs and status files. Overridable so the script runs outside the session
+# it was written in; without the mkdir every redirect below fails on a
+# fresh machine and the script dies before doing anything.
+SCRATCH=${SCRATCH:-/tmp/so101_runs}
+mkdir -p "$SCRATCH"
 STATUS=$SCRATCH/v3.status
 cd /data08/henryg/pai/RLinf
 log(){ echo "[$(date '+%F %T')] $*" >> "$STATUS"; }

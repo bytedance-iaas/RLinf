@@ -726,7 +726,7 @@ _CONFIGS = [
     ),
     TrainConfig(
         # v14: sim+real co-training. Same sim episodes as v10 plus the 87 real
-        # teleop episodes upsampled 3x, to close the visual domain gap measured
+        # teleop episodes upsampled 2x, to close the visual domain gap measured
         # offline (sim-trained policy scores 4.47 on real observations where the
         # real-trained one scores 0.22 -- see SIM2REAL_PLAN_ZH.md).
         name="pi05_so101_v14",

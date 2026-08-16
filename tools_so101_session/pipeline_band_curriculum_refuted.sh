@@ -13,7 +13,11 @@
 #      full-task number
 #   S5 hygiene: keep best + neighbours
 set -uo pipefail
-SCRATCH=/tmp/claude-0/-data08-henryg-pai-RLinf/3e748c24-1f70-49ee-a01c-395d2f1161dd/scratchpad
+# Logs and status files. Overridable so the script runs outside the session
+# it was written in; without the mkdir every redirect below fails on a
+# fresh machine and the script dies before doing anything.
+SCRATCH=${SCRATCH:-/tmp/so101_runs}
+mkdir -p "$SCRATCH"
 STATUS=$SCRATCH/v7.status
 BAND="0,1,0.25,1"     # SO101_SPAWN_FRAC: full x, y in [0.25, 1.0]
 cd /data08/henryg/pai/RLinf

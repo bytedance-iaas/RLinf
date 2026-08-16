@@ -1,6 +1,7 @@
 """Verify the baked calibration (wrist_flex +0.6): replay episode 0 and build
 real-vs-sim comparisons for BOTH the front (top-down) and the wrist camera."""
 import glob
+import os
 import numpy as np
 import pandas as pd
 import torch
@@ -9,7 +10,7 @@ import gymnasium as gym
 import rlinf.envs.maniskill.so101_calib as C
 from rlinf.envs.maniskill import import_all_tasks
 
-OUT = "/tmp/claude-0/-data08-henryg-pai-RLinf/3e748c24-1f70-49ee-a01c-395d2f1161dd/scratchpad"
+OUT = os.environ.get("SCRATCH", "/tmp/so101_runs")
 DS = "/root/.cache/huggingface/lerobot/henry-guo/so101-pick-place-v2"
 
 

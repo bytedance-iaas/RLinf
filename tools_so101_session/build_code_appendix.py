@@ -1,3 +1,4 @@
+import os
 """Append an exact per-step code appendix to the pp-80% runbook.
 
 Code is EXTRACTED from the live source files (never hand-typed) so the runbook
@@ -7,8 +8,7 @@ import re
 import subprocess
 
 REPO = "/data08/henryg/pai/RLinf"
-SCRATCH = ("/tmp/claude-0/-data08-henryg-pai-RLinf/"
-           "3e748c24-1f70-49ee-a01c-395d2f1161dd/scratchpad")
+SCRATCH = os.environ.get("SCRATCH", "/tmp/so101_runs")
 OUT = f"{REPO}/SO101_PP_80PCT_RUNBOOK.md"
 
 

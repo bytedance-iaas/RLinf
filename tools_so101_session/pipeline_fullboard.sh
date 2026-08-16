@@ -7,7 +7,11 @@
 #  S4 gate 4 ckpts (777/888) + verify (909) + y-bands (606)
 #  S5 checkpoint hygiene: keep best v4 ckpt only IF gate >= 0.15, else keep all
 set -uo pipefail
-SCRATCH=/tmp/claude-0/-data08-henryg-pai-RLinf/3e748c24-1f70-49ee-a01c-395d2f1161dd/scratchpad
+# Logs and status files. Overridable so the script runs outside the session
+# it was written in; without the mkdir every redirect below fails on a
+# fresh machine and the script dies before doing anything.
+SCRATCH=${SCRATCH:-/tmp/so101_runs}
+mkdir -p "$SCRATCH"
 STATUS=$SCRATCH/v4.status
 cd /data08/henryg/pai/RLinf
 log(){ echo "[$(date '+%F %T')] $*" >> "$STATUS"; }

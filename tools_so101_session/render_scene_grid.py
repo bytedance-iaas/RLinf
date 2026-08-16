@@ -13,7 +13,7 @@ import numpy as np
 
 from rlinf.envs.maniskill import import_all_tasks
 
-OUT = "/tmp/claude-0/-data08-henryg-pai-RLinf/3e748c24-1f70-49ee-a01c-395d2f1161dd/scratchpad"
+OUT = os.environ.get("SCRATCH", "/tmp/so101_runs")
 SEEDS = [11, 22, 33, 44]
 
 

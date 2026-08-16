@@ -1,8 +1,9 @@
+import os
 """Wrist + front view AFTER the raise-arm prefix -- i.e. what the policy sees
 during the task, not at the folded home pose."""
 import numpy as np, imageio.v2 as imageio, gymnasium as gym
 from rlinf.envs.maniskill import import_all_tasks
-OUT="/tmp/claude-0/-data08-henryg-pai-RLinf/3e748c24-1f70-49ee-a01c-395d2f1161dd/scratchpad"
+OUT=os.environ.get("SCRATCH", "/tmp/so101_runs")
 tn=lambda x: x.cpu().numpy() if hasattr(x,"cpu") else np.asarray(x)
 import_all_tasks()
 env=gym.make("SO101GrabRedCube-v1",num_envs=1,obs_mode="rgb",control_mode="pd_joint_pos",sim_backend="gpu")

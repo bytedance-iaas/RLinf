@@ -2,6 +2,7 @@
 env.step (pd_joint_pos), rendering the top-down front camera to compare against
 the real front-cam. Validates the normalized->radian mapping (units+zero+sign)."""
 import glob
+import os
 import numpy as np
 import pandas as pd
 import torch
@@ -10,7 +11,7 @@ import gymnasium as gym
 from rlinf.envs.maniskill import import_all_tasks
 from rlinf.envs.maniskill.so101_calib import norm_to_rad
 
-OUT = "/tmp/claude-0/-data08-henryg-pai-RLinf/3e748c24-1f70-49ee-a01c-395d2f1161dd/scratchpad"
+OUT = os.environ.get("SCRATCH", "/tmp/so101_runs")
 
 
 def to_np(x):

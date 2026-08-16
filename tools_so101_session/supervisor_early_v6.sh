@@ -13,7 +13,11 @@
 #     3 y-bands) so the morning report has real numbers.
 #  D. Checkpoint hygiene: keep best + its two neighbours, delete the rest.
 set -uo pipefail
-SCRATCH=/tmp/claude-0/-data08-henryg-pai-RLinf/3e748c24-1f70-49ee-a01c-395d2f1161dd/scratchpad
+# Logs and status files. Overridable so the script runs outside the session
+# it was written in; without the mkdir every redirect below fails on a
+# fresh machine and the script dies before doing anything.
+SCRATCH=${SCRATCH:-/tmp/so101_runs}
+mkdir -p "$SCRATCH"
 STATUS=$SCRATCH/v6.status
 LOG=$SCRATCH/rl_v6.out
 CKROOT=/data08/henryg/pai/results/so101_ppo_v6/so101_ppo_openpi_pi05/checkpoints

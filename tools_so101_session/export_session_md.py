@@ -40,7 +40,7 @@ APPENDIX_FILES = [
     # skill
     "/data08/henryg/pai/RLinf/.claude/skills/rlinf-embodied-training/SKILL.md",
 ]
-SCRATCH = "/tmp/claude-0/-data08-henryg-pai-RLinf/3e748c24-1f70-49ee-a01c-395d2f1161dd/scratchpad"
+SCRATCH = os.environ.get("SCRATCH", "/tmp/so101_runs")
 
 
 def block_to_md(block):

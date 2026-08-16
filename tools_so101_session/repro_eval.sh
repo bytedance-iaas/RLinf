@@ -4,7 +4,11 @@
 #   (RL then takes it to 90.9% Flow-SDE / 89.7% Flow-Noise)
 # Runs ONLY after v10's gate is finished -- user chose option B (no queue jump).
 set -uo pipefail
-SCRATCH=/tmp/claude-0/-data08-henryg-pai-RLinf/3e748c24-1f70-49ee-a01c-395d2f1161dd/scratchpad
+# Logs and status files. Overridable so the script runs outside the session
+# it was written in; without the mkdir every redirect below fails on a
+# fresh machine and the script dies before doing anything.
+SCRATCH=${SCRATCH:-/tmp/so101_runs}
+mkdir -p "$SCRATCH"
 STATUS=$SCRATCH/repro.status
 V10=$SCRATCH/v10.status
 cd /data08/henryg/pai/RLinf
