@@ -108,7 +108,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 ### 1.4 注册表条目（`rlinf/models/embodiment/openpi/dataconfig/__init__.py`）
 
-本流程用到 5 个，结构完全相同（`action_horizon=10`、`discrete_state_input=True`、`extra_delta_transform=False`），只有 `repo_id` 不同：
+本流程用到 6 个，结构完全相同（`action_horizon=10`、`discrete_state_input=True`、`extra_delta_transform=False`），只有 `repo_id` 不同：
 
 | 条目 | repo_id | 阶段 |
 |---|---|---|
@@ -116,19 +116,64 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 | `pi05_so101_v4` | `so101-sim-demos-v4` | B（**血统 norm_stats 在此确立**） |
 | `pi05_so101_v8` | `so101-sim-demos-v8` | C |
 | `pi05_so101_v9` | `so101-sim-demos-v9` | D |
-| `pi05_so101_v10` | `so101-sim-demos-v10` | E、G |
+| `pi05_so101_v10` | `so101-sim-demos-v10` | E、F |
+| `pi05_so101_v15` | `so101-cotrain-v15` | G |
 
 **`config_name` 选数据变换管线，`norm_stats_path` 单独由 yaml 指定**——正因为分离，各阶段才能用自己的数据集条目却共享同一份统计量。
 
-### 1.5 每次启动训练前
+### 1.5 两条贯穿全程的命令
+
+阶段 B–G 的训练和评测都是这两条，**只换配置名、检查点路径、区域和种子**。后面各阶段不再重复抄，只列参数。
+
+**① 训练（SFT）**
 
 ```bash
+export EMBODIED_PATH=$PWD/examples/sft
+CFG=so101_sft_v4                                    # 各阶段替换这一行
+OUT=/data08/henryg/pai/results/$CFG
+
+# 预检：必须看到 PREFLIGHT OK。它校验路径存在性、批量算术、模型-数据一致性
 .venv/bin/python -m toolkits.preflight_config \
-  --config-path $PWD/examples/sft/config/ --config-name <配置名> \
-  runner.logger.log_path=<输出目录>
+  --config-path $PWD/examples/sft/config/ --config-name $CFG \
+  runner.logger.log_path=$OUT
+
+# 每次训练/评测前都要把 Ray 清干净，否则会连到上一次的残留集群
+.venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
+
+timeout 21600 .venv/bin/python examples/sft/train_vla_sft.py \
+  --config-path $PWD/examples/sft/config/ --config-name $CFG \
+  runner.logger.log_path=$OUT
 ```
 
-必须看到 `PREFLIGHT OK`。它校验路径存在性、批量算术、模型-数据一致性。**批量算术那一项对 PPO 是命门**（见 §7.1）。
+**训练完必须把 norm_stats 复制进每个检查点目录**——openpi 按 `<检查点>/<数据集名>/norm_stats.json` 查找，不放进去后面评测和部署都会失败：
+
+```bash
+for CK in $OUT/*/checkpoints/global_step_*; do
+  mkdir -p "$CK/so101-sim-demos-v4"
+  cp assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json "$CK/so101-sim-demos-v4/"
+done
+```
+
+**② 评测（门评）**
+
+```bash
+export EMBODIED_PATH=$PWD/examples/embodiment
+.venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
+
+SO101_SPAWN_FRAC="$REGION" timeout 1500 .venv/bin/python evaluations/eval_embodied_agent.py \
+  --config-path $PWD/examples/embodiment/config/ --config-name so101_eval_openpi_pi05 \
+  runner.logger.log_path=/data08/henryg/pai/results/so101_eval \
+  rollout.model.model_path=$CK \
+  rollout.model.openpi.config_name=$ENTRY \
+  rollout.model.openpi_data.norm_stats_path=$PWD/assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json \
+  env.eval.total_num_envs=128 env.eval.seed=$SEED
+```
+
+成绩读日志里最后一个 `success_once=`。三点纪律：
+
+- **不设 `SO101_SPAWN_FRAC` 就是全板**；区域字符串是 `x0,x1,y0,y1` 的归一化比例（环 1 = `0.4294,0.9115,0.5142,0.9817`）。
+- **每次评测都要 `timeout` + 失败重试一次**：Ray worker 偶发 `SYSTEM_ERROR` 猝死后，驱动进程会永远等待。
+- **`norm_stats_path` 全程写死同一份**（§4），不随 `config_name` 变。
 
 ---
 
@@ -308,7 +353,49 @@ for XI in 0 1 2 3; do for YI in 0 1 2 3; do
 > | 阶段 B–G 必须自始至终用同一个名字 | 条目名决定 norm_stats 落在 `assets/<条目名>/<数据集名>/norm_stats.json`；中途换名 = 换了一份统计量 = 换了坐标系。**实测代价：19.5% → 9.4%** |
 > | 名字被写进了检查点内部 | openpi 按 `<model_path>/<数据集名>/` 找 norm_stats，所以每个检查点目录里都有一个 `so101-sim-demos-v4/` 子目录（可以自己 `ls` 一下交付的那个检查点）。事后改名会让**已有的所有检查点失效** |
 
-**B4/B5 SFT + 门评**（`so101_sft_v4`，lr 2.5e-5、4000 步、save 1000）：
+**B4 SFT**（按 §1.5 ①，只换这些参数）：
+
+| 参数 | 值 | 依据 |
+|---|---|---|
+| 配置 | `so101_sft_v4` | |
+| 热启动 | 阶段 A 的 `global_step_8000` | 见下方 ⚠️ |
+| `lr` / 步数 / 存点 | 2.5e-5 / 4000 / **1000** | |
+
+```bash
+export EMBODIED_PATH=$PWD/examples/sft
+CFG=so101_sft_v4; OUT=/data08/henryg/pai/results/$CFG
+.venv/bin/python -m toolkits.preflight_config \
+  --config-path $PWD/examples/sft/config/ --config-name $CFG runner.logger.log_path=$OUT
+.venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
+timeout 21600 .venv/bin/python examples/sft/train_vla_sft.py \
+  --config-path $PWD/examples/sft/config/ --config-name $CFG runner.logger.log_path=$OUT
+for CK in $OUT/*/checkpoints/global_step_*; do
+  mkdir -p "$CK/so101-sim-demos-v4"
+  cp assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json "$CK/so101-sim-demos-v4/"
+done
+```
+
+**B5 门评**（按 §1.5 ②）：4 个检查点 × 2 个种子，**全板**（不设 `SO101_SPAWN_FRAC`），取两种子均值最高者：
+
+```bash
+export EMBODIED_PATH=$PWD/examples/embodiment
+for CK in $OUT/*/checkpoints/global_step_{1000,2000,3000,4000}; do
+  for SEED in 777 888; do
+    .venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
+    timeout 1500 .venv/bin/python evaluations/eval_embodied_agent.py \
+      --config-path $PWD/examples/embodiment/config/ --config-name so101_eval_openpi_pi05 \
+      runner.logger.log_path=/data08/henryg/pai/results/so101_eval_v4 \
+      rollout.model.model_path=$CK \
+      rollout.model.openpi.config_name=pi05_so101_v4 \
+      rollout.model.openpi_data.norm_stats_path=$PWD/assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json \
+      env.eval.total_num_envs=128 env.eval.seed=$SEED \
+      2>&1 | grep -oE 'success_once=[0-9.]+' | tail -1
+  done
+done
+```
+
+选出最优点后，**再用一个从未用过的种子（909）复测一次**——门评种子参与了挑选，它的数字会偏乐观。
+
 
 **验收：最优点是 `global_step_1000`，全板约 12.5%。** 之后单调下降（2.0→2.3→0.0）——SFT loss 降到 0.002 却越训越差，是**过拟合规划器习惯**，所以最优点在最早期。
 
@@ -326,13 +413,18 @@ for W in 0 1 2 3 4 5 6 7; do
   .venv/bin/python tools_so101_session/gen_planner_demos.py \
     --num 32 --seed0 $((90000 + W*1000)) --out $DATA/v8_demos_w$W & done; wait
 .venv/bin/python tools_so101_session/convert_narrow_box.py     # 不重算 norm_stats
-.venv/bin/python examples/sft/train_vla_sft.py --config-name so101_sft_v8 ...
 ```
+
+然后按 §1.5 ① 训练、§1.5 ② 门评，参数：
 
 | 参数 | 值 | 依据 |
 |---|---|---|
+| 配置 / 输出 | `so101_sft_v8` | |
 | 热启动 | v4 的 `global_step_1000` | 阶段 B 最优点 |
 | `lr` / 步数 / 存点 | 2.5e-5 / 4000 / **250** | 250 是教训值：最优点在 step_2500，按 1000 存会错过 |
+| 门评区域 | `SO101_SPAWN_MODE=legacy`（6×8 cm 框内） | 与生成区一致 |
+| 门评注册表条目 | `pi05_so101_v8` | |
+| 门评种子 | 1313 / 1414（诚实种子，未参与挑选） | |
 
 **验收**：247 条示范、间距 **0.44 cm**；最优 `global_step_2500`，**诚实值 57.8/55.5%**（种子 1313/1414），全板 9.4%。
 
@@ -345,20 +437,57 @@ for W in 0 1 2 3 4 5 6 7; do
 **D（专家迭代，+20 点）**：用当前策略在 8 个**从未用过**的种子上采集自己的成功轨迹（`collect_policy_successes.sh` 的做法），与原始规划器示范**混合**后轻量 SFT。
 
 ```bash
+# D1 采集：就是 §1.5 ② 那条评测命令，多设一个 SO101_COLLECT_DIR 就会把成功轨迹落盘
+export EMBODIED_PATH=$PWD/examples/embodiment
 export SO101_COLLECT_DIR=$DATA/v9_rollouts
+V8=/data08/henryg/pai/results/so101_sft_v8/*/checkpoints/global_step_2500
 for SEED in 2001 2002 2003 2004 2005 2006 2007 2008; do
-  SO101_SPAWN_MODE=legacy .venv/bin/python evaluations/eval_embodied_agent.py \
-    --config-name so101_eval_openpi_pi05 rollout.model.model_path=$V8 ... env.eval.seed=$SEED
+  .venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
+  SO101_SPAWN_MODE=legacy timeout 1500 .venv/bin/python evaluations/eval_embodied_agent.py \
+    --config-path $PWD/examples/embodiment/config/ --config-name so101_eval_openpi_pi05 \
+    runner.logger.log_path=/data08/henryg/pai/results/so101_eval_v9 \
+    rollout.model.model_path=$V8 \
+    rollout.model.openpi.config_name=pi05_so101_v8 \
+    rollout.model.openpi_data.norm_stats_path=$PWD/assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json \
+    env.eval.total_num_envs=128 env.eval.seed=$SEED
 done
-.venv/bin/python tools_so101_session/convert_expert_iter.py    # 247 规划器 + 425 策略 = 672 集
-.venv/bin/python examples/sft/train_vla_sft.py --config-name so101_sft_v9 ...   # lr 1e-5, 2000 步
+
+# D2 混合转换：247 规划器 + 425 策略 = 672 集
+.venv/bin/python tools_so101_session/convert_expert_iter.py
 ```
+
+D3 训练按 §1.5 ①（配置 `so101_sft_v9`，热启动 v8 的 `global_step_2500`，lr **1e-5**、2000 步、存点 250），D4 门评按 §1.5 ②（条目 `pi05_so101_v9`，`SO101_SPAWN_MODE=legacy`，种子 1313/1414）。
 
 **必须混合**：纯自蒸馏会让策略越练越窄（历史上掉 53 点）。
 **单位不对称陷阱**：录制器 npz 的 `state` 已归一化而 `action` 是弧度；h5 两者都是弧度。
 **验收**：最优 `global_step_1250`，**诚实值 77.3/75.8%**，全板 19.5%（翻倍）。峰值在中段——最后一个点只有 7.8%，**必须全部检查点都评**。
 
-**E（环 1 扩域，负结果但产出了 PPO 的起点）**：生成区扩到 96 cm²（`SO101_SPAWN_FRAC="0.4294,0.9115,0.5142,0.9817"`），自采 429 条 + 环形带规划器 204 条，追加进 v9 数据集得 1292 集。
+**E（环 1 扩域，负结果但产出了 PPO 的起点）**：生成区扩到 96 cm²，自采 429 条 + 环形带规划器 204 条，追加进 v9 数据集得 1292 集。
+
+```bash
+export RING1="0.4294,0.9115,0.5142,0.9817"
+
+# E1 用 v9 在环 1 上自采（同 D1，只是区域换成环 1）
+export SO101_COLLECT_DIR=$DATA/v10_rollouts
+V9=/data08/henryg/pai/results/so101_sft_v9/*/checkpoints/global_step_1250
+for SEED in 3001 3002 3003 3004 3005 3006 3007 3008; do
+  .venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
+  SO101_SPAWN_FRAC=$RING1 timeout 1500 .venv/bin/python evaluations/eval_embodied_agent.py \
+    --config-path $PWD/examples/embodiment/config/ --config-name so101_eval_openpi_pi05 \
+    runner.logger.log_path=/data08/henryg/pai/results/so101_eval_v10 \
+    rollout.model.model_path=$V9 rollout.model.openpi.config_name=pi05_so101_v9 \
+    rollout.model.openpi_data.norm_stats_path=$PWD/assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json \
+    env.eval.total_num_envs=128 env.eval.seed=$SEED
+done
+
+# E2 只在新增的环形带上补规划器示范（内框已经够密，不重复生成）
+bash tools_so101_session/gen_demos_annulus.sh
+
+# E3 在 v9 数据集的副本上追加，不重编码旧集
+.venv/bin/python tools_so101_session/convert_append_region.py
+```
+
+E4 训练按 §1.5 ①（配置 `so101_sft_v10`，热启动 v9 的 `global_step_1250`，lr 1e-5、2000 步、存点 250），E5 门评按 §1.5 ②（条目 `pi05_so101_v10`，`SO101_SPAWN_FRAC=$RING1`，种子 1313/1414）。
 
 **验收**：`so101_sft_v10/.../global_step_1000`，环 1 诚实 55.1%、框内 75.0%、全板 10.2%。
 
@@ -463,10 +592,22 @@ python examples/sft/train_vla_sft.py \
 
 这一步**targets 真机表现，同时有能力破坏仿真能力**。单轴门评会拿仿真能力换真机能力而不自知，所以每个检查点同时测两个数：
 
-| 轴 | 指标 | 判据 |
-|---|---|---|
-| 目标 | 离线真机比值（**留出集**） | 越低越好，必须 <1 |
-| 约束 | 仿真环 1 成功率 | **不得跌破 50%** |
+| 轴 | 指标 | 怎么测 | 判据 |
+|---|---|---|---|
+| 目标 | 离线真机比值（**留出集**） | 下面这条命令 | 越低越好，必须 <1 |
+| 约束 | 仿真环 1 成功率 | §1.5 ②，条目 `pi05_so101_v15`，`SO101_SPAWN_FRAC=$RING1` | **不得跌破 50%** |
+
+```bash
+for CK in /data08/henryg/pai/results/so101_sft_v15/*/checkpoints/global_step_*; do
+  mkdir -p "$CK/so101-sim-demos-v4"
+  cp assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json "$CK/so101-sim-demos-v4/"
+  CUDA_VISIBLE_DEVICES=0 .venv/bin/python tools_so101_session/offline_replay_check.py \
+    --ckpt $CK --config-name pi05_so101_v15 \
+    --norm-stats $PWD/assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json \
+    --chunks 10 --real-root $DATA/so101-pick-place-v1-trimmed \
+    --ep-start 70 --episodes 5 --frames 10        # ep-start 70 = 只读留出集
+done
+```
 
 **约束必须在选点时有否决权**，不是事后看看。实测抓到过一次交换：750 步时真机比值已改善到 1.16，而仿真掉到 52.3%——在只看目标轴的门评里这看起来是进步。
 
