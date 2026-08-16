@@ -332,7 +332,22 @@ export EMBODIED_PATH=$PWD/examples/sft
 | 归一化统计量（**只有阶段 A 用**） | `assets/pi05_so101/henry-guo/so101-pick-place-v2/norm_stats.json` |
 | 权重（取用 step_8000） | `results/so101_sft_openpi_pi05/checkpoints/global_step_8000` |
 
-**验收** 不做仿真评测（跑了也是 0.0%，这一步的价值不在成绩）。**耗时约 3 h。**
+**验收** 不做仿真评测——这一步的价值不在成绩。想自己确认"真机数据训出来的策略在仿真里是 0"，用它自己的条目和统计量评一次即可（**这是唯一一次不用 v4 那份 norm_stats 的评测**，因为这个检查点属于阶段 A 的血统）：
+
+```bash
+export EMBODIED_PATH=$PWD/examples/embodiment
+.venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
+timeout 1800 .venv/bin/python evaluations/eval_embodied_agent.py \
+  --config-path $PWD/examples/embodiment/config/ --config-name so101_eval_openpi_pi05 \
+  runner.logger.log_path=/data08/henryg/pai/results/so101_eval_stageA \
+  rollout.model.model_path=/data08/henryg/pai/results/so101_sft_openpi_pi05/checkpoints/global_step_8000 \
+  rollout.model.openpi.config_name=pi05_so101 \
+  rollout.model.openpi_data.norm_stats_path=$PWD/assets/pi05_so101/henry-guo/so101-pick-place-v2/norm_stats.json \
+  env.eval.total_num_envs=128 env.eval.seed=777 \
+  2>&1 | grep -oE 'success_once=[0-9.]+' | tail -1
+```
+
+实测 `success_once=0.0`。**耗时约 3 h**（训练）。
 
 ---
 
@@ -357,7 +372,22 @@ export EMBODIED_PATH=$PWD/examples/sft
 | `--seed0` | 起始种子，逐条 +1；**探针种子要与后面生成用的种子段错开**，避免用同一批局面 |
 | `--out` | h5 输出目录 |
 
-**输出** `$DATA/probe/*.h5`（轨迹）+ 同名 `.json`（每条是否成功、长度）。
+**输出** `$DATA/probe/*.h5`（轨迹）+ 同名 `.json`（每条是否成功、长度）。生成器最后会打印一行 `TOTAL success N`。
+
+```bash
+# 成功数
+grep -oE 'TOTAL success [0-9]+' <生成日志> | grep -oE '[0-9]+$'
+# 成功轨迹的中位长度
+.venv/bin/python - <<'PY'
+import glob, json, h5py, numpy as np
+h5 = sorted(glob.glob("/data08/henryg/pai/data/probe/*.h5"))[-1]
+meta = json.load(open(h5.replace(".h5", ".json")))
+ok = [e["episode_id"] for e in meta["episodes"] if e["success"]]
+f = h5py.File(h5, "r")
+print("median length:", int(np.median([f[f"traj_{i}"]["actions"].shape[0] for i in ok])))
+PY
+```
+
 **验收** ≥8/12 成功、成功轨迹中位长度 ≤530 步（预算 640 的 1.1 倍余量）。**不过就不要往下走。**
 
 ### B2 分层生成 420 条全板示范
@@ -380,6 +410,12 @@ for XI in 0 1 2 3; do for YI in 0 1 2 3; do
 | 输出目录名 | **必须是 `v4_demos_cell*`** —— 下一步的转换器按 `/data08/henryg/pai/data/v4_demos_cell*/**/*.h5` 找输入（`convert_fullboard.py:19`） |
 
 **输出** 16 个目录的 h5，合计约 420 条成功轨迹。
+
+```bash
+# 16 格加总（把每格的 stdout 存成 gen_<格号>.out 后）
+grep -hoE 'TOTAL success [0-9]+' $SCRATCH/gen_*.out | grep -oE '[0-9]+' | awk '{s+=$1} END{print s"/720"}'
+```
+
 **验收** 总成功数 ≥250。8 个 CPU 进程并行，**耗时约 4 h**。
 
 ### B3 转换 + 计算 norm_stats（仿真域只算这一次）
@@ -694,13 +730,76 @@ setsid .venv/bin/python examples/embodiment/train_embodied_agent.py \
 
 **自动停机守卫**每 5 分钟读一次 `eval/success_once`：低于峰值 20 点 → 停；连续 3 次低于起点 5 点 → 停。**必须写在启动器里**，写在会话里会随会话消失（历史上因此白烧 180 轮）。
 
-### 8.4 输出与验收
+### 8.4 读训练曲线
+
+训练中的成绩不在 stdout 里，在 tensorboard 事件文件里。守卫脚本也是这么读的：
+
+```bash
+.venv/bin/python - <<'PY'
+import glob
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+fs = sorted(glob.glob("/data08/henryg/pai/results/so101_ppo_v13/**/events.out.tfevents*", recursive=True))
+ea = EventAccumulator(fs[-1], size_guidance={"scalars": 0}); ea.Reload()
+for s in ea.Scalars("eval/success_once"):
+    print(s.step, round(s.value, 4))
+PY
+```
+
+| 标量 | 含义 |
+|---|---|
+| `eval/success_once` | **确定性**评测，每 `val_check_interval`（5 轮）一次——**挑检查点看这个** |
+| `env/success_once` | **带噪** rollout，PPO 实际学习的分布——判断"还在不在有效区间"看这个 |
+
+实测曲线：
 
 | step | 4 | 9 | 14 | 19 | 24 | **29** | 34 | 39 | 44 | 49 |
 |---|---|---|---|---|---|---|---|---|---|---|
 | eval | 60.9 | 58.6 | 62.5 | 58.6 | 70.3 | **73.4** | 69.5 | 70.3 | 68.0 | 68.8 |
 
-前 20 轮徘徊（**不要在这里判死刑**），step 24 起上台阶。
+前 20 轮徘徊（**不要在这里判死刑**），step 24 起上台阶。峰值在 step 29，对应检查点 `global_step_30`。
+
+### 8.5 验收：诚实口径要跑两组评测
+
+**为什么要两组** 峰值检查点是在门评那套固定局面上挑出来的，再用同一套局面报增益等于自己给自己打分。所以换**从未用过的种子**，并且**把起点用同样的种子、同样的块长重测一遍**——不这么做就分不清"PPO 的增益"和"这两个种子恰好更容易"。
+
+```bash
+export EMBODIED_PATH=$PWD/examples/embodiment
+export RING1="0.4294,0.9115,0.5142,0.9817"
+STATS=$PWD/assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json
+PPO=/data08/henryg/pai/results/so101_ppo_v13/so101_ppo_v11/checkpoints/global_step_30
+BASE=/data08/henryg/pai/results/so101_sft_v10/so101_sft_openpi_pi05/checkpoints/global_step_1000
+
+for CK in $PPO $BASE; do              # 两个检查点，同样的种子、同样的块长
+  for SEED in 4141 4242; do
+    .venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
+    find /dev/shm -maxdepth 1 -type f \( -name 'cuda.shm.*' -o -name 'nccl-*' \) -delete
+    SO101_SPAWN_FRAC=$RING1 timeout 1800 .venv/bin/python evaluations/eval_embodied_agent.py \
+      --config-path $PWD/examples/embodiment/config/ --config-name so101_eval_openpi_pi05 \
+      runner.logger.log_path=/data08/henryg/pai/results/so101_eval_v13 \
+      rollout.model.model_path=$CK \
+      rollout.model.openpi.config_name=pi05_so101_v10 \
+      rollout.model.openpi_data.norm_stats_path=$STATS \
+      rollout.model.num_action_chunks=10 \
+      env.eval.total_num_envs=128 env.eval.seed=$SEED \
+      2>&1 | grep -oE 'success_once=[0-9.]+' | tail -1
+  done
+done
+```
+
+也可以直接用当时的两个脚本（多了 3 次重试和 shm 清理）：
+
+```bash
+SCRATCH=/tmp/so101_runs bash tools_so101_session/verify_honest_seeds.sh      # PPO 峰值，另加框内/全板参照
+SCRATCH=/tmp/so101_runs bash tools_so101_session/verify_baseline_control.sh  # 起点，同种子同块长
+```
+
+| 参数 | 值 | 为什么 |
+|---|---|---|
+| `rollout.model.openpi.config_name` | `pi05_so101_v10` | **PPO 阶段没有产生新数据集**，沿用起点那个条目 |
+| `rollout.model.num_action_chunks` | **10** | 两个检查点都必须是 10，否则比的不是同一件事（见本节末的警示） |
+| `env.eval.seed` | 4141 / 4242 | 从未参与任何挑选 |
+| `env.eval.total_num_envs` | 128 | 每集 0.8 个百分点；再少就读不出 5 个点的差别 |
+| `find /dev/shm ... -delete` | | 上一次评测残留的共享内存段会让下一次以"看起来像显存不足"的方式失败 |
 
 **输出** `results/so101_ppo_v13/so101_ppo_v11/checkpoints/global_step_30`。
 
