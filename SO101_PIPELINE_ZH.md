@@ -407,7 +407,7 @@ for XI in 0 1 2 3; do for YI in 0 1 2 3; do
 |---|---|
 | `SO101_SPAWN_FRAC` | `x0,x1,y0,y1`，方块生成区在棕色板上的**归一化比例**；这里每格 1/4×1/4 |
 | `--num 45` × 16 格 | 720 次尝试，实测约 420 条成功 |
-| 输出目录名 | **必须是 `v4_demos_cell*`** —— 下一步的转换器按 `/data08/henryg/pai/data/v4_demos_cell*/**/*.h5` 找输入（`convert_fullboard.py:19`） |
+| 输出目录名 | **必须以 `v4_demos_cell` 开头** —— 下一步的转换器按 `/data08/henryg/pai/data/v4_demos_cell*/**/*.h5` 找输入（`convert_fullboard.py:19`）。后缀叫什么无所谓，`*` 会全部匹配 |
 
 **输出** 16 个目录的 h5，合计约 420 条成功轨迹。
 
@@ -430,6 +430,21 @@ grep -hoE 'TOTAL success [0-9]+' $SCRATCH/gen_*.out | grep -oE '[0-9]+' | awk '{
 |---|---|---|
 | `convert_fullboard.py` | `$DATA/v4_demos_cell*/**/*.h5` | LeRobot 数据集 `$DATA/so101-sim-demos-v4`（30 fps、640×480、双相机；轨迹长度 >580 帧的丢弃） |
 | `calculate_norm_stats` | 上面那个数据集 | `assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json` |
+
+> **`**` 是 Python 的递归通配符，不是 shell 的。** 它匹配**任意层数的子目录，包括零层**，而且**只有在 `glob.glob(..., recursive=True)` 下才生效**——转换器正是这么调的（`convert_fullboard.py:26`）。
+>
+> 本例里 h5 就直接躺在 `v4_demos_cell_*/` 下，所以 `**` 匹配的是零层，结果与 `v4_demos_cell*/*.h5` 完全相同（实测都是 16 个文件）。写 `**` 是留个余地：将来生成器若改成按子目录存放，转换器不用改。
+>
+> **两个都不会报错、只会静默匹配到 0 个文件的坑**：
+>
+> | 写法 | 实际含义 | 在本例中匹配到 |
+> |---|---|---|
+> | Python `glob(..., recursive=True)` | `**` = 任意层（含零层） | **16** ✅ |
+> | Python 漏掉 `recursive=True` | `**` 退化成普通 `*` = 正好一层 | 0 ❌ |
+> | bash 默认 | 同上，`**` 就是 `*` | 0 ❌ |
+> | bash `shopt -s globstar` 之后 | `**` = 任意层 | 16 ✅ |
+>
+> 所以**别把这个模式直接抄进 shell 命令**——在 bash 里要先 `shopt -s globstar`，否则它会安静地找不到任何文件。
 
 > **这是第二次调用 `calculate_norm_stats`，但不是重复劳动。** 归一化统计量定义"模型看到的数值世界"，真机与仿真是两个不同的分布：
 >
