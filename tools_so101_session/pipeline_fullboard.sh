@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: ACTIVE — 当前流程在用。 阶段 B 的整段编排（S0 探针 -> S5 检查点清理）
 # v4 pipeline (USER-APPROVED parameters, 2026-08-10):
 #  S0 planner probe N=12 on the changed env (30Hz/640x480/8g) — gate >=6
 #  S1 stratified demos: 16 cells x 45 attempts, 8 CPU workers, seeds 80000+

@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: REFUTED — 试过，结论是不行。留着是为了别人不再走一遍。 用 only_eval=True 当探针 —— 它同时改了三处行为，不是同一条代码路径
 # Decisive: run the v11 RL config in EVAL-ONLY mode (no gradient updates).
 # The RL run's first eval landed at step 9 -- i.e. after ~108 updates -- so its
 # 0.0 cannot distinguish "the harness builds a broken policy" from "108 updates

@@ -1,3 +1,4 @@
+# STATUS: REFUTED — 试过，结论是不行。留着是为了别人不再走一遍。 分带课程学习的数据转换
 """Convert stratified planner demos (h5, TRUE-task env) -> LeRobot so101-sim-demos-v7.
 
 Images are 160x120 (4:3, matches the real 640x480 through resize_with_pad).

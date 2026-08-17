@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: EVIDENCE — 一次性对照实验，支撑文档里的某个结论。 PPO 参数探索第二轮 —— 阶段 F 的三个参数由它得出
 # Overnight PPO exploration, take 2. Full autonomy granted 2026-08-14 00:20.
 #
 # WHY THIS SHAPE (user's question, which was the right one): our 640-step budget

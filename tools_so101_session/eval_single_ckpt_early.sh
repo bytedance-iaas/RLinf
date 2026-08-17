@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 pp 时代单检查点评测
 set -uo pipefail
 SCRATCH=${SCRATCH:-/tmp/so101_runs}; mkdir -p "$SCRATCH"
 cd /data08/henryg/pai/RLinf

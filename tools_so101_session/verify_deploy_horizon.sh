@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: ACTIVE — 当前流程在用。 部署校验：服务端与离线门的动作块长一致性
 # The YAML defines openpi.action_chunk as ${..num_action_chunks}; hand-built
 # configs do not inherit that and fall back to the dataclass default of 5.
 # The sim evals went through the YAML (horizon 10); the offline gate and the

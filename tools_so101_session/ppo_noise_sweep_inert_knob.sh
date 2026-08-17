@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: REFUTED — 试过，结论是不行。留着是为了别人不再走一遍。 扫 noise_params —— 该参数对 flow_noise 根本不生效，8 组全无变化
 # Measure the ONE quantity that decides whether PPO can work here: success rate
 # in the ROLLOUT distribution (env/success_once), as a function of exploration
 # noise. Probe = freeze test (lr=1e-9) so it exercises the real training path

@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 真机 SFT 在仿真里的评测（结论已并入阶段 A）
 set -uo pipefail
 SCRATCH=${SCRATCH:-/tmp/so101_runs}; mkdir -p "$SCRATCH"
 cd /data08/henryg/pai/RLinf

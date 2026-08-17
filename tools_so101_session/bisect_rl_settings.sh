@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: EVIDENCE — 一次性对照实验，支撑文档里的某个结论。 二分定位：独立评测 57.8% 与 RL 内评测 0.0% 的差异来自哪个设置
 # Bisect the 57.8% (standalone eval) vs 0.0% (RL harness eval) gap by adding the
 # RL-specific model settings to the standalone eval ONE AT A TIME.
 #   A: + add_value_head=True, value_after_vlm=True   (a randomly-initialised head,

@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 下载官方 ManiSkill SFT 检查点，该任务线已停
 # Download the published pi0.5 ManiSkill-25Main SFT checkpoint (7.5 GB) so we
 # can try to reproduce the paper's 40.1% SFT number on OUR machine. Network
 # only -- no GPU. HF_HUB_OFFLINE must be off for this one process.

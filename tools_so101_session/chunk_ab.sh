@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: EVIDENCE — 一次性对照实验，支撑文档里的某个结论。 动作块长 5 vs 10 的对照。⚠️ 两个臂当时都是 10（手搓 config 不继承 YAML 插值），结论无效
 # Does actually emitting 10 actions per inference differ from the 5 every
 # reported number was produced with? num_action_chunks (worker-level) sets how
 # OFTEN inference is called; openpi.action_chunk (model-level) sets how MANY

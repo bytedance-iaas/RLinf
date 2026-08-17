@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: EVIDENCE — 一次性对照实验，支撑文档里的某个结论。 阶段 B 换热启动来源的对照（10.2% vs 12.5%，阈值内）
 # CONTROLLED TEST of the single unverified link in V10_REPRODUCTION_ZH.md.
 #
 # Question: can the full-board sim-demo SFT stage warm-start from the REAL-DATA

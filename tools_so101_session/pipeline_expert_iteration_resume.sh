@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: ACTIVE — 当前流程在用。 阶段 D 的续跑版（原流水线在 S2 超时后接管）
 # v9_rest — takes over S3 (gentle SFT) + S4 (gate/verify) + S5 (hygiene) from
 # pipeline_expert_iteration.sh, whose S2 `timeout 10800` would have killed the conversion
 # ~30 min before it finishes (measured rate 3.3 ep/min, 724 episodes total).

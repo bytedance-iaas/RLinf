@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 标定验证：烘焙后的参数是否对得上真机
 """Verify the baked calibration (wrist_flex +0.6): replay episode 0 and build
 real-vs-sim comparisons for BOTH the front (top-down) and the wrist camera."""
 import glob

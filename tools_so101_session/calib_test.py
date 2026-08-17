@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 标定：逐关节符号候选的真实-仿真对比
 """Replay episode 0 under several per-joint SIGN candidates; build real-vs-sim
 front-cam comparison sheets to find the sign config that matches the real arm."""
 import glob

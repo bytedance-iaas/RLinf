@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 冒烟自检：任务注册、注册表条目、环境可用性
 import traceback
 
 def stage(name, fn):

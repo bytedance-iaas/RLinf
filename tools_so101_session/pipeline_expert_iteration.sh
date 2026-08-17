@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: ACTIVE — 当前流程在用。 阶段 D 的整段编排
 # v9 — EXPERT ITERATION round 1 on the v8 policy (user: "a first, then b").
 # Zero-risk amplifier: collect the current policy's own successes, mix them with
 # the original planner demos (iRe-VLA), and re-SFT gently.

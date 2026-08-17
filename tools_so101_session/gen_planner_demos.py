@@ -1,3 +1,4 @@
+# STATUS: ACTIVE — 当前流程在用。 阶段 B/C/E 的示范生成器
 """Generate scripted grasp demos in SO101GrabRedCube-v1 via motion planning.
 
 Adapted from mani_skill.examples.motionplanning.so100.solutions.pick_cube.

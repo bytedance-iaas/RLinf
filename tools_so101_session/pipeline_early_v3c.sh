@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 v3 第三轮
 # Overnight round 2: S1b more stratified demos (25/cell, extra 25 on weak cells)
 # -> S2b rebuild dataset (all v3_demos_cell* incl. round 1) + norm_stats
 # -> S3c SFT round 2 (from v3 step_3000) -> S4c gate + bands.

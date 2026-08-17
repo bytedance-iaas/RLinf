@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 渲染策略实际看到的画面 —— 找相机缺陷就靠它
 """Render the CURRENT SO101 sim: front camera (what the policy sees) for four
 different seeds, plus one wrist view and one free overview camera.
 

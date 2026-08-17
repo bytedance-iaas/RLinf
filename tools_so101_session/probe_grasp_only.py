@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 只抓取不放置的简化探针，用来隔离失败环节
 """Generate scripted grasp demos in SO101GrabRedCube-v1 via motion planning.
 
 Adapted from mani_skill.examples.motionplanning.so100.solutions.pick_cube.

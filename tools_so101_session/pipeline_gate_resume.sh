@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 v3d 门评的断点续跑
 # Resume v3d gate after session teardown killed the pipeline mid-gate.
 # Done already: 1000 avg 0.0625; 2000 s777 0.0234. Remaining: 2000 s888,
 # 3000, 4000, then verify + bands on the best.

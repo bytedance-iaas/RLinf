@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: ACTIVE — 当前流程在用。 阶段 F 验收，未参与挑选的种子
 # Honest verification of the PPO peak checkpoint (v13 global_step_30, eval 0.7344
 # at step 29 under the gate protocol). Seeds 4141/4242 have never been used
 # anywhere in this project -- not for gating, not for collection.

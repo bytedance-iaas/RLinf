@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: ACTIVE — 当前流程在用。 阶段 C 的整段编排
 # v8 PIPELINE — the target configuration (user, 2026-08-12: "V8 是目标").
 # Full fidelity (640x480, 30 Hz, measured geometry, 8 g cube, homing success)
 # with ONLY the red-cube spawn narrowed to the pp-era 6x8 cm box.

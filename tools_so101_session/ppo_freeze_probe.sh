@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: ACTIVE — 当前流程在用。 阶段 F 启动前的先决条件探针（lr=1e-9 冻结测试）
 # FREEZE TEST — the correct tool, which I should have used instead of only_eval.
 # Runs the REAL training path (same workers, same env creation, same model
 # construction, same weight sync) with lr = value_lr = 1e-9, so weights are

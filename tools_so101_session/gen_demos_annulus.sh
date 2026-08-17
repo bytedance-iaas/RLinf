@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: ACTIVE — 当前流程在用。 阶段 E2，只在环形带补示范
 # v10 S2 — planner demos in the RING-1 ANNULUS ONLY (ring1 minus the legacy box).
 #
 # Why only the annulus: the S1 policy-collection is heavily biased toward the

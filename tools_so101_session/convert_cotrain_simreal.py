@@ -1,3 +1,4 @@
+# STATUS: ACTIVE — 当前流程在用。 阶段 G，协同训练数据集第一轮（真机全 87 集）
 """Build the sim+real co-training dataset.
 
 Why: the sim-trained policy scores 4.47 on the offline real-observation check

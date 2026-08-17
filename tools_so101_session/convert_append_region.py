@@ -1,3 +1,4 @@
+# STATUS: ACTIVE — 当前流程在用。 阶段 E3，在副本上追加环 1 数据
 """v10 = ring-1 expansion (expert iteration round 2, wider spawn).
 
 Built by APPENDING to a copy of the v9 dataset instead of re-encoding it:

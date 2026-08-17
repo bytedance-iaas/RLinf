@@ -1,3 +1,4 @@
+# STATUS: ACTIVE — 当前流程在用。 阶段 B3，全板示范 -> 数据集，血统统计量在此确立
 """Convert stratified planner demos (h5, TRUE-task env) -> LeRobot so101-sim-demos-v4.
 
 Images are 160x120 (4:3, matches the real 640x480 through resize_with_pad).

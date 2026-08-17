@@ -1,3 +1,4 @@
+# STATUS: ACTIVE — 当前流程在用。 阶段 C2，窄框示范 -> 数据集
 """Convert stratified planner demos (h5, TRUE-task env) -> LeRobot so101-sim-demos-v8.
 
 Images are 160x120 (4:3, matches the real 640x480 through resize_with_pad).

@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: ACTIVE — 当前流程在用。 阶段 F 验收的对照：起点同种子同块长
 # The missing control for the PPO gain claim: the SAME start checkpoint (v10),
 # at the SAME chunks=10, on the SAME never-used seeds the PPO peak was verified
 # on. Without this, "PPO added N points" only holds on the gate's fixed eval set.

@@ -1,3 +1,4 @@
+# STATUS: REFUTED — 试过，结论是不行。留着是为了别人不再走一遍。 更细的 IK 网格 —— 不是放置误差的根因
 """Generate scripted grasp demos in SO101GrabRedCube-v1 via motion planning.
 
 Adapted from mani_skill.examples.motionplanning.so100.solutions.pick_cube.

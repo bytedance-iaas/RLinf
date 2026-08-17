@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: EVIDENCE — 一次性对照实验，支撑文档里的某个结论。 阶段 C 验收的独立重跑（Ray worker 猝死后补测）
 # v8 final verification, re-run standalone after a Ray worker death stalled the
 # pipeline's verification stage. Best checkpoint = global_step_2500
 # (gate: seed777 61.7% / seed888 56.3% -> 59.0%).

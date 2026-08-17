@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 pp 时代的整段流水线
 # Phase-2 full pipeline: run when GPUs are free. Each stage gates on the
 # previous one's verdict; status lines go to STATUS. Fully detached-safe.
 set -uo pipefail

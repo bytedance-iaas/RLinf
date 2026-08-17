@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: ACTIVE — 当前流程在用。 阶段 G 第二轮：GPU 轨，三项测量 + 正式训练
 # TRACK 2 (GPU) — three measurements, then the held-out co-training run.
 #
 # A. v14's best scored on real episodes 70-86 instead of 0-3. Still contaminated

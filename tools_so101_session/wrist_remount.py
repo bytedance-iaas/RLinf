@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 标定改动后重新扫描腕部相机位姿
 """With wrist_flex +0.6 baked in, re-sweep the wrist-camera mount pose so the sim
 wrist view looks forward-down at the workspace (matching the real wrist cam)."""
 import glob

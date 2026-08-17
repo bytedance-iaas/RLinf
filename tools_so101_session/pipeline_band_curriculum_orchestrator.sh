@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: REFUTED — 试过，结论是不行。留着是为了别人不再走一遍。 分带课程学习的两阶段编排
 # Autonomous overnight orchestrator: waits for v7 Phase A (critic warmup) to
 # finish, then launches Phase B (normal-lr amplification) from the warmed ckpt.
 # Runs fully detached — no human interaction needed. All status goes to STATUS.

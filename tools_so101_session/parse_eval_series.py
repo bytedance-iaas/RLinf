@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 从训练日志里解析确定性评测序列
 """Parse RLinf embodied training log -> deterministic-eval success series.
 
 Layout per eval epoch: the timing table row containing `eval=<seconds>` is

@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: ACTIVE — 当前流程在用。 阶段 E 的整段编排
 # v10 S3-S5 — convert (append to a copy of v9), gentle SFT, gate.
 #
 # Timeouts are sized from MEASURED rates, not round numbers:

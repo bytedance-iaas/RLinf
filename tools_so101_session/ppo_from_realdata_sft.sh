@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 从真机 SFT 直接起 PPO，先决条件不满足
 set -uo pipefail
 SCRATCH=${SCRATCH:-/tmp/so101_runs}; mkdir -p "$SCRATCH"
 cd /data08/henryg/pai/RLinf

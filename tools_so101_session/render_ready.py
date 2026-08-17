@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 渲染当前场景，看资产/位姿对不对
 import os
 """Wrist + front view AFTER the raise-arm prefix -- i.e. what the policy sees
 during the task, not at the folded home pose."""

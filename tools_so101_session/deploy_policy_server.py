@@ -1,3 +1,4 @@
+# STATUS: ACTIVE — 当前流程在用。 部署备用路线：RLinf 直接起 websocket 服务
 """Policy inference server for the real SO101.
 
 Runs on the training node; the laptop that owns the arm connects over a

@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: TOOL — 通用工具，与具体阶段无关。 生成位置与成败的相关性诊断
 # Spawn-vs-outcome diagnostic on the round-2 best ckpt, FRESH seeds (also an
 # unbiased re-verification of the gate number). Writes spawn_pp6.csv rows.
 set -uo pipefail

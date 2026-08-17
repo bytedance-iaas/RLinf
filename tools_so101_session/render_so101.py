@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 并排渲染两路策略输入
 import os
 """Render SO101GrabRedCube-v1 policy camera views (front + wrist) + an overview."""
 import numpy as np

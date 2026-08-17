@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: ACTIVE — 当前流程在用。 阶段 G 第一轮的整段编排
 # v14 — sim+real co-training, the first sim2real step.
 #
 # The offline check established the problem and its target with two symmetric

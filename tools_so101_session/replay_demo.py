@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 把真机录制的动作重放进仿真，逐帧对比
 """Replay a real demo episode's recorded ACTIONS through the SO101 sim via
 env.step (pd_joint_pos), rendering the top-down front camera to compare against
 the real front-cam. Validates the normalized->radian mapping (units+zero+sign)."""

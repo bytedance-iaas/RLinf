@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 腕部相机安装位姿的 3x3 网格扫描
 import os
 """Sweep wrist-camera poses to find the forward-down view matching the real one.
 Also render the front camera to verify scene fixes. Writes a labeled 3x3 grid."""

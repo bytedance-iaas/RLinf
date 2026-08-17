@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 复现论文基准数字，该任务线已停
 # Reproduce the published pi0.5 SFT number on the paper's own benchmark.
 #   Paper (πRL, arXiv 2510.25889): ManiSkill3 25-task multi-task SFT = 40.1%
 #   (RL then takes it to 90.9% Flow-SDE / 89.7% Flow-Noise)

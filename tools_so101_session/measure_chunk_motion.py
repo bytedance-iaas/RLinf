@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 测相邻动作块之间图像/关节的变化量
 """Full-coverage measurement: inter-chunk visual + joint motion across ALL
 successful v4 demos (16 spawn cells, 420 episodes)."""
 import glob, json, h5py, numpy as np

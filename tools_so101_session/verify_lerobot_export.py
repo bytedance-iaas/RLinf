@@ -1,3 +1,4 @@
+# STATUS: ACTIVE — 当前流程在用。 部署：证明导出没有改变策略
 """Equivalence test for convert_rlinf_to_lerobot.py.
 
 A key-set match proves the tensors landed in the right slots. It does not prove

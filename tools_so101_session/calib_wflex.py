@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 标定：wrist_flex 零位偏移扫描
 """Replay episode 0 under several wrist_flex zero-OFFSETs; render the angled view
 (gripper tilt visible) + the sim wrist camera (sees what the gripper points at).
 Goal: find the offset where the gripper points DOWN at the reach/grab, and the

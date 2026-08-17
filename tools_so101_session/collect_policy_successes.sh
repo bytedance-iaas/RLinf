@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: ACTIVE — 当前流程在用。 阶段 D1/E1，采集策略自己的成功轨迹
 # v10 S1 — (b) RING-1 EXPANSION, collection stage.
 # Ring 1 = the legacy 6x8cm box grown by sqrt(2) per axis about its own centre
 # => 8.49 x 11.31 cm = 96 cm^2 (exactly 2x the v8/v9 spawn area), expressed as

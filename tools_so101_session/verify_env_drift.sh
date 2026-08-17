@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: EVIDENCE — 一次性对照实验，支撑文档里的某个结论。 证明环境未漂移：v4 原检查点重测得到与两天前一致的 12.5%
 # Re-run of the ENV-DRIFT CONTROL that verify_warmstart_substitution.sh fumbled: it placed the
 # control eval BEFORE the line that exports EMBODIED_PATH, so all three tries
 # died instantly with KeyError: 'EMBODIED_PATH' and the script fell back to the

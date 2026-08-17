@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 v3d 新血统重训 —— 重算统计量导致 19.5%->9.4%，血统冻结那条规则的来源
 # v3d: FRESH-LINEAGE retrain on the full 472-ep dataset.
 #  - stats recomputed for the 472 set (legal: new lineage from pp6b_1000)
 #  - exact v3 recipe: so101_sft_v3.yaml (warm=pp6b_1000, lr 2.5e-5, 4000 steps)

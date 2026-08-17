@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 v11 官方配方首跑：先决条件不满足（带噪 1.0%），失败
 # v11 — first reference-aligned PPO run (πRL official recipe, §F of the repro doc).
 #
 #   start   : v10_step_1000  (ring-1 honest 55.1%)

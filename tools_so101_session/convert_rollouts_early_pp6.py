@@ -1,3 +1,4 @@
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 pp 时代 rollout 转换
 """Convert on-policy SUCCESS rollouts (npz from SO101_COLLECT_DIR) -> LeRobot dataset.
 
 npz layout (per episode, written by ManiskillEnv recorder):

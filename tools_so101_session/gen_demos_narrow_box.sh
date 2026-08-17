@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 阶段 C 生成的旧启动器，现直接调 gen_planner_demos.py
 # v8 demo generation — USER-DIRECTED (2026-08-12): keep FULL fidelity
 # (640x480 cameras, 30 Hz, true board geometry, 8 g cube, homing success) and
 # restrict ONLY the red-cube spawn to the pp-era 6x8 cm box (SO101_SPAWN_MODE=legacy).

@@ -1,3 +1,4 @@
+# STATUS: ACTIVE — 当前流程在用。 阶段 G 的 sim2real 门，也是上真机前的最后判据
 """Offline sim2real check: does the sim-trained policy produce sane actions on
 REAL images, without touching the robot?
 

@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: TOOL — 通用工具，与具体阶段无关。 训练监工：按故障类型分流诊断，而不是一律重启
 # SUPERVISOR v2 — autonomy that DIAGNOSES instead of pattern-matching one guess.
 # Replaces supervisor_early_v6.sh, whose single-branch fallback stalled the
 # night of 2026-08-11 ("needs human") on a failure class it did not know.

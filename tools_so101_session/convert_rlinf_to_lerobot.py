@@ -1,3 +1,4 @@
+# STATUS: ACTIVE — 当前流程在用。 部署：RLinf 检查点 -> LeRobot 格式
 """Export an RLinf openpi PI0.5 checkpoint as a LeRobot-format pi05 checkpoint.
 
 Why: LeRobot's async inference stack (`lerobot.async_inference.policy_server` +

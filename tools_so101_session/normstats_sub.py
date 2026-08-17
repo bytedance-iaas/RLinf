@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 子采样版 norm_stats 计算（大数据集上更快）
 """Subsampled norm-stats for pi05_so101 (state+actions only).
 
 Reuses toolkits.lerobot.calculate_norm_stats.create_torch_dataloader (so its

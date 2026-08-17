@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: TOOL — 通用工具，与具体阶段无关。 规划器改动的 A/B（在它最差的两条带上测）
 # A/B for the planner drop fix, on the two strips where the current planner is
 # worst (LEFT and TOP: 33% hit rate, 5.6-7.0 cm median drop error over 298
 # logged attempts). Same strips, same seeds, only the planner differs.

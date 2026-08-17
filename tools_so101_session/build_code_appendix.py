@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 把脚本正文汇编成文档附录
 import os
 """Append an exact per-step code appendix to the pp-80% runbook.
 

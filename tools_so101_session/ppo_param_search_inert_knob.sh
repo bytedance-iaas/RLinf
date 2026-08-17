@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: REFUTED — 试过，结论是不行。留着是为了别人不再走一遍。 第一轮 PPO 参数搜索，建立在 ppo_noise_sweep_inert_knob.sh 那个失效旋钮上
 # Overnight PPO exploration (user granted full autonomy 2026-08-13 23:15).
 #
 # PHASE 1 (already running as ppo_noise_sweep_inert_knob.sh): rollout success vs noise level.

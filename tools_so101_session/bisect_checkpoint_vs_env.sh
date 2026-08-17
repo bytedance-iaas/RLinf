@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: EVIDENCE — 一次性对照实验，支撑文档里的某个结论。 二分定位：成绩变化来自检查点还是环境
 # Decisive isolation: does v10_step_1000 still reproduce its afternoon numbers
 # (ring 1 = 0.551, full board = 0.102) with the SAME standalone eval path?
 #   - reproduces  -> the RL harness is what differs; bisect there next

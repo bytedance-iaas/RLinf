@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: ACTIVE — 当前流程在用。 阶段 F，跑通的那次 PPO 启动器（含自动停机守卫）
 # v13 = v12's fixed rollout distribution + the UPDATE SCHEDULE that actually
 # amplified in this project's history.
 #

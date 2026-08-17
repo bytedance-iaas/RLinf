@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 把会话记录导出成 Markdown
 """Export the full session transcript (jsonl) to one Markdown file, verbatim:
 conversation turns, tool calls with inputs, tool results, plus an appendix with
 the CURRENT full contents of every project file this session created/modified

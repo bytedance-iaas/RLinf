@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 v6 的监工，被 supervisor_v2.sh 取代
 # OVERNIGHT SUPERVISOR (user: "夜间训练，全部同意", 2026-08-11).
 # Autonomy lives in THIS script, not in the agent's session (skill §6: a
 # disconnected session freezes the agent's reactions).

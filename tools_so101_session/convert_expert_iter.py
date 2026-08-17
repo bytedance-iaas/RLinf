@@ -1,3 +1,4 @@
+# STATUS: ACTIVE — 当前流程在用。 阶段 D2，规划器 h5 + 策略 npz 混合
 """v9 = expert iteration round 1 in the legacy box.
 Pools: (1) the 247 planner demos (h5, v8 source) and (2) SUCCESSFUL policy
 rollouts collected from v8_step_2500 (npz). iRe-VLA: mixing the original expert

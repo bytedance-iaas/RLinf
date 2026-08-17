@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 离线检验的早期封装，现直接调 offline_replay_check.py
 cd /data08/henryg/pai/RLinf
 export REPO_PATH=$PWD PYTHONPATH=$PWD HF_LEROBOT_HOME=/data08/henryg/pai/data
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 TOKENIZERS_PARALLELISM=false

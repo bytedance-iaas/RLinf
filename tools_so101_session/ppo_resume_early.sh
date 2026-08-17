@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 从早期 RL-750 检查点续跑，夹爪已塌缩
 set -uo pipefail
 SCRATCH=${SCRATCH:-/tmp/so101_runs}; mkdir -p "$SCRATCH"
 cd /data08/henryg/pai/RLinf

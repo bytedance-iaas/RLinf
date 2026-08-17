@@ -1,3 +1,4 @@
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 最早的通用转换器，已按阶段拆成四个
 """Convert successful ManiSkill scripted demos (h5) -> LeRobot v2.x dataset.
 
 State/action are converted from ManiSkill radians to LeRobot normalized units

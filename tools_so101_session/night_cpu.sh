@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: ACTIVE — 当前流程在用。 阶段 G 第二轮：CPU 轨，建留出集数据
 # TRACK 1 (CPU only) — build the held-out co-training dataset.
 #
 # Why this run exists: v14 put all 87 real episodes into training and then scored

@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 v3 时代流水线，被阶段 B 取代
 # OVERNIGHT true-task pipeline (user pre-approved incl. GPU):
 #  S1 stratified planner demos (16 cells, 4 parallel CPU workers)
 #  S2 convert -> so101-sim-demos-v3 + norm_stats

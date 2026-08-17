@@ -1,3 +1,4 @@
+# STATUS: TOOL — 通用工具，与具体阶段无关。 合并两个 LeRobot 数据集
 """Merge REAL (henry-guo/so101-pick-place-v2, 87 eps) + SIM v4 (420 eps) into
 one LeRobot dataset `so101-mix-v5`.
 

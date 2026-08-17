@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: REFUTED — 试过，结论是不行。留着是为了别人不再走一遍。 分带课程学习：先中带再左带 —— 没有带来提升
 # v7 CURRICULUM (user-directed 2026-08-12: "先只训中+左带"):
 #   restrict the task to the brown zone's middle+left bands (spawn y >= 0.25,
 #   12 of 16 cells, 384 demos, planner 65-100% there) and see whether the BC

@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: REFUTED — 试过，结论是不行。留着是为了别人不再走一遍。 纯自蒸馏（真机+仿真混合 SFT）——策略越练越窄，掉 53 点
 # v5 (USER-APPROVED 2026-08-11): real+sim mixed SFT from SFT-8000.
 #  S1 merge real(87)+sim-v4(420) -> so101-mix-v5
 #  S2 fresh norm_stats (new lineage from SFT-8000)

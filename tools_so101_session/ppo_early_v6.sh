@@ -1,4 +1,5 @@
 #!/bin/bash
+# STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 v6 PPO：起点带噪成功率 0.5%，从未起来
 # FINAL RUN: official πRL recipe on the true task, start = v4_step_1000 (12.5%).
 # In-launcher auto-stop (harvest law): R1 erosion past peak, R2 dead-below-floor
 # with grace, R3 epoch cap.
