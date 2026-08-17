@@ -6,7 +6,7 @@ per-pod DNS, and a persistent `/workspace` for code, checkpoints and logs.
 
 The pod idles on `sleep infinity` — you exec in and launch training by hand, the same way you
 would on a bare node. The chart's job is to make the surrounding pieces (GPUs, disk, shared
-memory, dashboards, optional public routing) reproducible.
+memory, the dashboard, optional public routing) reproducible.
 
 The public entry point is **optional and Volcengine-specific**: it renders APIG Ingresses and,
 if asked, an `APIGInstance` CRD. On any other cluster leave `apig.enabled=false` and everything
@@ -105,7 +105,6 @@ then set `dashboard.image.tag` to that tag before enabling auth.
 |---|---|---|
 | `dashboard.port` | `8420` | Sidecar HTTP port; also the Service port and APIG backend |
 | `dashboard.auth.enabled` | `false` | Enables static Basic Auth from a Kubernetes Secret |
-| `rayDashboardPort` | `8265` | Ray's own default; nothing listens until `ray start` |
 | `dshmSize` | `256Gi` | `/dev/shm`; the 64Mi container default causes "Bus error" |
 | `persistence.size` | `500Gi` | block storage, mounted at `/workspace` |
 | `resources` | 16C/128Gi → 60C/512Gi, 4 GPU | Measured for a 4-GPU pi0.5 run |
@@ -128,7 +127,7 @@ gateway:
 | `apig.enabled` | `true` | `true` | Off means no public entry point |
 | `apig.create` | `true` | `false` | Picks which mode |
 | `apig.subnetIds` | **required** | — | A subnet in this cluster's VPC |
-| `apig.existingId` | filled in at step 2 | **required** | Gateway instance id, from the APIG console |
+| `apig.existingId` | **must stay empty** | **required** | Gateway instance id, from the APIG console |
 | `apig.ingressClassName` | optional | **required** | Must match the class that gateway declares, or it never claims the Ingress |
 | `apig.host` | recommended | recommended | Internal placeholder host, unique per gateway. Defaults to `<release>.apig.local` |
 
@@ -151,17 +150,25 @@ apig:
   host: rlinf.apig.test                  # internal placeholder, unique per gateway
 ```
 
-**This is a two-step bootstrap.** The gateway's id does not exist until it has been provisioned,
-and the Ingress needs that id to bind. After the first install:
+One install is enough — there is nothing to feed back. Provisioning takes a few minutes; watch it
+with:
 
-1. Wait for the gateway to report Running (a few minutes).
-2. Read its id:
-   ```bash
-   kubectl get apiginstance rlinf-apig -n rlinf -o jsonpath='{.status.id}'
-   ```
-3. Put it in `apig.existingId` (leave `create: true`) and upgrade.
+```bash
+kubectl get apiginstance rlinf-apig -n rlinf
+```
 
-Skip step 3 and the Ingress gets no address and APIG lists no service or domain.
+Once it reports `Running`, its id appears in `status.id` and the Ingress picks the gateway up by
+ingress class, without that id ever being restated in the values.
+
+⚠️ **Do not copy that id into `apig.existingId`.** `existingId` writes `spec.id`, which the CRD
+treats as immutable, and the admission webhook then rejects every subsequent upgrade:
+
+```text
+spec.id: Forbidden: forbidden to update, old: , new: <id>
+```
+
+The release stays `failed` until the value is removed again. The chart now refuses to render this
+combination up front. `existingId` belongs to `create: false` only.
 
 Gateway sizing (`instanceSpecCode`, `clbSpecCode`, `replicas`, `publicNetworkBillingType`,
 `publicNetworkBandwidth`) is all optional — empty means the platform picks. If you do want to
@@ -207,9 +214,9 @@ helm install rlinf ./docker/charts/rlinf -n rlinf --take-ownership -f my-values.
 
 Two things make the difference between a silent adoption and a surprise:
 
-- Reproduce the existing **Ingress names and hosts** (`apig.ingressName`, `apig.rayIngressName`,
-  `apig.host`, `apig.rayHost`). Letting them default renames the objects, which deletes and
-  recreates the routes — and a recreated route can come back under a new domain.
+- Reproduce the existing **Ingress name and host** (`apig.ingressName`, `apig.host`). Letting them
+  default renames the object, which deletes and recreates the route — and a recreated route can
+  come back under a new domain.
 - Keep `.spec.selector` identical. The chart selects on `app: <release>`, matching the convention
   a hand-written manifest usually uses; if yours differs, the StatefulSet cannot be adopted at all
   because that field is immutable.
@@ -243,7 +250,5 @@ domains, visible only at <https://console.volcengine.com/veapig> → instance �
 **Do not verify APIG by curling the CLB IP with a Host header.** It answers 401 with error code
 010002 for every host, working ones included. Test the assigned domain instead.
 
-**The Ray route 503s until `ray start`** runs inside the pod. Expected.
-
-**RLinf Dashboard auth does not protect Ray.** The Ray dashboard route remains unauthenticated
-and accepts arbitrary job submissions — treat that URL as a remote shell on a GPU box.
+**Only the dashboard is published.** Nothing else in the pod gets a route; reach anything else
+with `kubectl port-forward`.
