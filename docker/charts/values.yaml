@@ -61,11 +61,6 @@ persistence:
 # keep it well under that.
 dshmSize: 256Gi
 
-# Ray dashboard port. Default: 8265 (Ray's own default — change it only if you also pass
-# `--dashboard-port` to `ray start`). Nothing listens here until you run `ray start` inside the
-# pod, so its APIG route returns 503 until then. That is expected, not a broken ingress.
-rayDashboardPort: 8265
-
 # Web UI sidecar. Its own container so that a dashboard crash restarts only the dashboard and
 # leaves the training process untouched; kubelet restarts it in place.
 dashboard:
@@ -141,18 +136,13 @@ env:
   # Required for GPU rendering (LIBERO / MuJoCo EGL) inside the container.
   - { name: NVIDIA_DRIVER_CAPABILITIES, value: all }
 
-# Public HTTPS entry point through Volcengine APIG. OFF by default so a first install succeeds on
-# any cluster; the dashboards stay reachable with `kubectl port-forward` either way.
+# Public HTTPS entry point for the RLinf Dashboard through Volcengine APIG. OFF by default so a
+# first install succeeds on any cluster; the dashboard stays reachable with `kubectl port-forward`
+# either way. Only the dashboard is published — nothing else in the pod gets a route.
 #
-# ⚠️ TURNING THIS ON PUBLISHES THE RAY DASHBOARD TO THE INTERNET WITH NO AUTHENTICATION.
-#    dashboard.auth covers ONLY the RLinf Dashboard route. There is no auth option for the Ray
-#    route and this chart deliberately does not invent one: anyone who knows the assigned
-#    *.volceapi.com address reaches it directly — no password, no allowlist, no gateway-level
-#    check. And the address is not a secret: the platform issues it and lists it in the APIG
-#    console. Since the Ray dashboard accepts arbitrary job submissions, that URL is remote code
-#    execution on a GPU box for anyone who has it.
-#    If you do not need Ray reachable from outside, leave apig.enabled=false and use
-#    `kubectl port-forward`, or put the gateway behind your own access control.
+# ⚠️ Turning this on puts the dashboard on the public internet. The address is not a secret: the
+#    platform issues it and lists it in the APIG console. This is why dashboard.auth.enabled is
+#    required here rather than merely recommended, and the chart refuses to render without it.
 apig:
   enabled: false
 
@@ -163,11 +153,12 @@ apig:
   #   create: true  -> PROVISION a new one (CRD sets spec.name + spec.common). subnetIds is then
   #                    REQUIRED and must be in this cluster's VPC. Takes a few minutes, and bills.
   #
-  # ⚠️ create=true is a TWO-STEP bootstrap, because the gateway's id does not exist until it has
-  #    been provisioned, and the Ingress needs that id to bind to it. After the first install:
-  #      kubectl get apiginstance <release>-apig -o jsonpath='{.status.id}'
-  #    put that value in existingId (leaving create=true) and upgrade. Until you do, the Ingress
-  #    gets no address and APIG lists no service or domain for the gateway.
+  # ⚠️ With create=true, leave existingId EMPTY and keep it empty. The provisioned gateway reports
+  #    its id in the APIGInstance's status.id, and the Ingress binds by ingress class, so nothing
+  #    has to be fed back. Writing existingId sets spec.id, which the CRD treats as immutable: the
+  #    admission webhook then rejects every later upgrade with
+  #      spec.id: Forbidden: forbidden to update, old: , new: <id>
+  #    and the release stays failed until the value is removed again.
   # ⚠️ A gateway this chart provisioned is DELETED by `helm uninstall`, taking its auto-assigned
   #    *.volceapi.com domain with it — a new one comes back under a different name. Adopt an
   #    existing gateway for anything whose URL people have bookmarked.
@@ -187,7 +178,6 @@ apig:
   publicNetworkBandwidth: ""      # Mbps, e.g. 200
 
   ingressName: ""                 # default: <release>-apig
-  rayIngressName: ""              # default: <ingressName>-ray
 
   # One gateway per ingress class: pointing two releases at the same class routes them to one
   # gateway. Default is <release>-apig, which is unique as long as release names are.
@@ -198,8 +188,4 @@ apig:
   # host already registered on the same gateway.
   # ⚠️ Never put the auto-assigned *.volceapi.com name here.
   host: ""                        # default: <release>.apig.local
-  # The Ray dashboard needs a host of its own to get its own domain.
-  # ⚠️ This route is UNAUTHENTICATED — see the warning at the top of this section. It is the one
-  # host here that hands a stranger a job-submission endpoint on your GPUs.
-  rayHost: ""                     # default: ray.<host>
   annotations: {}                 # binding annotations are added automatically from existingId
