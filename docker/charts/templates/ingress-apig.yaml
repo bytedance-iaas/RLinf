@@ -1,10 +1,9 @@
 {{/*
-One Ingress per host: the platform issues a *.volceapi.com domain per host, so putting both
-dashboards on one host would leave them sharing a single domain with no way to route between them.
+Publishes the RLinf Dashboard. The platform issues one managed *.volceapi.com domain per host, so
+this host is what earns the release its own public address.
 */}}
 {{- include "rlinf.apig.validate" . -}}
-{{- if .Values.apig.enabled }}
-{{- if .Values.dashboard.enabled }}
+{{- if and .Values.apig.enabled .Values.dashboard.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -28,29 +27,4 @@ spec:
                 name: {{ include "rlinf.fullname" . }}
                 port:
                   number: {{ .Values.dashboard.port }}
-{{- end }}
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: {{ include "rlinf.apig.rayIngressName" . }}
-  labels:
-    {{- include "rlinf.labels" . | nindent 4 }}
-  {{- with (include "rlinf.apig.annotations" . | trim) }}
-  annotations:
-    {{- . | nindent 4 }}
-  {{- end }}
-spec:
-  ingressClassName: {{ include "rlinf.apig.ingressClassName" . }}
-  rules:
-    - host: {{ include "rlinf.apig.rayHost" . | quote }}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "rlinf.fullname" . }}
-                port:
-                  number: {{ .Values.rayDashboardPort }}
 {{- end }}

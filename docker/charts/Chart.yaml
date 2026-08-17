@@ -5,7 +5,9 @@ type: application
 
 # Chart version. Bump on every packaging change. Independent of the RLinf release below: the
 # chart can change without the application changing, and vice versa.
-version: 0.1.0
+# 0.2.0 removed the Ray dashboard Service port and its Ingress, along with the rayDashboardPort,
+# apig.rayHost and apig.rayIngressName values — upgrading deletes that route.
+version: 0.2.0
 
 # RLinf release this chart targets. Not the image tag — the chart pins no image (image.tag is
 # required at install time), so this tracks the repository version instead.

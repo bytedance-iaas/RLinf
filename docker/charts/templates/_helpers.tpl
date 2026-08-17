@@ -111,10 +111,6 @@ Name of the APIGInstance object the Ingress binds to.
 {{- default (printf "%s-apig" (include "rlinf.fullname" .)) .Values.apig.ingressName }}
 {{- end }}
 
-{{- define "rlinf.apig.rayIngressName" -}}
-{{- default (printf "%s-ray" (include "rlinf.apig.ingressName" .)) .Values.apig.rayIngressName }}
-{{- end }}
-
 {{/*
 Ingress class. create=false has no safe default — it must match the class the adopted gateway
 declares, so an empty value is a hard error rather than a silently unclaimed Ingress.
@@ -131,14 +127,6 @@ declares, so an empty value is a hard error rather than a silently unclaimed Ing
 
 {{- define "rlinf.apig.host" -}}
 {{- default (printf "%s.apig.local" (include "rlinf.fullname" .)) .Values.apig.host }}
-{{- end }}
-
-{{/*
-Ray needs a host of its own: one managed domain is issued per host, so sharing would leave the
-two dashboards with no way to be told apart.
-*/}}
-{{- define "rlinf.apig.rayHost" -}}
-{{- default (printf "ray.%s" (include "rlinf.apig.host" .)) .Values.apig.rayHost }}
 {{- end }}
 
 {{/*
@@ -167,6 +155,9 @@ surfacing later as an Ingress that never gets an address.
 {{- if .Values.apig.create }}
 {{- if not .Values.apig.subnetIds }}
 {{- fail "apig.subnetIds is required when apig.create=true: the new gateway needs a subnet in this cluster's VPC." }}
+{{- end }}
+{{- if .Values.apig.existingId }}
+{{- fail "apig.existingId must be empty when apig.create=true. The provisioned gateway's id is reported in the APIGInstance's status.id and the Ingress binds by ingress class, so nothing needs it back. Setting it writes spec.id, which is immutable — the admission webhook then rejects every upgrade with 'spec.id: Forbidden: forbidden to update'. Use existingId only with apig.create=false." }}
 {{- end }}
 {{- else }}
 {{- if not .Values.apig.existingId }}
