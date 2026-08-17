@@ -1,7 +1,9 @@
 {{/*
 Provisions a NEW gateway (its own CLB and public IP, billed). Omitting spec.id is what tells the
-operator to provision rather than adopt; spec.id appears only after the two-step bootstrap, once
-you feed the resulting instance id back in as apig.existingId.
+operator to provision rather than adopt, and it stays omitted for the life of the release: the
+provisioned id lands in status.id, and spec.id is immutable — setting it later is rejected by the
+admission webhook with "spec.id: Forbidden: forbidden to update", which fails every subsequent
+upgrade until the value is removed again.
 
 ⚠️ `helm uninstall` deletes this gateway and its auto-assigned *.volceapi.com domain with it.
 */}}
@@ -15,11 +17,6 @@ metadata:
     {{- include "rlinf.labels" . | nindent 4 }}
 spec:
   name: {{ default (printf "%s-apig" (include "rlinf.fullname" .)) .Values.apig.instanceName }}
-  {{- with .Values.apig.existingId }}
-  # Set after the first install: adopts the gateway that was provisioned above, making this
-  # release idempotent instead of provisioning again.
-  id: {{ . | quote }}
-  {{- end }}
   common:
     network:
       subnetIds:

@@ -17,7 +17,7 @@ spec:
     # chart existed, which is what lets an existing release be adopted in place.
     - name: placeholder
       port: 1
-    # APIG Ingress backends. A headless Service still produces an EndpointSlice, and APIG routes
+    # APIG Ingress backend. A headless Service still produces an EndpointSlice, and APIG routes
     # straight to the pod IP.
     {{- if .Values.dashboard.enabled }}
     - name: dashboard
@@ -25,7 +25,3 @@ spec:
       targetPort: {{ .Values.dashboard.port }}
       protocol: TCP
     {{- end }}
-    - name: ray-dashboard
-      port: {{ .Values.rayDashboardPort }}
-      targetPort: {{ .Values.rayDashboardPort }}
-      protocol: TCP

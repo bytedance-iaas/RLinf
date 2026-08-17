@@ -7,14 +7,14 @@ Storage:    workspace-{{ include "rlinf.fullname" . }}-0 ({{ .Values.persistence
 1. Wait for the pod, then exec in:
 
      kubectl rollout status statefulset/{{ include "rlinf.fullname" . }} -n {{ .Release.Namespace }}
-     kubectl exec -it {{ include "rlinf.fullname" . }}-0 -n {{ .Release.Namespace }} -- bash
+     kubectl exec -it {{ include "rlinf.fullname" . }}-0 -n {{ .Release.Namespace }} -c rlinf -- bash
 
-{{- if .Values.apig.enabled }}
+{{- if and .Values.apig.enabled .Values.dashboard.enabled }}
 {{- if and .Values.apig.create (not .Values.apig.existingId) }}
 
 2. ⚠️ FINISH THE BOOTSTRAP. A new gateway was requested, but its id does not exist yet and the
-   Ingress cannot bind without it — right now the routes have no address and APIG lists no
-   domain. Once the gateway reports Running (a few minutes):
+   Ingress cannot bind without it — right now the route has no address and APIG lists no domain.
+   Once the gateway reports Running (a few minutes):
 
      kubectl get apiginstance {{ include "rlinf.fullname" . }}-apig -n {{ .Release.Namespace }} -o jsonpath='{.status.id}'
 
@@ -23,43 +23,33 @@ Storage:    workspace-{{ include "rlinf.fullname" . }}-0 ({{ .Values.persistence
      helm upgrade {{ .Release.Name }} <chart> -n {{ .Release.Namespace }} --reuse-values --set apig.existingId=<id>
 {{- else }}
 
-2. APIG routes ({{ if .Values.apig.create }}gateway provisioned by this release{{ else }}adopted gateway {{ .Values.apig.existingId }}{{ end }}, class {{ include "rlinf.apig.ingressClassName" . }}):
-{{ if .Values.dashboard.enabled }}
-     {{ include "rlinf.apig.host" . }}  ->  :{{ .Values.dashboard.port }} (RLinf dashboard)
-{{- end }}
-     {{ include "rlinf.apig.rayHost" . }}  ->  :{{ .Values.rayDashboardPort }} (Ray dashboard)
+2. The dashboard is published on {{ if .Values.apig.create }}the gateway provisioned by this release{{ else }}adopted gateway {{ .Values.apig.existingId }}{{ end }} (class {{ include "rlinf.apig.ingressClassName" . }}):
+
+     {{ include "rlinf.apig.host" . }}  ->  :{{ .Values.dashboard.port }}
 {{- end }}
 
-3. Get the real URLs. The hosts above are routing keys, not public DNS. Each one has an
-   auto-assigned *.volceapi.com domain that kubectl cannot read:
+3. Get the real URL. The host above is a routing key, not public DNS. It has an auto-assigned
+   *.volceapi.com domain that kubectl cannot read:
 
      https://console.volcengine.com/veapig -> your instance -> Service list
 
    ⚠️ Do NOT verify by curling the CLB IP with a Host header: APIG answers 401 with error code
    010002 that way for every host, working ones included. Test the assigned domain instead.
 
-   The Ray route returns 503 until `ray start` runs inside the pod. Expected, not a broken
-   ingress.
-
-{{- if and .Values.dashboard.enabled .Values.dashboard.auth.enabled }}
-   The RLinf Dashboard requires HTTP Basic credentials from Secret
-   {{ include "rlinf.dashboard.authSecretName" . }}. The minimal /healthz probe remains public.
-{{- else if .Values.dashboard.enabled }}
-   ⚠️ The RLinf Dashboard route is not authenticated.
+{{- if .Values.dashboard.auth.enabled }}
+   The dashboard requires HTTP Basic credentials from Secret
+   {{ include "rlinf.dashboard.authSecretName" . }}. The minimal /healthz probe stays public.
 {{- end }}
-   ⚠️ The Ray route is not protected by RLinf Dashboard authentication and can submit
-   arbitrary jobs — treat that URL as a remote shell.
-{{- else }}
+{{- else if .Values.dashboard.enabled }}
 
-2. No public entry point (apig.enabled=false). Reach the dashboards locally:
-{{ if .Values.dashboard.enabled }}
+2. No public entry point. Reach the dashboard locally:
+
      kubectl port-forward -n {{ .Release.Namespace }} {{ include "rlinf.fullname" . }}-0 {{ .Values.dashboard.port }}:{{ .Values.dashboard.port }}
 {{- if .Values.dashboard.auth.enabled }}
-     The RLinf Dashboard requires HTTP Basic credentials from Secret
-     {{ include "rlinf.dashboard.authSecretName" . }}. The minimal /healthz probe remains public.
+
+   It requires HTTP Basic credentials from Secret {{ include "rlinf.dashboard.authSecretName" . }}.
 {{- else }}
-     The RLinf Dashboard is not authenticated; keep the port-forward local.
+
+   It is not authenticated; keep the port-forward local.
 {{- end }}
-{{- end }}
-     kubectl port-forward -n {{ .Release.Namespace }} {{ include "rlinf.fullname" . }}-0 {{ .Values.rayDashboardPort }}:{{ .Values.rayDashboardPort }}
 {{- end }}
