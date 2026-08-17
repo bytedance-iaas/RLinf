@@ -111,8 +111,14 @@ def main():
     #    tells you to USE as a config_name must appear in its own summary table".
     #    §1.4 used to be a second, overlapping table that claimed to be complete at
     #    six while stage G's parameter table used a seventh (pi05_so101_v14).
-    used_as_cfg = set(re.findall(r'--config-name[= ]+(pi05_so101(?:_[a-z0-9]+)?)', text))
-    used_as_cfg |= set(re.findall(r'config_name[=` |]+.{0,4}(pi05_so101(?:_[a-z0-9]+)?)', text))
+    # Collect the entries the document tells you to pass. Three shapes, each
+    # matched explicitly rather than by proximity -- a "within N characters of
+    # config_name" rule silently depends on how a table row happens to be worded.
+    used_as_cfg = set(re.findall(r'--config-name[=\s]+(pi05_so101(?:_[a-z0-9]+)?)\b', text))
+    used_as_cfg |= set(re.findall(r'config_name\s*=\s*(pi05_so101(?:_[a-z0-9]+)?)\b', text))
+    for row in text.split("\n"):                       # table rows naming an entry
+        if row.startswith("|") and ("config_name" in row or "条目" in row):
+            used_as_cfg |= set(re.findall(r'`(pi05_so101(?:_[a-z0-9]+)?)`', row))
     # Only the pipeline document carries this table; the others legitimately have
     # none, so the two-way check is skipped rather than failed for them.
     # Match on the heading's TEXT, not its number -- another document's §1.5 is a
@@ -128,7 +134,11 @@ def main():
         print("  （本文档没有 §1.5 产物表，跳过双向核对）")
 
     print(f"检查 {doc}")
-    print(f"  注册表条目：仓库里 {len(entries)} 个，本流程用 {len(used_as_cfg)} 个")
+    print(f"  注册表条目：仓库里 {len(entries)} 个，本文档用 {len(used_as_cfg)} 个")
+    src = open(REGISTRY, encoding="utf-8").read()
+    for n in sorted(used_as_cfg):
+        m = re.search(r'name="%s",.*?repo_id="([^"]+)"' % n, src, re.S)
+        print(f"      {n:18} -> repo_id={m.group(1) if m else '?'}")
     if fails:
         print(f"\n❌ {len(fails)} 处不一致：")
         for f in fails:
