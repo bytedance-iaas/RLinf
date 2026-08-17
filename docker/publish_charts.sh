@@ -4,12 +4,15 @@
 #   bash docker/publish_charts.sh            # package, log in, push
 #   DRY_RUN=1 bash docker/publish_charts.sh  # package only
 #
-# Credentials come from the environment, never from this file:
-#   HELM_REGISTRY_USERNAME  registry robot account
-#   HELM_REGISTRY_PASSWORD  its password
+# Everything deployment-specific comes from the environment, so this file holds no
+# registry coordinates and no credentials:
+#   HELM_REGISTRY_HOST       registry hostname, e.g. example.cr.volces.com
+#   HELM_REGISTRY_NAMESPACE  namespace the chart is pushed under
+#   HELM_REGISTRY_USERNAME   robot account      (not needed for DRY_RUN)
+#   HELM_REGISTRY_PASSWORD   its password       (not needed for DRY_RUN)
 #
 # Optional:
-#   HELM_VERSION            helm to fetch when the runner has none (default: latest)
+#   HELM_VERSION             helm to fetch when the runner has none (default: latest)
 #
 # Nothing here needs root or a package manager. The CI image runs as nobody on a
 # release old enough that its package sources are gone, so the only things
@@ -17,8 +20,13 @@
 
 set -euo pipefail
 
-registry="ai-containers-cn-beijing.cr.volces.com"
-namespace="physicalai"
+# Checked before anything else: a missing coordinate is a configuration error, and
+# failing here costs nothing, whereas failing after the helm download wastes the
+# whole setup. DRY_RUN needs these too, since it reports the push target.
+: "${HELM_REGISTRY_HOST:?Set HELM_REGISTRY_HOST, the registry hostname (e.g. example.cr.volces.com).}"
+: "${HELM_REGISTRY_NAMESPACE:?Set HELM_REGISTRY_NAMESPACE, the namespace the chart is pushed under.}"
+registry="${HELM_REGISTRY_HOST}"
+namespace="${HELM_REGISTRY_NAMESPACE}"
 
 # Resolve from the script's own location so the working directory does not matter.
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
