@@ -48,7 +48,7 @@
 A–F 解决"在仿真里会不会做这件事"，**G 解决"换成真实图像还认不认得"**——两者是不同的问题，缺一不可。
 
 > **正文一律用功能名**（"阶段 B 的最优检查点"、"窄框数据集"）。命令块里出现的 `v4`/`v8`/`v9`/`v10`/`v13`/`v14`/`v15` 是**磁盘上的真实名字**，那里必须精确；**它们没有含义**，只是当时实验的流水编号。
-> 全部真实名字集中在**一张表 §1.6**里。从零复现时可以整套换成自己的名字，唯一的约束见 §4。
+> 全部真实名字集中在**一张表 §1.5**里。从零复现时可以整套换成自己的名字，唯一的约束见 §4。
 > 脚本文件名里的编号已经全部去掉，改成按功能命名（`convert_v4_demos.py` → `convert_fullboard.py`）。
 
 **三个贯穿全程的原理**，每一个都由对照实验确立：
@@ -100,22 +100,7 @@ export RLINF_MASTER_ADDR_OVERRIDE=127.0.0.1 GLOO_SOCKET_IFNAME=lo NCCL_SOCKET_IF
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 ```
 
-### 1.4 注册表条目（`rlinf/models/embodiment/openpi/dataconfig/__init__.py`）
-
-本流程用到 6 个，结构完全相同（`action_horizon=10`、`discrete_state_input=True`、`extra_delta_transform=False`），只有 `repo_id` 不同：
-
-| 条目 | repo_id | 阶段 |
-|---|---|---|
-| `pi05_so101` | `henry-guo/so101-pick-place-v2` | A |
-| `pi05_so101_v4` | `so101-sim-demos-v4` | B（**血统 norm_stats 在此确立**） |
-| `pi05_so101_v8` | `so101-sim-demos-v8` | C |
-| `pi05_so101_v9` | `so101-sim-demos-v9` | D |
-| `pi05_so101_v10` | `so101-sim-demos-v10` | E、F |
-| `pi05_so101_v15` | `so101-cotrain-v15` | G |
-
-**`config_name` 选数据变换管线，`norm_stats_path` 单独由 yaml 指定**——正因为分离，各阶段才能用自己的数据集条目却共享同一份统计量。
-
-### 1.5 每条训练/评测命令共有的五条规则
+### 1.4 每条训练/评测命令共有的五条规则
 
 阶段 A–G 的命令都写在各自章节里，**不需要回到这里拼装**。这一节只讲那些命令里反复出现、但原因不在命令本身的东西——踩错任何一条，跑出来的数字都不可信。
 
@@ -138,7 +123,18 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 **区域怎么指定**：`SO101_SPAWN_FRAC="x0,x1,y0,y1"`（归一化比例，环 1 = `0.4294,0.9115,0.5142,0.9817`）；`SO101_SPAWN_MODE=legacy` 是早期的 6×8 cm 固定窄框，与前者互斥；**两个都不设就是全板**。
 
-### 1.6 各阶段产物一览（磁盘上的真实名字都在这里）
+### 1.5 各阶段产物一览（磁盘上的真实名字都在这里）
+
+> **这张表可以机器核对，不用信我**：
+>
+> ```bash
+> .venv/bin/python tools_so101_session/check_doc_consistency.py SO101_PIPELINE_ZH.md
+> ```
+>
+> 它把文档里出现的每个名字按类别对到仓库/磁盘上——注册表条目查 `dataconfig/__init__.py`、训练配置查 `examples/*/config/*.yaml`、数据集查 `meta/info.json`、脚本和统计量查文件是否存在——并且**双向**核对这张表：文档让你用的条目必须在表里，表里列的条目也必须真的被用到。有一处对不上就退出码非零。
+>
+> 这个检查存在的原因很直接：本文档曾经有两张互相重叠的名字表，一张声称"本流程用到 6 个条目"，而阶段 G 实际用了第 7 个（`pi05_so101_v14`）。人眼复核连续几轮都没发现，机器一次就查出来了。现在只保留这一张表。
+
 
 **正文里一律用功能名**（"阶段 B 的最优检查点"、"窄框数据集"），磁盘上的真实名字只出现在两个地方：**这张表**，和各阶段的命令块里（那里必须精确）。
 
@@ -162,6 +158,8 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 | 阶段 F 的**配置叫 `so101_ppo_v11`，结果目录却叫 `so101_ppo_v13`** | 配置文件是第 11 版写的，成功的那次运行是第 13 次尝试。启动命令里两个名字都要写对 |
 | 阶段 F **没有自己的注册表条目** | PPO 不产生新数据集，评测时 `config_name` 仍填 `pi05_so101_v10` |
 | 所有阶段的 `norm_stats` **都指向 B 的那一份** | 路径永远是 `assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json`，不随条目变（§4） |
+
+**注册表条目**（`rlinf/models/embodiment/openpi/dataconfig/__init__.py`）7 个结构完全相同（`action_horizon=10`、`discrete_state_input=True`、`extra_delta_transform=False`），只有 `repo_id` 不同。**`config_name` 选的是数据变换管线，`norm_stats_path` 由 yaml 单独指定**——正因为这两件事是分开的，各阶段才能用自己的数据集条目却共享同一份统计量。
 
 **结果目录的完整路径**是 `/data08/henryg/pai/results/<结果目录>/<内层目录>/checkpoints/<检查点>`。内层目录 SFT 阶段一律是 `so101_sft_openpi_pi05`，PPO 阶段是 `so101_ppo_v11`（跟配置名走）——所以文中写成 `so101_sft_v9/.../global_step_1250` 这种形式，中间那段用 `*` 匹配即可。
 
@@ -353,7 +351,7 @@ timeout 1800 .venv/bin/python evaluations/eval_embodied_agent.py \
 
 **输入** 阶段 A 的 `global_step_8000`；仿真环境（`SO101GrabRedCube-v1`，无需外部数据）。
 
-**输出** 全板示范数据集、**这条血统的归一化统计量**、以及阶段 B 的最优检查点（名字见 §1.6）。
+**输出** 全板示范数据集、**这条血统的归一化统计量**、以及阶段 B 的最优检查点（名字见 §1.5）。
 
 **验收** 全板约 **12.5%**。**耗时约 7 h。** 分五个子步骤，每步都有独立门槛。
 
@@ -659,7 +657,7 @@ for W in 0 1 2 3 4 5 6 7; do
 > ```
 >
 > 本仓库实测：`assets/` 下只有 `pi05_so101`（阶段 A 专用）和 `pi05_so101_v4`（血统），**没有 v8/v9/v10/v14/v15**——因为 C 之后再没算过统计量。B 到 G 全部 7 个训练产物里的 norm_stats **与基准逐字节相同**（md5 `10648366…`）。
-> （`assets/` 下若还有 `pi05_so101_pp` / `_sim` / `_v3` / `_v5`，那是早期废弃实验留下的，与本流程无关，见 §12。）
+> （`assets/` 下若还有 `pi05_so101_pp` / `_sim` / `_v3` / `_v5`，那是早期废弃实验留下的，与本流程无关。）
 
 ### C3 训练
 
