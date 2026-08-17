@@ -128,7 +128,8 @@ export EMBODIED_PATH=$PWD/examples/sft        # 或 examples/embodiment（评测
 export EMBODIED_PATH=$PWD/examples/sft
 
 # A1. 真机数据集的归一化统计量
-.venv/bin/python -m toolkits.lerobot.calculate_norm_stats --config-name pi05_so101
+.venv/bin/python -m toolkits.lerobot.calculate_norm_stats \
+  --config-name pi05_so101 --repo-id henry-guo/so101-pick-place-v2
 # 产出 assets/pi05_so101/henry-guo/so101-pick-place-v2/norm_stats.json
 
 # A2. SFT
@@ -197,7 +198,8 @@ wait
 
 ```bash
 .venv/bin/python tools_so101_session/convert_fullboard.py     # -> so101-sim-demos-v4
-.venv/bin/python -m toolkits.lerobot.calculate_norm_stats --config-name pi05_so101_v4
+.venv/bin/python -m toolkits.lerobot.calculate_norm_stats \
+  --config-name pi05_so101_v4 --repo-id so101-sim-demos-v4
 # 产出 assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json
 ```
 

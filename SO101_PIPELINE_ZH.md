@@ -297,8 +297,9 @@ SO101_COLLECT_DIR=$DATA/rollouts SO101_SPAWN_MODE=legacy python evaluations/eval
 export EMBODIED_PATH=$PWD/examples/sft
 OUT=/data08/henryg/pai/results/so101_sft_openpi_pi05
 
-# ① 算真机域的归一化统计量
-.venv/bin/python -m toolkits.lerobot.calculate_norm_stats --config-name pi05_so101
+# ① 算真机域的归一化统计量（--repo-id 是必填的，漏了会直接报 required）
+.venv/bin/python -m toolkits.lerobot.calculate_norm_stats \
+  --config-name pi05_so101 --repo-id henry-guo/so101-pick-place-v2
 
 # ② 训练
 .venv/bin/python -m toolkits.preflight_config \
@@ -450,6 +451,10 @@ grep -hoE 'TOTAL success [0-9]+' $SCRATCH/gen_*.out | grep -oE '[0-9]+' | awk '{
 |---|---|---|
 | `convert_fullboard.py` | `$DATA/v4_demos_cell*/**/*.h5` | LeRobot 数据集 `$DATA/so101-sim-demos-v4`（30 fps、640×480、双相机；**轨迹长度 >580 帧的丢弃**，那是超时挣扎的轨迹） |
 | `calculate_norm_stats` | 上面那个数据集 | `assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json` |
+
+> **`calculate_norm_stats` 在 `toolkits/lerobot/calculate_norm_stats.py`**，从仓库根目录以模块方式运行（`python -m toolkits.lerobot.calculate_norm_stats`）。
+> 两个参数**都是必填**：`--config-name` 选注册表条目（决定数据怎么进模型），`--repo-id` 指数据集。
+> 输出路径不是你指定的，是**算出来的**：`config.assets_dirs / repo_id`（`calculate_norm_stats.py:146`）——这就是 `assets/<条目名>/<数据集名>/norm_stats.json` 这个结构的由来，也是为什么条目名一改、统计量就换了地方。
 
 **输出** 数据集约 420 集；统计量 JSON 一份（含 `state`/`actions` 各自的 mean/std/q01/q99）。
 
