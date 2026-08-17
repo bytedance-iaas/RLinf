@@ -121,61 +121,28 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 **`config_name` 选数据变换管线，`norm_stats_path` 单独由 yaml 指定**——正因为分离，各阶段才能用自己的数据集条目却共享同一份统计量。
 
-### 1.5 两条贯穿全程的命令
+### 1.5 每条训练/评测命令共有的五条规则
 
-阶段 B–G 的训练和评测都是这两条，**只换配置名、检查点路径、区域和种子**。后面各阶段不再重复抄，只列参数。
+阶段 A–G 的命令都写在各自章节里，**不需要回到这里拼装**。这一节只讲那些命令里反复出现、但原因不在命令本身的东西——踩错任何一条，跑出来的数字都不可信。
 
-**① 训练（SFT）**
+| 规则 | 具体做法 | 不遵守的后果 |
+|---|---|---|
+| **① 训练前先 preflight** | `python -m toolkits.preflight_config --config-name <配置> runner.logger.log_path=<输出>`，必须看到 `PREFLIGHT OK` | 它校验路径存在性、批量算术、模型-数据一致性。**PPO 的成败就藏在批量算术里**（§8.1） |
+| **② 训练/评测前清 Ray** | `.venv/bin/ray stop --force; rm -rf /tmp/ray/session_*` | 会连上一次的残留集群，行为诡异且难查 |
+| **③ 训练后把 norm_stats 复制进每个检查点** | `mkdir -p "$CK/so101-sim-demos-v4" && cp assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json "$CK/so101-sim-demos-v4/"` | openpi 按 `<检查点>/<数据集名>/norm_stats.json` 查找。**不放进去，后面的评测和部署全部失败** |
+| **④ 每个评测都要 `timeout` + 失败重试一次** | `timeout 1800 ...`，并清 `/dev/shm` 里的 `cuda.shm.*` / `nccl-*` | Ray worker 偶发 `SYSTEM_ERROR` 猝死后驱动会**永远等待**；残留共享内存段会让下一次评测以"看起来像显存不足"的方式失败 |
+| **⑤ `norm_stats_path` 全程写死同一份** | 永远是 `assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json` | 它**不随 `config_name` 变**——条目换了数据集，但坐标系必须不变（§4） |
 
-```bash
-export EMBODIED_PATH=$PWD/examples/sft
-CFG=so101_sft_v4                                    # 各阶段替换这一行
-OUT=/data08/henryg/pai/results/$CFG
+**还有一条关于种子的纪律**，它决定了报出来的数字诚不诚实：
 
-# 预检：必须看到 PREFLIGHT OK。它校验路径存在性、批量算术、模型-数据一致性
-.venv/bin/python -m toolkits.preflight_config \
-  --config-path $PWD/examples/sft/config/ --config-name $CFG \
-  runner.logger.log_path=$OUT
+| 层 | 种子 | 用途 |
+|---|---|---|
+| 筛选 + 确认 | `777` / `888` | 用来**挑**检查点 |
+| **诚实复测** | 每阶段各一对，**从不重用**：C `1313/1414`、D `2323/2424`、E `3131/3232`、F `4141/4242` | **报告只能引用这一层** |
 
-# 每次训练/评测前都要把 Ray 清干净，否则会连到上一次的残留集群
-.venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
+用挑选种子报出来的数字必然偏乐观——峰值检查点正是在那套局面上选出来的。
 
-timeout 21600 .venv/bin/python examples/sft/train_vla_sft.py \
-  --config-path $PWD/examples/sft/config/ --config-name $CFG \
-  runner.logger.log_path=$OUT
-```
-
-**训练完必须把 norm_stats 复制进每个检查点目录**——openpi 按 `<检查点>/<数据集名>/norm_stats.json` 查找，不放进去后面评测和部署都会失败：
-
-```bash
-for CK in $OUT/*/checkpoints/global_step_*; do
-  mkdir -p "$CK/so101-sim-demos-v4"
-  cp assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json "$CK/so101-sim-demos-v4/"
-done
-```
-
-**② 评测（门评）**
-
-```bash
-export EMBODIED_PATH=$PWD/examples/embodiment
-.venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
-
-SO101_SPAWN_FRAC="$REGION" timeout 1500 .venv/bin/python evaluations/eval_embodied_agent.py \
-  --config-path $PWD/examples/embodiment/config/ --config-name so101_eval_openpi_pi05 \
-  runner.logger.log_path=/data08/henryg/pai/results/so101_eval \
-  rollout.model.model_path=$CK \
-  rollout.model.openpi.config_name=$ENTRY \
-  rollout.model.openpi_data.norm_stats_path=$PWD/assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json \
-  env.eval.total_num_envs=128 env.eval.seed=$SEED
-```
-
-成绩读日志里最后一个 `success_once=`。四点纪律：
-
-- **筛选种子和报告种子必须分开**。每个阶段都是三层：`777/888` 用来**挑**检查点，另两个从未参与挑选的种子用来**报告**（C 用 1313/1414、D 用 2323/2424、E 用 3131/3232、F 用 4141/4242）。用挑选种子报出来的数字必然偏乐观。
-
-- **不设 `SO101_SPAWN_FRAC` 就是全板**；区域字符串是 `x0,x1,y0,y1` 的归一化比例（环 1 = `0.4294,0.9115,0.5142,0.9817`）。
-- **每次评测都要 `timeout` + 失败重试一次**：Ray worker 偶发 `SYSTEM_ERROR` 猝死后，驱动进程会永远等待。
-- **`norm_stats_path` 全程写死同一份**（§4），不随 `config_name` 变。
+**区域怎么指定**：`SO101_SPAWN_FRAC="x0,x1,y0,y1"`（归一化比例，环 1 = `0.4294,0.9115,0.5142,0.9817`）；`SO101_SPAWN_MODE=legacy` 是早期的 6×8 cm 固定窄框，与前者互斥；**两个都不设就是全板**。
 
 ---
 
@@ -297,24 +264,29 @@ SO101_COLLECT_DIR=$DATA/rollouts SO101_SPAWN_MODE=legacy python evaluations/eval
 
 **输入**
 
-| | |
+| 项 | 值 |
 |---|---|
 | 数据 | `$HF_LEROBOT_HOME/henry-guo/so101-pick-place-v2`（87 集真机遥操作，30 fps，640×480 双相机） |
 | 权重 | `checkpoints/lerobot_pi05_base`（PI0.5 基座，LeRobot 格式，14 GB） |
+| 注册表条目 | `pi05_so101` |
 
 **命令**
 
 ```bash
 export EMBODIED_PATH=$PWD/examples/sft
+OUT=/data08/henryg/pai/results/so101_sft_openpi_pi05
 
 # ① 算真机域的归一化统计量
 .venv/bin/python -m toolkits.lerobot.calculate_norm_stats --config-name pi05_so101
 
 # ② 训练
-.venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
-.venv/bin/python examples/sft/train_vla_sft.py \
+.venv/bin/python -m toolkits.preflight_config \
   --config-path $PWD/examples/sft/config/ --config-name so101_sft_openpi_pi05 \
-  runner.logger.log_path=/data08/henryg/pai/results/so101_sft_openpi_pi05
+  runner.logger.log_path=$OUT
+.venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
+timeout 43200 .venv/bin/python examples/sft/train_vla_sft.py \
+  --config-path $PWD/examples/sft/config/ --config-name so101_sft_openpi_pi05 \
+  runner.logger.log_path=$OUT
 ```
 
 **参数**（都写在 `examples/sft/config/so101_sft_openpi_pi05.yaml` 里，不用命令行覆盖）
@@ -334,7 +306,7 @@ export EMBODIED_PATH=$PWD/examples/sft
 | 归一化统计量（**只有阶段 A 用**） | `assets/pi05_so101/henry-guo/so101-pick-place-v2/norm_stats.json` |
 | 权重（取用 step_8000） | `results/so101_sft_openpi_pi05/checkpoints/global_step_8000` |
 
-**验收** 不做仿真评测——这一步的价值不在成绩。想自己确认"真机数据训出来的策略在仿真里是 0"，用它自己的条目和统计量评一次即可（**这是唯一一次不用 v4 那份 norm_stats 的评测**，因为这个检查点属于阶段 A 的血统）：
+**验收** 训练 loss 正常下降即可，**不必做仿真评测**——这一步的价值不在成绩。想自己确认"真机数据训出来的策略在仿真里是 0"，用它自己的条目和统计量评一次（**这是唯一一次不用 v4 那份 norm_stats 的评测**，因为这个检查点属于阶段 A 的血统）：
 
 ```bash
 export EMBODIED_PATH=$PWD/examples/embodiment
@@ -342,7 +314,7 @@ export EMBODIED_PATH=$PWD/examples/embodiment
 timeout 1800 .venv/bin/python evaluations/eval_embodied_agent.py \
   --config-path $PWD/examples/embodiment/config/ --config-name so101_eval_openpi_pi05 \
   runner.logger.log_path=/data08/henryg/pai/results/so101_eval_stageA \
-  rollout.model.model_path=/data08/henryg/pai/results/so101_sft_openpi_pi05/checkpoints/global_step_8000 \
+  rollout.model.model_path=$OUT/checkpoints/global_step_8000 \
   rollout.model.openpi.config_name=pi05_so101 \
   rollout.model.openpi_data.norm_stats_path=$PWD/assets/pi05_so101/henry-guo/so101-pick-place-v2/norm_stats.json \
   env.eval.total_num_envs=128 env.eval.seed=777 \
@@ -357,24 +329,36 @@ timeout 1800 .venv/bin/python evaluations/eval_embodied_agent.py \
 
 **为什么** 真机数据教不会"在仿真里怎么做"（视觉域完全不同）。这一步用**运动规划器**在仿真里造示范，把成功率从 0 抬起来；同时**确立整条血统共用的归一化统计量**。
 
-**输入** 阶段 A 的 `global_step_8000` + 仿真环境（无需数据）。
+**输入** 阶段 A 的 `global_step_8000`；仿真环境（`SO101GrabRedCube-v1`，无需外部数据）。
+
+**输出** 数据集 `so101-sim-demos-v4`、统计量 `assets/pi05_so101_v4/.../norm_stats.json`、权重 `so101_sft_v4/.../global_step_1000`。
+
+**验收** 全板约 **12.5%**。**耗时约 7 h。** 分五个子步骤，每步都有独立门槛。
 
 ### B1 规划器探针 —— 先证明任务可解
 
 **为什么** 规划器做不到的事，BC 和 RL 都做不到。12 条的成本是分钟级，跳过它可能白花一整天。
+
+**输入** 仿真环境；无数据依赖。
+
+**命令**
 
 ```bash
 .venv/bin/python tools_so101_session/gen_planner_demos.py \
   --num 12 --seed0 79000 --out $DATA/probe
 ```
 
-| 参数 | 含义 |
-|---|---|
-| `--num` | 尝试次数（不是成功数） |
-| `--seed0` | 起始种子，逐条 +1；**探针种子要与后面生成用的种子段错开**，避免用同一批局面 |
-| `--out` | h5 输出目录 |
+**参数**
 
-**输出** `$DATA/probe/*.h5`（轨迹）+ 同名 `.json`（每条是否成功、长度）。生成器最后会打印一行 `TOTAL success N`。
+| 参数 | 值 | 为什么 |
+|---|---|---|
+| `--num` | 12 | 尝试次数（不是成功数）；只为判定"可解不可解" |
+| `--seed0` | 79000 | 起始种子，逐条 +1。**要与后面生成用的种子段（80000+）错开**，避免拿同一批局面 |
+| `--out` | `$DATA/probe` | h5 输出目录 |
+
+**输出** `$DATA/probe/*.h5`（轨迹）+ 同名 `.json`（每条是否成功、长度）。生成器最后打印 `TOTAL success N/12`。
+
+**验收** ≥8/12 成功、成功轨迹中位长度 ≤530 步（预算 640 的 1.1 倍余量）。**不过就不要往下走。**
 
 ```bash
 # 成功数
@@ -390,37 +374,48 @@ print("median length:", int(np.median([f[f"traj_{i}"]["actions"].shape[0] for i 
 PY
 ```
 
-**验收** ≥8/12 成功、成功轨迹中位长度 ≤530 步（预算 640 的 1.1 倍余量）。**不过就不要往下走。**
-
 ### B2 分层生成 420 条全板示范
 
-**为什么** 均匀铺满整块板。分成 4×4 格逐格生成，是为了避免随机采样在某些格子上过密、某些格子空白——**BC 的地板由最稀的地方决定**。
+**为什么** 要均匀铺满整块板。分成 4×4 格逐格生成，是为了避免随机采样在某些格子过密、某些格子空白——**BC 的地板由最稀的地方决定**。
+
+**输入** 仿真环境；B1 已通过。
+
+**命令**
 
 ```bash
 SEED=80000
 for XI in 0 1 2 3; do for YI in 0 1 2 3; do
   SO101_SPAWN_FRAC="$(echo "$XI*0.25"|bc -l),$(echo "($XI+1)*0.25"|bc -l),$(echo "$YI*0.25"|bc -l),$(echo "($YI+1)*0.25"|bc -l)" \
   .venv/bin/python tools_so101_session/gen_planner_demos.py --num 45 --seed0 $SEED \
-      --out $DATA/v4_demos_cell_${XI}_${YI} &
+      --out $DATA/v4_demos_cell_${XI}_${YI} > $SCRATCH/gen_${XI}_${YI}.out 2>&1 &
   SEED=$((SEED+100)); done; done; wait
 ```
 
-| 参数 | 含义 |
-|---|---|
-| `SO101_SPAWN_FRAC` | `x0,x1,y0,y1`，方块生成区在棕色板上的**归一化比例**；这里每格 1/4×1/4 |
-| `--num 45` × 16 格 | 720 次尝试，实测约 420 条成功 |
-| 输出目录名 | **必须以 `v4_demos_cell` 开头** —— 下一步的转换器按 `/data08/henryg/pai/data/v4_demos_cell*/**/*.h5` 找输入（`convert_fullboard.py:19`）。后缀叫什么无所谓，`*` 会全部匹配 |
+**参数**
 
-**输出** 16 个目录的 h5，合计约 420 条成功轨迹。
+| 参数 | 值 | 为什么 |
+|---|---|---|
+| `SO101_SPAWN_FRAC` | 每格 `x0,x1,y0,y1` | 方块生成区在棕色板上的**归一化比例**；这里每格 1/4 × 1/4 |
+| `--num 45` × 16 格 | 720 次尝试 | 实测约 420 条成功（成功率约 58%） |
+| `--seed0` 每格 +100 | 80000 起 | 各格种子段不重叠 |
+| 输出目录名 | **必须以 `v4_demos_cell` 开头** | 下一步的转换器按 `v4_demos_cell*/**/*.h5` 找输入（`convert_fullboard.py:19`）。后缀叫什么无所谓 |
+| 并行度 | 16 个进程（8 核以上机器实测可行） | 纯 CPU，不占 GPU |
+
+**输出** 16 个目录的 h5 + json，合计约 420 条成功轨迹。
+
+**验收** 总成功数 ≥250。**耗时约 4 h。**
 
 ```bash
-# 16 格加总（把每格的 stdout 存成 gen_<格号>.out 后）
 grep -hoE 'TOTAL success [0-9]+' $SCRATCH/gen_*.out | grep -oE '[0-9]+' | awk '{s+=$1} END{print s"/720"}'
 ```
 
-**验收** 总成功数 ≥250。8 个 CPU 进程并行，**耗时约 4 h**。
-
 ### B3 转换 + 计算 norm_stats（仿真域只算这一次）
+
+**为什么** h5 是生成器的原始格式，训练要的是 LeRobot 数据集；同时**这条血统的归一化统计量在这一步确立并从此冻结**。
+
+**输入** `$DATA/v4_demos_cell*/**/*.h5`（B2 的产物）。
+
+**命令**
 
 ```bash
 .venv/bin/python tools_so101_session/convert_fullboard.py
@@ -428,10 +423,23 @@ grep -hoE 'TOTAL success [0-9]+' $SCRATCH/gen_*.out | grep -oE '[0-9]+' | awk '{
   --config-name pi05_so101_v4 --repo-id so101-sim-demos-v4
 ```
 
+**参数**
+
 | 步骤 | 输入 | 输出 |
 |---|---|---|
-| `convert_fullboard.py` | `$DATA/v4_demos_cell*/**/*.h5` | LeRobot 数据集 `$DATA/so101-sim-demos-v4`（30 fps、640×480、双相机；轨迹长度 >580 帧的丢弃） |
+| `convert_fullboard.py` | `$DATA/v4_demos_cell*/**/*.h5` | LeRobot 数据集 `$DATA/so101-sim-demos-v4`（30 fps、640×480、双相机；**轨迹长度 >580 帧的丢弃**，那是超时挣扎的轨迹） |
 | `calculate_norm_stats` | 上面那个数据集 | `assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json` |
+
+**输出** 数据集约 420 集；统计量 JSON 一份（含 `state`/`actions` 各自的 mean/std/q01/q99）。
+
+**验收**
+
+```bash
+python3 -c "import json; d=json.load(open('/data08/henryg/pai/data/so101-sim-demos-v4/meta/info.json')); print(d['total_episodes'],'集', d['fps'],'fps')"
+ls -la assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json
+```
+
+集数 ≥250、fps=30、统计量文件存在且非空。
 
 > **`**` 是 Python 的递归通配符，不是 shell 的。** 它匹配**任意层数的子目录，包括零层**，而且**只有在 `glob.glob(..., recursive=True)` 下才生效**——转换器正是这么调的（`convert_fullboard.py:26`）。
 >
@@ -466,7 +474,13 @@ grep -hoE 'TOTAL success [0-9]+' $SCRATCH/gen_*.out | grep -oE '[0-9]+' | awk '{
 
 ### B4 SFT
 
+**为什么** 把仿真示范学进策略。热启动用阶段 A 的权重，这样任务语义（提示词、关节量纲）不用重学。
+
+**输入** 数据集 `so101-sim-demos-v4` + 阶段 A 的 `global_step_8000` + v4 统计量。
+
 > ⚠️ **仓库里的 `so101_sft_v4.yaml` 的 `model_path` 指向一个已废弃的早期检查点（`so101_sft_pp6b/...`），你不会有它。** 必须在命令行覆盖成阶段 A 的产物——下面的命令已经带上了。（SFT 配置里**没有 `rollout` 节点**，所以只覆盖 `actor.model.model_path`；写 `rollout.model.model_path=` 会被 Hydra 直接拒绝。）
+
+**命令**
 
 ```bash
 export EMBODIED_PATH=$PWD/examples/sft
@@ -491,6 +505,8 @@ for CK in $OUT/*/checkpoints/global_step_*; do
 done
 ```
 
+**参数**
+
 | 参数 | 值 | 为什么 |
 |---|---|---|
 | `config_name` | `pi05_so101_v4` | 数据集换成仿真示范 |
@@ -498,17 +514,24 @@ done
 | `lr` | 2.5e-5 | 与阶段 A 同量级；这仍是 BC |
 | `max_steps` / `save_interval` | 4000 / 1000 | |
 
-**输出** `results/so101_sft_v4/so101_sft_openpi_pi05/checkpoints/global_step_{1000,2000,3000,4000}`。
+**输出** `results/so101_sft_v4/so101_sft_openpi_pi05/checkpoints/global_step_{1000,2000,3000,4000}`，每个目录下都有 `so101-sim-demos-v4/norm_stats.json`。
+
+**验收** 4 个检查点都产出、`ls` 能看到 norm_stats 子目录；成绩由 B5 判定。
 
 ### B5 门评
 
 **为什么** SFT 的 loss 会一路降，但成绩在早期就见顶——**必须逐个检查点评，不能只看最后一个**。
+
+**输入** B4 的 4 个检查点。
+
+**命令**
 
 ```bash
 export EMBODIED_PATH=$PWD/examples/embodiment
 for CK in $OUT/*/checkpoints/global_step_{1000,2000,3000,4000}; do
   for SEED in 777 888; do
     .venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
+    find /dev/shm -maxdepth 1 -type f \( -name 'cuda.shm.*' -o -name 'nccl-*' \) -delete
     timeout 1500 .venv/bin/python evaluations/eval_embodied_agent.py \
       --config-path $PWD/examples/embodiment/config/ --config-name so101_eval_openpi_pi05 \
       runner.logger.log_path=/data08/henryg/pai/results/so101_eval_v4 \
@@ -521,17 +544,18 @@ for CK in $OUT/*/checkpoints/global_step_{1000,2000,3000,4000}; do
 done
 ```
 
+**参数**
+
 | 参数 | 值 | 为什么 |
 |---|---|---|
 | 不设 `SO101_SPAWN_FRAC` | → 全板 426 cm² | 这一阶段的目标区域就是全板 |
 | `env.eval.total_num_envs` | 128 | 配置默认只有 16，样本太少；128 集下 1 集 = 0.8 个百分点 |
-| `env.eval.seed` | 777 / 888 | 两个种子取均值挑点 |
+| `env.eval.seed` | 777 / 888 | **挑选用**的两个种子，取均值 |
 | `timeout 1500` | | Ray worker 偶发猝死后驱动会永远等待，**每个评测都要加，并失败重试一次** |
 
-**输出** 日志里最后一个 `success_once=` 就是成功率。
-**验收** 最优点是 `global_step_1000`，全板约 **12.5%**。之后单调下降（2.0→2.3→0.0）——SFT loss 降到 0.002 却越训越差，是**过拟合规划器习惯**。挑出最优点后**再用一个没用过的种子（909）复测**，门评种子参与了挑选，会偏乐观。
+**输出** 每次评测的 `success_once=`；8 个数（4 检查点 × 2 种子）。
 
-**耗时** B 全阶段约 7 h。
+**验收** 最优点是 `global_step_1000`，全板约 **12.5%**。之后单调下降（2.0→2.3→0.0）——SFT loss 降到 0.002 却越训越差，是**过拟合规划器习惯**。挑出最优点后**再用一个没用过的种子（909）复测**，门评种子参与了挑选，会偏乐观。
 
 ---
 
@@ -539,23 +563,72 @@ done
 
 **为什么** 全板 426 cm² 要达到 0.44 cm 示范间距需要约 2200 条示范（约 20 h 生成）。先把生成区收窄到 48 cm²，**用同样的数据量换密度**——密度决定 BC 的地板，而不是总量。
 
-**输入** 阶段 B 的 `so101_sft_v4/.../global_step_1000` + v4 的 norm_stats。
+**输入** 阶段 B 的 `so101_sft_v4/.../global_step_1000` + v4 统计量。
+
+**输出** 数据集 `so101-sim-demos-v8`（247 集）、权重 `so101_sft_v8/.../global_step_2500`。
+
+**验收** 框内诚实值 **57.8 / 55.5%**，间距 0.44 cm。**耗时约 5 h。**
+
+### C1 生成窄框示范
+
+**为什么** 同样的生成预算，区域小一半，间距就密一倍。
+
+**输入** 仿真环境。
+
+**命令**
 
 ```bash
 export SO101_SPAWN_MODE=legacy      # 唯一的收窄项：6×8 cm = 48 cm²
 for W in 0 1 2 3 4 5 6 7; do
   .venv/bin/python tools_so101_session/gen_planner_demos.py \
-    --num 32 --seed0 $((90000 + W*1000)) --out $DATA/v8_demos_w$W & done; wait
-.venv/bin/python tools_so101_session/convert_narrow_box.py     # 不重算 norm_stats
+    --num 32 --seed0 $((90000 + W*1000)) --out $DATA/v8_demos_w$W \
+    > $SCRATCH/gen_v8_w$W.out 2>&1 & done; wait
 ```
 
-| 项 | 值 | 说明 |
+**参数**
+
+| 参数 | 值 | 为什么 |
 |---|---|---|
 | `SO101_SPAWN_MODE=legacy` | 6×8 cm 框 | 与 `SO101_SPAWN_FRAC` 互斥，是早期版本留下的固定窄框 |
+| `--num 32` × 8 worker | 256 次尝试 | 实测 247 条成功 |
+| `--seed0` 每 worker +1000 | 90000 起 | 与 B 阶段的 80000 段错开 |
 | 输出目录 | `v8_demos_w*` | **必须**——`convert_narrow_box.py:19` 按这个 glob 找输入 |
-| 转换输出 | `$DATA/so101-sim-demos-v8` | **不调用 `calculate_norm_stats`**，血统冻结 |
 
-**C3 训练**
+**输出** 8 个目录的 h5，合计约 247 条成功轨迹。
+
+**验收** 总成功数 ≥200：`grep -hoE 'TOTAL success [0-9]+' $SCRATCH/gen_v8_w*.out | grep -oE '[0-9]+' | awk '{s+=$1} END{print s"/256"}'`
+
+### C2 转换（不重算 norm_stats）
+
+**为什么** 换数据集但**不能换坐标系**——血统冻结。
+
+**输入** `$DATA/v8_demos_w*/**/*.h5`。
+
+**命令**
+
+```bash
+.venv/bin/python tools_so101_session/convert_narrow_box.py
+```
+
+**参数**
+
+| 项 | 值 | 为什么 |
+|---|---|---|
+| 输出数据集 | `$DATA/so101-sim-demos-v8` | 新条目 `pi05_so101_v8` 指向它 |
+| **不调用** `calculate_norm_stats` | —— | 重算会让上游权重看到被换了刻度的输入，实测 19.5%→9.4% |
+| `MAX_LEN` | 580 | 与 B 一致，丢弃超时挣扎的轨迹 |
+
+**输出** LeRobot 数据集 `so101-sim-demos-v8`（247 集）。
+
+**验收** 集数 ≥200，且 `assets/pi05_so101_v8/` **不应该被创建**（创建了说明误算了统计量）。
+
+### C3 训练
+
+**为什么** 在更密的数据上继续 BC。热启动用阶段 B 的最优点，不从头开始。
+
+**输入** 数据集 `so101-sim-demos-v8` + v4 的 `global_step_1000` + v4 统计量。
+
+**命令**
 
 ```bash
 export EMBODIED_PATH=$PWD/examples/sft
@@ -573,13 +646,25 @@ for CK in $OUT/*/checkpoints/global_step_*; do
 done
 ```
 
-| 参数 | 值 | 依据 |
+**参数**
+
+| 参数 | 值 | 为什么 |
 |---|---|---|
 | 配置 / 输出目录 | `so101_sft_v8` | 该 yaml 的 `model_path` 已正确指向 v4 的 step_1000，**无需覆盖** |
-| 热启动 | v4 的 `global_step_1000` | 阶段 B 最优点 |
-| `lr` / 步数 / **存点** | 2.5e-5 / 4000 / **250** | 250 是教训值：最优点在 step_2500，按 1000 存会**整个错过** |
+| `lr` | 2.5e-5 | 仍是纯规划器数据，可以用大一点的步子 |
+| 步数 / **存点** | 4000 / **250** | 250 是教训值：最优点在 step_2500，按 1000 存会**整个错过** |
 
-**C4 门评：三层，别混为一谈**
+**输出** 16 个检查点（step_250 到 step_4000），每个都带 norm_stats 子目录。
+
+**验收** 检查点齐全；成绩由 C4 判定。
+
+### C4 门评：三层，别混为一谈
+
+**为什么** 挑检查点的种子和报告成绩的种子必须分开，否则报的是自己挑出来的最好局面。
+
+**输入** C3 的全部检查点。
+
+**命令**
 
 ```bash
 export EMBODIED_PATH=$PWD/examples/embodiment
@@ -607,16 +692,19 @@ gate $BEST 1313 legacy;  gate $BEST 1414 legacy
 gate $BEST 1313          # 不设 SPAWN_MODE = 全板参照
 ```
 
-| 层 | 种子 | 作用 |
-|---|---|---|
-| 筛选 + 确认 | **777 / 888** | 用来**挑**检查点。挑出来的点在这套局面上必然偏乐观，不能拿去报告 |
-| 诚实复测 | **1313 / 1414** | 从未参与挑选，**报告引用这两个** |
-| 全板参照 | 1313，不设 `SO101_SPAWN_MODE` | 看窄框训练能不能外推 |
+**参数**
+
+| 层 | 种子 | 区域 | 作用 |
+|---|---|---|---|
+| 筛选 + 确认 | **777 / 888** | `legacy` 框内 | 用来**挑**检查点。挑出来的点在这套局面上必然偏乐观，不能拿去报告 |
+| 诚实复测 | **1313 / 1414** | `legacy` 框内 | 从未参与挑选，**报告引用这两个** |
+| 全板参照 | 1313 | 不设 `SO101_SPAWN_MODE` | 看窄框训练能不能外推 |
 
 > **每个阶段的诚实种子都不重样**：C 用 1313/1414、D 用 2323/2424、E 用 3131/3232、F 用 4141/4242。**一个种子一旦参与过挑选，就永远不能再当诚实种子用。**
 
 **输出** `results/so101_sft_v8/.../global_step_2500`（247 条示范、间距 **0.44 cm**）。
-**验收** 框内诚实值 **57.8 / 55.5%**（种子 1313/1414），全板参照 9.4%。**耗时约 5 h。**
+
+**验收** 框内诚实值 **57.8 / 55.5%**（种子 1313/1414），全板参照 9.4%。
 
 > **判读纪律**：step_250 只有 7.8%、step_500 只有 0.8%——**前两个点低不代表方向错**，别在这里判死刑。
 
@@ -626,16 +714,27 @@ gate $BEST 1313          # 不设 SPAWN_MODE = 全板参照
 
 **为什么** 规划器示范只覆盖它自己的解法；让**当前策略**在没见过的局面上跑，把它自己成功的轨迹收回来重训，等于在策略实际会走的分布上加密数据。这一步是本流程性价比最高的（+20 点，无超参风险）。
 
-**输入** 阶段 C 的 `so101_sft_v8/.../global_step_2500`。
+**输入** 阶段 C 的 `so101_sft_v8/.../global_step_2500` + C1 的规划器 h5。
+
+**输出** 数据集 `so101-sim-demos-v9`（672 集）、权重 `so101_sft_v9/.../global_step_1250`。
+
+**验收** 框内诚实值 **77.3 / 75.8%**，全板 19.5%（翻倍）。**耗时约 5 h。**
+
+### D1 采集策略自己的成功轨迹
+
+**为什么** 让策略在**它自己会走到的状态分布**上产出数据——这正是纯规划器示范给不了的。
+
+**输入** C3 的最优检查点。
+
+**命令**
 
 ```bash
-# D1 采集：就是 §1.5 ② 那条评测命令，多设一个 SO101_COLLECT_DIR 就会把成功轨迹落盘
 export EMBODIED_PATH=$PWD/examples/embodiment
 export SO101_COLLECT_DIR=$DATA/v9_rollouts
 V8=/data08/henryg/pai/results/so101_sft_v8/so101_sft_openpi_pi05/checkpoints/global_step_2500
 for SEED in 2001 2002 2003 2004 2005 2006 2007 2008; do
   .venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
-  SO101_SPAWN_MODE=legacy timeout 1500 .venv/bin/python evaluations/eval_embodied_agent.py \
+  SO101_SPAWN_MODE=legacy timeout 1800 .venv/bin/python evaluations/eval_embodied_agent.py \
     --config-path $PWD/examples/embodiment/config/ --config-name so101_eval_openpi_pi05 \
     runner.logger.log_path=/data08/henryg/pai/results/so101_eval_v9 \
     rollout.model.model_path=$V8 \
@@ -643,19 +742,54 @@ for SEED in 2001 2002 2003 2004 2005 2006 2007 2008; do
     rollout.model.openpi_data.norm_stats_path=$PWD/assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json \
     env.eval.total_num_envs=128 env.eval.seed=$SEED
 done
+```
 
-# D2 混合转换：247 条规划器示范 + 425 条策略轨迹 = 672 集
+**参数**
+
+| 参数 | 值 | 为什么 |
+|---|---|---|
+| `SO101_COLLECT_DIR` | `$DATA/v9_rollouts` | **设了这个变量，评测才会把成功轨迹落盘**；`convert_expert_iter.py:53` 按这个路径找 npz |
+| 种子 2001–2008 | 8 个全新种子 | 用训练过的种子采集等于把已经会的再抄一遍 |
+| `SO101_SPAWN_MODE=legacy` | 框内 | 与 C 的训练区一致 |
+
+**输出** `$DATA/v9_rollouts/*.npz`，实测 425 条成功轨迹（8 × 128 集，成功率约 42%）。
+
+**验收** `ls $DATA/v9_rollouts/*.npz | wc -l` ≥300。少于这个数说明起点太弱，先回 C 排查。
+
+### D2 混合转换
+
+**为什么** **必须混合，不能纯自蒸馏**：只用策略自己的轨迹会让它越练越窄（历史上掉 53 点）。
+
+**输入** C1 的规划器 h5 + D1 的策略 npz。
+
+**命令**
+
+```bash
 .venv/bin/python tools_so101_session/convert_expert_iter.py
 ```
 
-| 项 | 值 | 说明 |
-|---|---|---|
-| `SO101_COLLECT_DIR` | `$DATA/v9_rollouts` | **必须**——`convert_expert_iter.py:53` 按这个路径找 npz |
-| 种子 2001–2008 | 8 个全新种子 | 用训练过的种子采集等于把已经会的再抄一遍 |
-| 转换器输入 | `v8_demos_w*/**/*.h5` **和** `v9_rollouts/*.npz` | 两种来源混合 |
-| 转换器输出 | `$DATA/so101-sim-demos-v9` | 仍不重算 norm_stats |
+**参数**
 
-**D3 训练**
+| 项 | 值 | 为什么 |
+|---|---|---|
+| 输入 1 | `v8_demos_w*/**/*.h5`（247 条规划器） | 保住多样性 |
+| 输入 2 | `v9_rollouts/*.npz`（425 条策略） | 在策略分布上加密 |
+| 输出 | `$DATA/so101-sim-demos-v9`（672 集） | |
+| `MIN_LEN, MAX_LEN` | 80, 580 | 太短的是误判成功，太长的是超时挣扎 |
+
+> **单位不对称陷阱**：录制器写出的 npz 里 `state` **已归一化**而 `action` 是**弧度**；h5 两者都是弧度。转换器对两种来源分别处理，**自己写采集器时这是最容易错的一处**。
+
+**输出** LeRobot 数据集 `so101-sim-demos-v9`，672 集。
+
+**验收** `python3 -c "import json;print(json.load(open('/data08/henryg/pai/data/so101-sim-demos-v9/meta/info.json'))['total_episodes'])"` ≈ 672。
+
+### D3 训练
+
+**为什么** 把加密后的数据学进去。学习率要比 C 小，因为数据里有一半是策略自己的轨迹，步子迈大会把刚学会的抹掉。
+
+**输入** 数据集 `so101-sim-demos-v9` + C 的 `global_step_2500` + v4 统计量。
+
+**命令**
 
 ```bash
 export EMBODIED_PATH=$PWD/examples/sft
@@ -673,13 +807,25 @@ for CK in $OUT/*/checkpoints/global_step_*; do
 done
 ```
 
-| 参数 | 值 | 依据 |
+**参数**
+
+| 参数 | 值 | 为什么 |
 |---|---|---|
 | 配置 | `so101_sft_v9` | 其 yaml 的 `model_path` 已指向 v8 的 `global_step_2500`，无需覆盖 |
-| `lr` | **1e-5**（v8 是 2.5e-5） | 数据里有一半是策略自己的轨迹，步子迈大会把刚学会的抹掉 |
+| `lr` | **1e-5**（C 是 2.5e-5） | 数据里有一半是策略自己的轨迹，步子迈大会把刚学会的抹掉 |
 | 步数 / 存点 | 2000 / 250 | |
 
-**D4 门评**（与 C4 同一套三层，只换条目和种子）
+**输出** 8 个检查点（step_250 到 step_2000），每个都带 norm_stats 子目录。
+
+**验收** 检查点齐全；成绩由 D4 判定。
+
+### D4 门评
+
+**为什么** **必须评全部检查点**：v9 的峰值在 step_1250，而最后一个点只有 7.8%。只评最后几个会得出"这一阶段失败了"的相反结论。
+
+**输入** D3 的全部检查点。
+
+**命令**
 
 ```bash
 export EMBODIED_PATH=$PWD/examples/embodiment
@@ -706,13 +852,17 @@ gate $BEST 2323 legacy;  gate $BEST 2424 legacy
 gate $BEST 2323          # 全板参照
 ```
 
-> **①必须评全部检查点**：v9 的峰值在 step_1250，而最后一个点只有 7.8%。只评最后几个会得出"这一阶段失败了"的相反结论。
+**参数**
 
-**必须混合，不能纯自蒸馏**：只用策略自己的轨迹会让它越练越窄（历史上掉 53 点）。
-**单位不对称陷阱**：录制器写出的 npz 里 `state` 已归一化而 `action` 是弧度；h5 两者都是弧度。转换器对两种来源分别处理，**自己写采集器时这是最容易错的一处**。
+| 层 | 种子 | 区域 | 作用 |
+|---|---|---|---|
+| 筛选 + 确认 | 777 / 888 | `legacy` 框内 | 挑检查点 |
+| 诚实复测 | **2323 / 2424** | `legacy` 框内 | 报告引用这两个（**与 C 的 1313/1414 不重用**） |
+| 全板参照 | 2323 | 不设 | 看外推能力，实测从 9.4% 翻倍到 19.5% |
 
 **输出** `results/so101_sft_v9/.../global_step_1250`。
-**验收** 框内诚实值 **77.3 / 75.8%**（种子 2323/2424），全板 19.5%（翻倍）。**耗时约 5 h。**
+
+**验收** 框内诚实值 **77.3 / 75.8%**（种子 2323/2424），全板 19.5%。
 
 ---
 
@@ -720,39 +870,104 @@ gate $BEST 2323          # 全板参照
 
 **为什么** 想把 48 cm² 的能力扩到 96 cm²。**结论是没做到**，但这一阶段的产物是 PPO 的正确起点——因为它是在 PPO 将要训练的那个区域上训出来的。
 
-**输入** 阶段 D 的 `so101_sft_v9/.../global_step_1250`。
+**输入** 阶段 D 的 `so101_sft_v9/.../global_step_1250` + D 的数据集 `so101-sim-demos-v9`。
+
+**输出** 数据集 `so101-sim-demos-v10`（1292 集）、权重 `so101_sft_v10/.../global_step_1000`。
+
+**验收** 环 1 诚实 55.1%、框内 75.0%、全板 10.2%——**是负结果**。**耗时约 7 h。**
+
+### E1 用 v9 在环 1 上自采
+
+**为什么** 与 D1 同理，只是区域换成即将成为目标区的环 1。
+
+**输入** D 的最优检查点 `so101_sft_v9/.../global_step_1250`。
+
+**命令**
 
 ```bash
+export EMBODIED_PATH=$PWD/examples/embodiment
 export RING1="0.4294,0.9115,0.5142,0.9817"     # 环 1：8.48 × 11.31 cm = 96 cm²
-
-# E1 用 v9 在环 1 上自采（同 D1，只是区域换成环 1、种子换一批）
 export SO101_COLLECT_DIR=$DATA/v10_rollouts
 V9=/data08/henryg/pai/results/so101_sft_v9/so101_sft_openpi_pi05/checkpoints/global_step_1250
 for SEED in 3001 3002 3003 3004 3005 3006 3007 3008; do
   .venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
-  SO101_SPAWN_FRAC=$RING1 timeout 1500 .venv/bin/python evaluations/eval_embodied_agent.py \
+  SO101_SPAWN_FRAC=$RING1 timeout 1800 .venv/bin/python evaluations/eval_embodied_agent.py \
     --config-path $PWD/examples/embodiment/config/ --config-name so101_eval_openpi_pi05 \
     runner.logger.log_path=/data08/henryg/pai/results/so101_eval_v10 \
     rollout.model.model_path=$V9 rollout.model.openpi.config_name=pi05_so101_v9 \
     rollout.model.openpi_data.norm_stats_path=$PWD/assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json \
     env.eval.total_num_envs=128 env.eval.seed=$SEED
 done
+```
 
-# E2 只在新增的环形带上补规划器示范（内框已经够密，不重复生成）
+**参数**
+
+| 参数 | 值 | 为什么 |
+|---|---|---|
+| `SO101_SPAWN_FRAC` | `0.4294,0.9115,0.5142,0.9817` | 环 1 的归一化边界；**后面 PPO 和真机摆放都用这一组数** |
+| `SO101_COLLECT_DIR` | `$DATA/v10_rollouts` | `convert_append_region.py:56` 按这个路径找 npz |
+| 种子 3001–3008 | 又一批全新种子 | 与 D 的 2001–2008 不重用 |
+
+**输出** `$DATA/v10_rollouts/*.npz`，实测 429 条成功轨迹。
+
+**验收** `ls $DATA/v10_rollouts/*.npz | wc -l` ≥300；基线成功率（种子 3000）实测 51.6%。
+
+### E2 只在新增的环形带上补规划器示范
+
+**为什么** 内框已经够密，重新生成整片区域是浪费；只补**环 1 减去内框**那圈。
+
+**输入** 仿真环境。
+
+**命令**
+
+```bash
 SCRATCH=/tmp/so101_runs bash tools_so101_session/gen_demos_annulus.sh
+```
 
-# E3 在 v9 数据集的副本上追加，不重编码旧集
+**参数**
+
+| 项 | 值 | 为什么 |
+|---|---|---|
+| `SCRATCH` | 任意可写目录 | 脚本把日志和状态写进 `$SCRATCH`（默认 `/tmp/so101_runs`）；**它本来硬编码的是写作时的会话目录** |
+| 输出目录 | `$DATA/v10_demos_w*` | `convert_append_region.py:67` 按此 glob 找 |
+| 依赖 | 等 E1 打出完成标记后才开工 | 脚本内部会等 `collect_policy_successes.sh` 结束 |
+
+**输出** `$DATA/v10_demos_w*/**/*.h5`，实测 204 条环形带示范。
+
+**验收** 总成功数 ≥150。
+
+### E3 追加转换
+
+**为什么** 在 v9 数据集的**副本**上追加，不重编码旧集——旧集重编码要多花数小时。
+
+**输入** `$DATA/so101-sim-demos-v9` + E1 的 npz + E2 的 h5。
+
+**命令**
+
+```bash
 .venv/bin/python tools_so101_session/convert_append_region.py
 ```
 
-| 项 | 值 | 说明 |
-|---|---|---|
-| `SO101_SPAWN_FRAC` | `0.4294,0.9115,0.5142,0.9817` | 环 1 的归一化边界；后面 PPO 和真机摆放都用这一组数 |
-| `SCRATCH=` | 任意可写目录 | 这些 `.sh` 会把日志和状态写进 `$SCRATCH`（默认 `/tmp/so101_runs`），**它们本来硬编码的是写作时的会话目录** |
-| E2 输出 | `$DATA/v10_demos_w*` | `convert_append_region.py:67` 按此 glob 找 |
-| E3 输入/输出 | 复制 `so101-sim-demos-v9` → 追加 → `so101-sim-demos-v10` | **在副本上追加**，不重编码旧集，省数小时 |
+**参数**
 
-**E4 训练**
+| 项 | 值 | 为什么 |
+|---|---|---|
+| 源 | `so101-sim-demos-v9`（672 集） | 先整目录复制 |
+| 追加 1 | `v10_rollouts/*.npz`（429 条） | 环 1 策略轨迹 |
+| 追加 2 | `v10_demos_w*/**/*.h5`（204 条） | 环形带规划器示范 |
+| 输出 | `so101-sim-demos-v10`（1292 集） | |
+
+**输出** LeRobot 数据集 `so101-sim-demos-v10`，1292 集。
+
+**验收** 集数 ≈1292（672 + 429 + 204，允许少量长度过滤损耗）。
+
+### E4 训练
+
+**为什么** 把扩域后的数据学进去，产出 PPO 的起点。
+
+**输入** 数据集 `so101-sim-demos-v10` + D 的 `global_step_1250` + v4 统计量。
+
+**命令**
 
 ```bash
 export EMBODIED_PATH=$PWD/examples/sft
@@ -770,12 +985,24 @@ for CK in $OUT/*/checkpoints/global_step_*; do
 done
 ```
 
-| 参数 | 值 | 依据 |
+**参数**
+
+| 参数 | 值 | 为什么 |
 |---|---|---|
 | 配置 | `so101_sft_v10` | 其 yaml 的 `model_path` 已指向 v9 的 `global_step_1250` |
-| `lr` / 步数 / 存点 | 1e-5 / 2000 / 250 | 与 D 相同 |
+| `lr` / 步数 / 存点 | 1e-5 / 2000 / 250 | 与 D 相同：数据里仍有大量策略自采轨迹 |
 
-**E5 门评**——**区域换成环 1**，这是与 C/D 唯一的结构性差别
+**输出** 8 个检查点，每个带 norm_stats 子目录；最优点是 `global_step_1000`。
+
+**验收** 检查点齐全；成绩由 E5 判定。
+
+### E5 门评——区域换成环 1
+
+**为什么** 这是与 C/D 唯一的结构性差别：目标区变成了环 1。而且**三个参照缺一不可**——只看环 1 会以为扩域"没坏"，加上框内和全板才看得出它在原来擅长的区域退步了。
+
+**输入** E4 的全部检查点。
+
+**命令**
 
 ```bash
 export EMBODIED_PATH=$PWD/examples/embodiment
@@ -804,10 +1031,18 @@ gate $BEST 3131 "0,1,0,1" legacy                        # 框内参照（与 v9 
 gate $BEST 3131 "0,1,0,1"                               # 全板参照
 ```
 
-**三个参照缺一不可**：只看环 1 会以为扩域"没坏"，加上框内和全板才看得出**它在原来擅长的区域退步了**。
+**参数**
+
+| 层 | 种子 | 区域 | 作用 |
+|---|---|---|---|
+| 筛选 + 确认 | 777 / 888 | 环 1 | 挑检查点 |
+| 诚实复测 | **3131 / 3232** | 环 1 | 报告引用这两个（**与 C、D 的不重用**） |
+| 框内参照 | 3131 | `legacy` | 与 v9 的 77.3% 直接可比 |
+| 全板参照 | 3131 | 不设 | 与 v9 的 19.5% 直接可比 |
 
 **输出** `results/so101_sft_v10/.../global_step_1000`（数据集 1292 集）。
-**验收** 环 1 诚实 55.1%（种子 3131/3232）、框内 75.0%、全板 10.2%。**耗时约 7 h。**
+
+**验收** 环 1 诚实 55.1%（种子 3131/3232）、框内 75.0%、全板 10.2%。
 
 > **这是负结果**：扩域没有在目标区带来提升（v9 在环 1 上本来就有 58.6%），全板还掉了一半。**密度律不能外推成"扩域只要补够密度"**——v9 在外环一条示范都没有却已经有 58.6%，说明外环从来不缺示范。
 > 保留它是因为它是 PPO 的起点：PPO 在环 1 上训练，起点也应当在环 1 上训过。
@@ -818,9 +1053,17 @@ gate $BEST 3131 "0,1,0,1"                               # 全板参照
 
 **为什么** 到这里为止全是监督学习——策略只会模仿示范。PPO 让它在**自己实际会遇到的局面**上试错并放大成功。完整细节见 `PPO_V13_RUNBOOK_ZH.md`。
 
-**输入** 阶段 E 的 `so101_sft_v10/.../global_step_1000`（已写在 `so101_ppo_v11.yaml` 里）。
+**输入** 阶段 E 的 `so101_sft_v10/.../global_step_1000`（已写在 `so101_ppo_v11.yaml` 里）+ v4 统计量 + 仿真环境。
+
+**输出** `results/so101_ppo_v13/so101_ppo_v11/checkpoints/global_step_30`。
+
+**验收** 环 1 诚实 **57.8%**（起点 52.0%，**+5.9**）。**耗时约 2 h。**
 
 ### 8.1 三个决定成败的参数
+
+**为什么** 官方配方直接套在这个任务上会崩。这三个改动每一个都有对照实验，其中一个是决定性的。
+
+**参数**
 
 | 参数 | 官方/原值 | 改成 | 实测依据 |
 |---|---|---|---|
@@ -836,7 +1079,11 @@ gate $BEST 3131 "0,1,0,1"                               # 全板参照
 每轮更新数 = 每轮样本数 ÷ global_batch_size = 4096 ÷ 4096 = 1
 ```
 
-所以 `rollout_epoch` 从 3 改成 1、`global_batch_size` 从 2048 改成 4096，两个一起才得到 1。**`toolkits.preflight_config` 会把这个算式打出来**——启动前一定要看：
+所以 `rollout_epoch` 从 3 改成 1、`global_batch_size` 从 2048 改成 4096，**两个一起**才得到 1。
+
+**输入** 无（这一节是参数依据，不执行）。
+
+**命令** 用 preflight 把算式打出来核对：
 
 ```bash
 EMBODIED_PATH=$PWD/examples/embodiment .venv/bin/python -m toolkits.preflight_config \
@@ -845,37 +1092,59 @@ EMBODIED_PATH=$PWD/examples/embodiment .venv/bin/python -m toolkits.preflight_co
   actor.model.num_action_chunks=10 env.train.rollout_epoch=1 actor.global_batch_size=4096
 ```
 
-应当看到这两行（实测输出）：
+**输出**（实测）：
 
 ```
 batch arithmetic: 64 envs x 64 chunks x rollout_epoch 1 = 4096 samples/epoch -> 1 update(s)/epoch
 PREFLIGHT OK
 ```
 
-**`-> 1 update(s)/epoch` 这一句就是成败所在**，不是 1 就别启动。
+**验收** **`-> 1 update(s)/epoch` 这一句就是成败所在**，不是 1 就别启动。
 
 ### 8.2 启动前必测：先决条件要在 rollout 分布下测
 
 **为什么** PPO 是放大器不是发现器：它只能放大**已经偶尔发生**的成功。而"偶尔成功"必须在**带探索噪声的 rollout 分布**下测，不是确定性评测下——这两个数在本任务上能差 50 个点以上。
 
-用**冻结探针**（`lr=1e-9`，走真实训练路径但权重几乎不动）跑一轮，同时得到两个数：
+**输入** 阶段 E 的检查点（即 PPO 的起点）。
+
+**命令** 用**冻结探针**（`lr=1e-9`，走真实训练路径但权重几乎不动）跑一轮：
+
+```bash
+SCRATCH=/tmp/so101_runs bash tools_so101_session/ppo_freeze_probe.sh
+```
+
+**参数**
+
+| 参数 | 值 | 为什么 |
+|---|---|---|
+| `actor.optim.lr` | **1e-9** | 走完整训练路径但权重不变——测的是"起点在训练分布下什么水平" |
+| 其余 | 与正式启动完全一致 | 探针必须与真实运行同一条代码路径 |
+| `SCRATCH` | 任意可写目录 | 脚本把日志写这里 |
+
+**输出** 一轮之后日志里同时有两个数：
 
 | 指标 | 含义 | 门槛 |
 |---|---|---|
 | `env/success_once` | **带噪**，PPO 真正学习的分布 | **≥5%** |
 | `eval/success_once` | 确定性 | 不应比起点低太多 |
 
-5% 来自本项目四次历史运行的实测分界：**两次放大成功的起始带噪成功率是 5–15%，两次从未起来的是 0.5–1.0%**。**必要但不充分**——本次探索中有一个变体带噪 39% 仍然崩塌，因为更新次数不对。
+**验收** 带噪 ≥5%。这个门槛来自本项目四次历史运行的实测分界：**两次放大成功的起始带噪成功率是 5–15%，两次从未起来的是 0.5–1.0%**。**必要但不充分**——本次探索中有一个变体带噪 39% 仍然崩塌，因为更新次数不对。
 
-**不要用 `runner.only_eval=True` 当探针**：它同时切换模型规格来源并跳过训练环境创建（`config.py:830`、`env_worker.py:108`），是另一条代码路径，测的不是同一件事。
+> **不要用 `runner.only_eval=True` 当探针**：它同时切换模型规格来源并跳过训练环境创建（`config.py:830`、`env_worker.py:108`），是另一条代码路径，测的不是同一件事。
 
 ### 8.3 启动
+
+**为什么** 手工敲这条命令容易漏掉环境变量、Ray 清理和守卫，而 PPO 跑崩是静默的——曲线掉下去不会有任何报错。
+
+**输入** 8.1 的算式为 1、8.2 的带噪成功率 ≥5%。
+
+**命令**
 
 ```bash
 SCRATCH=/tmp/so101_runs bash tools_so101_session/ppo_train.sh
 ```
 
-这个脚本做了三件手工容易漏的事：设好环境变量、清干净 Ray、**带一个自动停机守卫**。它实际发出的命令是：
+它实际发出的命令是：
 
 ```bash
 export SO101_SPAWN_FRAC="0.4294,0.9115,0.5142,0.9817"
@@ -890,19 +1159,29 @@ setsid .venv/bin/python examples/embodiment/train_embodied_agent.py \
   "+actor.model.openpi.noise_logvar_range=[0.02,0.04]"
 ```
 
+**参数**
+
 | 参数 | 值 | 为什么 |
 |---|---|---|
 | `--config-name so101_ppo_v11` | | 官方配方（`adv_type: gae`、`loss_type: actor_critic`、clip 0.2、entropy 0），起点已指向 v10 |
+| `SO101_SPAWN_FRAC` | 环 1 | 训练区域，与阶段 E 一致 |
 | `runner.val_check_interval` / `save_interval` | 5 / 5 | 每 5 轮评一次、存一次；峰值很窄，存疏了会错过 |
-| `actor.optim.lr` | 2e-6 | 官方 5e-6 的一半——起点已经很好，步子迈大了会毁掉它 |
+| `actor.optim.lr` | 2e-6 | 官方 5e-6 的一半——起点已经很好，步子迈大会毁掉它 |
 | `setsid` | | 脱离终端。**不这么做，SSH 一断训练就没了** |
-| `SCRATCH` | 任意可写目录 | 脚本把日志/状态写在这里 |
 
-**自动停机守卫**每 5 分钟读一次 `eval/success_once`：低于峰值 20 点 → 停；连续 3 次低于起点 5 点 → 停。**必须写在启动器里**，写在会话里会随会话消失（历史上因此白烧 180 轮）。
+**输出** 检查点每 5 轮一个，落在 `results/so101_ppo_v13/so101_ppo_v11/checkpoints/`；tensorboard 事件文件在同一目录树下。
+
+**验收** 启动后 30 分钟内日志要出现第一轮完整的 `success_once=`；没有就是挂了，去查根因，别盲目重启。
+
+> **自动停机守卫**每 5 分钟读一次 `eval/success_once`：低于峰值 20 点 → 停；连续 3 次低于起点 5 点 → 停。**必须写在启动器里**，写在会话里会随会话消失（历史上因此白烧 180 轮）。
 
 ### 8.4 读训练曲线
 
-训练中的成绩不在 stdout 里，在 tensorboard 事件文件里。守卫脚本也是这么读的：
+**为什么** 训练中的成绩不在 stdout 里，在 tensorboard 事件文件里；不会读就只能盲等。
+
+**输入** 训练输出目录 `results/so101_ppo_v13`。
+
+**命令**
 
 ```bash
 .venv/bin/python - <<'PY'
@@ -915,22 +1194,28 @@ for s in ea.Scalars("eval/success_once"):
 PY
 ```
 
-| 标量 | 含义 |
-|---|---|
-| `eval/success_once` | **确定性**评测，每 `val_check_interval`（5 轮）一次——**挑检查点看这个** |
-| `env/success_once` | **带噪** rollout，PPO 实际学习的分布——判断"还在不在有效区间"看这个 |
+**参数**
 
-实测曲线：
+| 标量 | 含义 | 什么时候看 |
+|---|---|---|
+| `eval/success_once` | **确定性**评测，每 `val_check_interval`（5 轮）一次 | **挑检查点看这个** |
+| `env/success_once` | **带噪** rollout，PPO 实际学习的分布 | 判断"还在不在有效区间"看这个 |
+
+**输出**（实测曲线）：
 
 | step | 4 | 9 | 14 | 19 | 24 | **29** | 34 | 39 | 44 | 49 |
 |---|---|---|---|---|---|---|---|---|---|---|
 | eval | 60.9 | 58.6 | 62.5 | 58.6 | 70.3 | **73.4** | 69.5 | 70.3 | 68.0 | 68.8 |
 
-前 20 轮徘徊（**不要在这里判死刑**），step 24 起上台阶。峰值在 step 29，对应检查点 `global_step_30`。
+**验收** 峰值出现在 step 29 → 取检查点 `global_step_30`。前 20 轮徘徊（**不要在这里判死刑**），step 24 起上台阶。若到 step 50 仍未超过起点，回 8.1/8.2 查参数。
 
 ### 8.5 验收：诚实口径要跑两组评测
 
-**为什么要两组** 峰值检查点是在门评那套固定局面上挑出来的，再用同一套局面报增益等于自己给自己打分。所以换**从未用过的种子**，并且**把起点用同样的种子、同样的块长重测一遍**——不这么做就分不清"PPO 的增益"和"这两个种子恰好更容易"。
+**为什么** 峰值检查点是在门评那套固定局面上挑出来的，再用同一套局面报增益等于自己给自己打分。所以换**从未用过的种子**，并且**把起点用同样的种子、同样的块长重测一遍**——不这么做就分不清"PPO 的增益"和"这两个种子恰好更容易"。
+
+**输入** PPO 峰值检查点 + 阶段 E 的起点检查点。
+
+**命令**
 
 ```bash
 export EMBODIED_PATH=$PWD/examples/embodiment
@@ -963,6 +1248,8 @@ SCRATCH=/tmp/so101_runs bash tools_so101_session/verify_honest_seeds.sh      # P
 SCRATCH=/tmp/so101_runs bash tools_so101_session/verify_baseline_control.sh  # 起点，同种子同块长
 ```
 
+**参数**
+
 | 参数 | 值 | 为什么 |
 |---|---|---|
 | `rollout.model.openpi.config_name` | `pi05_so101_v10` | **PPO 阶段没有产生新数据集**，沿用起点那个条目 |
@@ -971,7 +1258,7 @@ SCRATCH=/tmp/so101_runs bash tools_so101_session/verify_baseline_control.sh  # �
 | `env.eval.total_num_envs` | 128 | 每集 0.8 个百分点；再少就读不出 5 个点的差别 |
 | `find /dev/shm ... -delete` | | 上一次评测残留的共享内存段会让下一次以"看起来像显存不足"的方式失败 |
 
-**输出** `results/so101_ppo_v13/so101_ppo_v11/checkpoints/global_step_30`。
+**输出** 4 个 `success_once=` 数字（2 检查点 × 2 种子）。
 
 **验收（诚实口径）**——种子 4141/4242 从未参与挑选，与起点同条件对照，**动作块长同为 10**：
 
@@ -981,7 +1268,7 @@ SCRATCH=/tmp/so101_runs bash tools_so101_session/verify_baseline_control.sh  # �
 | **PPO 后** | **58.6%** | **57.0%** | **57.8%** |
 | 增益 | +10.2 | +1.5 | **+5.9** |
 
-框内参照 77.3%、全板参照 14.8%。**耗时约 2 h。**
+框内参照 77.3%、全板参照 14.8%。
 
 > **报告里请引用 +5.9 这个诚实增益。** 门评口径上是 61.7%→73.4%（+11.7），但峰值检查点正是在那套固定评测局面上挑出来的，会偏乐观。
 
@@ -995,13 +1282,19 @@ SCRATCH=/tmp/so101_runs bash tools_so101_session/verify_baseline_control.sh  # �
 
 **输入** 阶段 F 的 `so101_ppo_v13/.../global_step_30` + 87 集真机数据 + 阶段 E 的仿真数据集 `so101-sim-demos-v10`。
 
+**输出** 数据集 `so101-cotrain-v14` / `so101-cotrain-v15`、权重 `so101_sft_v15/.../global_step_1000`。
+
+**验收** 留出集真机比值 **0.70**（<1），仿真环 1 不塌（约 60%）。**耗时约 7 h。**
+
 > **数据集路径的一个现实问题**：HF 上的 repo id 是 `henry-guo/so101-pick-place-v2`，而本机上这份数据落在 `/data08/henryg/pai/data/so101-pick-place-v1-trimmed`（87 集、30 fps、LeRobot **v3.0** 布局）——**是同一份数据**。阶段 A 按 HF repo id 找它，而 G 阶段的转换脚本里 `REAL_ROOT` 硬写的是本机路径。换机器时改这一行，或者做个软链。
 
 ### 9.1 先把问题量出来（不碰机器人）
 
 **为什么** 直接上机去试，代价是可能撞坏机械臂，而且失败了也不知道是感知问题还是控制问题。离线检验 20 分钟、零硬件，就能给出可判定的数字。
 
-**做法**：把真机录制的（前视、腕视、关节状态）喂给策略，比较它预测的动作与人类当时的实际动作。两个对照让数字可解释——**仿真数据**（分布内参照）和**"完全不动"**（动作幅度的尺度）。比值 <1 表示优于什么都不做。
+**输入** 阶段 F 的检查点 + 真机数据集。
+
+**命令**
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 .venv/bin/python tools_so101_session/offline_replay_check.py \
@@ -1012,11 +1305,17 @@ CUDA_VISIBLE_DEVICES=0 .venv/bin/python tools_so101_session/offline_replay_check
   --episodes 5 --frames 10
 ```
 
-| 参数 | 含义 |
-|---|---|
-| `--chunks` | 动作块长；**要与被测策略的训练/部署一致**，否则测的是别的东西 |
-| `--real-root` | 真机数据集根目录（v2.0 和 v3.0 两种布局都支持） |
-| `--episodes` / `--frames` | 取几集、每集采样几帧 |
+**参数**
+
+| 参数 | 值 | 为什么 |
+|---|---|---|
+| `--chunks` | 10 | 动作块长；**要与被测策略的训练/部署一致**，否则测的是别的东西 |
+| `--real-root` | 真机数据集根目录 | v2.0 和 v3.0 两种 LeRobot 布局都支持 |
+| `--episodes` / `--frames` | 5 / 10 | 取 5 集、每集采样 10 帧，共 50 个样本点 |
+| `--no-wrist`（可选） | | 砍掉腕视那一路，用来判断某一路输入是不是根因 |
+| `--ep-start`（可选） | | 从第几集开始读，**留出集检验靠它** |
+
+**做法**：把真机录制的（前视、腕视、关节状态）喂给策略，比较它预测的动作与人类当时的实际动作。两个对照让数字可解释——**仿真数据**（分布内参照）和**"完全不动"**（动作幅度的尺度）。比值 <1 表示优于什么都不做。
 
 **输出**（stdout）：逐关节的 policy MAE、hold-still MAE、比值，以及仿真侧和真机侧各一个总比值。
 
@@ -1025,27 +1324,53 @@ CUDA_VISIBLE_DEVICES=0 .venv/bin/python tools_so101_session/offline_replay_check
 | 阶段 F 产物（仿真训练） | 0.10 ✅ | **4.47** ❌ |
 | 阶段 A 产物（真机训练） | 3.82 ❌ | **0.22** ✅ |
 
-两者**互为镜像**：各自在自己的域里好、在对方的域里差。这既证明这是**视觉域鸿沟**而非某个部件的 bug，也证明这个指标本身可信。
+**验收** 这一步的"验收"是**确认问题存在且指标可信**：两个策略必须**互为镜像**——各自在自己的域里好、在对方的域里差。镜像成立，说明这是**视觉域鸿沟**而非某个部件的 bug，指标本身也是好的。
 
 **不要停在第一个嫌疑上。** 当时的首要嫌疑是仿真腕部相机指向错误（它拍的是机械臂自己）。但加 `--no-wrist` 把这一路砍掉后真机比值几乎不变（4.47 → 4.59）——差距比这一个缺陷更广。**如果当时收手去修相机，30 小时机时会白花。**
 
-### 9.2 做法：把真机数据掺进仿真数据集重训
+### 9.2 建协同训练数据集
 
-**这一阶段实际是两次训练**（v14 → v15），第二次才是交付物：
+**为什么** 把真机图像掺进训练数据，让模型同时见过两个域。真机只有 87 集、仿真有 1292 集，不上采样的话真机在梯度里几乎看不见。
+
+**输入** 仿真数据集 `so101-sim-demos-v10` + 真机数据集（87 集）。
+
+**命令**
+
+```bash
+.venv/bin/python tools_so101_session/convert_cotrain_simreal.py   # -> so101-cotrain-v14
+.venv/bin/python tools_so101_session/convert_cotrain_heldout.py   # -> so101-cotrain-v15
+```
+
+**参数**（写在脚本头部，改这几行即可）
+
+| 项 | v14 | v15 | 为什么 |
+|---|---|---|---|
+| `SIM_ROOT` | `so101-sim-demos-v10` | 同左 | 阶段 E 的数据集 |
+| `REAL_ROOT` | `so101-pick-place-v1-trimmed` | 同左 | 真机 87 集 |
+| 真机用哪些集 | **全部 0–86** | **只用 0–69**，70–86 留出 | v14 的指标因此不可用，见下 |
+| `REPEAT` | 2 | **3** | v15 只用 70 集训练，倍数提高才维持相近占比 |
+| `MIN_LEN, MAX_LEN` | 80, **1000** | 同左 | **不能沿用仿真的 580**——人类遥操作更慢，87 集是 395–825 帧、中位 575，**用 580 会静默丢掉 46% 的真机数据** |
+
+**输出** `$DATA/so101-cotrain-v14`（1292 + 87×2）、`$DATA/so101-cotrain-v15`（1292 + 70×3 = 1502 集）。
+
+**验收** 脚本最后打印 `DONE: <总集数> episodes (sim N + real M ...)`；核对总集数与上表相符。**耗时约 5.5 h**（纯 CPU，瓶颈是视频编码）。
+
+### 9.3 两次训练
+
+**为什么** **这一阶段实际是两次训练**（v14 → v15），第二次才是交付物：
 
 | 轮次 | 数据 | 热启动 | 真机比值 |
 |---|---|---|---|
 | v14 | 真机**全部 87 集** ×2 + 仿真 1292 集 | 阶段 F 的 `global_step_30` | 0.84（**训练集口径，不可用**） |
 | **v15** | 真机 **0–69 集** ×3 + 仿真 1292 集，**70–86 留出** | **v14 的 `global_step_1750`** | **0.70（留出集）** |
 
-**为什么要两次**：v14 把 87 集全部拿去训练，然后又用其中几集读离线指标——那是拿训练集当考卷。v15 留出 17 集从不参训，才是第一个能作为上机依据的数字。**从零复现可以直接跑 v15**（用 `convert_cotrain_heldout.py` 的数据集、从阶段 F 热启动），但那条路没有实测过；这里记录的是实际跑出 0.70 的那条。
+v14 把 87 集全部拿去训练，然后又用其中几集读离线指标——那是拿训练集当考卷。v15 留出 17 集从不参训，才是第一个能作为上机依据的数字。**从零复现可以直接跑 v15**（用 `convert_cotrain_heldout.py` 的数据集、从阶段 F 热启动），但那条路没有实测过；这里记录的是实际跑出 0.70 的那条。
+
+**输入** 两个协同数据集 + 阶段 F 的检查点 + v4 统计量。
+
+**命令**
 
 ```bash
-# G1 建数据集（纯 CPU，约 5.5 h；会先复制一份仿真数据集再往里追加）
-.venv/bin/python tools_so101_session/convert_cotrain_simreal.py   # -> so101-cotrain-v14
-.venv/bin/python tools_so101_session/convert_cotrain_heldout.py   # -> so101-cotrain-v15
-
-# G2 两次训练，都按 §1.5 ①
 export EMBODIED_PATH=$PWD/examples/sft
 for CFG in so101_sft_v14 so101_sft_v15; do
   OUT=/data08/henryg/pai/results/$CFG
@@ -1061,25 +1386,29 @@ for CFG in so101_sft_v14 so101_sft_v15; do
 done
 ```
 
-| 参数 | 值 | 理由 |
+**参数**
+
+| 参数 | 值 | 为什么 |
 |---|---|---|
-| 真机上采样 | v14 ×2 / v15 ×3 | 87 集对 1292 集，不上采样在梯度里几乎看不见；v15 只用 70 集训练，所以倍数提高 |
+| `config_name` | `pi05_so101_v14` / `pi05_so101_v15` | 各自指向对应的协同数据集 |
+| 热启动 | v14 ← PPO 峰值；v15 ← v14 的 step_1750 | **两个 yaml 里已写死**，无需覆盖 |
 | `lr` | 1e-5 | 轻量微调，别把仿真能力洗掉 |
 | 步数 / 存点 | 2000 / 250 | 门评逐个检查点做 |
-| 长度过滤 | `MIN_LEN, MAX_LEN = 80, 1000` | **不能沿用仿真示范的 580**——人类遥操作更慢，87 集是 395–825 帧、中位 575，**用 580 会静默丢掉 46% 的真机数据** |
 
-### 9.3 门评必须是双轴的
+**输出** 各 8 个检查点；v14 的最优是 `global_step_1750`，v15 的最优是 `global_step_1000`。
+
+**验收** 检查点齐全且带 norm_stats 子目录；成绩由 9.4 判定。**耗时约 1.5 h。**
+
+### 9.4 门评必须是双轴的
 
 **为什么** 这一步**targets 真机表现，同时有能力破坏仿真能力**。单轴门评会拿仿真能力换真机能力而不自知——实测抓到过一次：750 步时真机比值已改善到 1.16，而仿真掉到 52.3%，只看目标轴会以为是进步。
 
-| 轴 | 指标 | 怎么测 | 判据 |
-|---|---|---|---|
-| 目标 | 离线真机比值（**留出集**） | 下面这条命令 | 越低越好，必须 <1 |
-| 约束 | 仿真环 1 成功率 | §1.5 ②，条目 `pi05_so101_v15`、`SO101_SPAWN_FRAC=$RING1`、**`rollout.model.num_action_chunks=10`** | **不得跌破 50%** |
+**输入** 9.3 的全部检查点 + 真机数据集的**留出段**（70–86）。
 
-**约束必须在选点时有否决权**，不是事后看看。
+**命令**
 
 ```bash
+# 目标轴：留出集上的离线真机比值
 for CK in /data08/henryg/pai/results/so101_sft_v15/*/checkpoints/global_step_*; do
   CUDA_VISIBLE_DEVICES=0 .venv/bin/python tools_so101_session/offline_replay_check.py \
     --ckpt $CK --config-name pi05_so101_v15 \
@@ -1087,18 +1416,43 @@ for CK in /data08/henryg/pai/results/so101_sft_v15/*/checkpoints/global_step_*; 
     --chunks 10 --real-root $DATA/so101-pick-place-v1-trimmed \
     --ep-start 70 --episodes 5 --frames 10        # ep-start 70 = 只读留出集
 done
+
+# 约束轴：同一批检查点的仿真环 1 成功率
+export EMBODIED_PATH=$PWD/examples/embodiment
+export RING1="0.4294,0.9115,0.5142,0.9817"
+for CK in /data08/henryg/pai/results/so101_sft_v15/*/checkpoints/global_step_*; do
+  .venv/bin/ray stop --force; rm -rf /tmp/ray/session_*
+  SO101_SPAWN_FRAC=$RING1 timeout 1800 .venv/bin/python evaluations/eval_embodied_agent.py \
+    --config-path $PWD/examples/embodiment/config/ --config-name so101_eval_openpi_pi05 \
+    runner.logger.log_path=/data08/henryg/pai/results/so101_eval_v15 \
+    rollout.model.model_path=$CK \
+    rollout.model.openpi.config_name=pi05_so101_v15 \
+    rollout.model.openpi_data.norm_stats_path=$PWD/assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json \
+    rollout.model.num_action_chunks=10 \
+    env.eval.total_num_envs=128 env.eval.seed=4141 \
+    2>&1 | grep -oE 'success_once=[0-9.]+' | tail -1
+done
 ```
 
-### 9.4 输出与验收
+**参数**
 
-**输出** `results/so101_sft_v15/so101_sft_openpi_pi05/checkpoints/global_step_1000`。
+| 轴 | 指标 | 关键参数 | 判据 |
+|---|---|---|---|
+| 目标 | 离线真机比值 | `--ep-start 70`（**只读留出集**）、`--chunks 10` | 越低越好，**必须 <1** |
+| 约束 | 仿真环 1 成功率 | `SO101_SPAWN_FRAC=$RING1`、**`num_action_chunks=10`** | **不得跌破 50%** |
+
+**约束必须在选点时有否决权**，不是事后看看：先按约束轴筛掉不合格的检查点，再在剩下的里面挑目标轴最好的。
+
+**输出** 每个检查点两个数；交付物是 `results/so101_sft_v15/so101_sft_openpi_pi05/checkpoints/global_step_1000`。
+
+**验收**
 
 | 指标 | 阶段 F 产物 | **阶段 G 产物** |
 |---|---|---|
 | 离线真机比值（留出集，10 步时域） | 4.47 | **0.70** ✅ |
 | 仿真环 1 | 57.8% | **62.5% / 65.6%**（约 60%，未下降） |
 
-**离线门通过，可以上真机。** 部署方案见 `SIM2REAL_PLAN_ZH.md`。**耗时约 7 h**（5.5 h 建数据集 + 1.5 h 训练）。
+**离线门通过，可以上真机。** 部署方案见 `SIM2REAL_PLAN_ZH.md`。
 
 > **一个必须知道的顺带发现**：**腕部相机那一路的重要性在协同训练后反转了**。协同训练前砍掉它没区别（4.47→4.59），之后砍掉它比值从 0.90 涨到 1.58——模型现在真的在用真实腕视图像。**部署时两路相机都必须送。**
 
@@ -1152,6 +1506,8 @@ done
 
 ## 13. 局限与下一步（写报告时必须一并说明）
 
+> 这一节**不是执行步骤**，没有命令——它是写报告时必须一并说明的边界。
+
 ### 13.1 已经解决的：视觉域鸿沟
 
 阶段 F 的产物在真实观测上比"完全不动"还差 4.5 倍（比值 4.47）。阶段 G 的协同训练把它压到 **0.70**（留出集口径），**离线门已通过**。详见 §9，部署方案见 `SIM2REAL_PLAN_ZH.md`。
@@ -1172,7 +1528,7 @@ python tools_so101_session/offline_replay_check.py \
 | 仿真腕部相机指向仍是错的 | 协同训练让模型学会了处理真实腕视图像，但**仿真数据里那一路仍然是废的**——两个域的信息量不对称 | 重录数据 + 从阶段 B 重训，约 30 h |
 | 域随机化未做 | 仿真渲染时随机化光照/材质/相机位姿 | 需改环境 + 重新生成示范并重训 |
 
-**任何改动都必须重新过 §9.1 那个离线检验，且按 §9.3 的双轴门评选点。**
+**任何改动都必须重新过 §9.1 那个离线检验，且按 §9.4 的双轴门评选点。**
 
 ### 13.3 其它已知局限
 
