@@ -643,6 +643,19 @@ for W in 0 1 2 3 4 5 6 7; do
 
 **验收** 集数 ≥200，且 **`assets/` 下不应该多出这一阶段的统计量目录**——多出来了就说明误调了 `calculate_norm_stats`，血统已经断了。
 
+> **这一条可以在任何时候自查，也是血统冻结唯一的硬证据：**
+>
+> ```bash
+> ls assets/                 # 整条流程只应有两个 pi05_so101* 目录
+> REF=$(md5sum assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json | cut -d' ' -f1)
+> for f in /data08/henryg/pai/results/*/*/checkpoints/*/so101-sim-demos-v4/norm_stats.json; do
+>   [ "$(md5sum $f | cut -d' ' -f1)" = "$REF" ] || echo "血统断了: $f"
+> done
+> ```
+>
+> 本仓库实测：`assets/` 下只有 `pi05_so101`（阶段 A 专用）和 `pi05_so101_v4`（血统），**没有 v8/v9/v10/v14/v15**——因为 C 之后再没算过统计量。B 到 G 全部 7 个训练产物里的 norm_stats **与基准逐字节相同**（md5 `10648366…`）。
+> （`assets/` 下若还有 `pi05_so101_pp` / `_sim` / `_v3` / `_v5`，那是早期废弃实验留下的，与本流程无关，见 §12。）
+
 ### C3 训练
 
 **为什么** 在更密的数据上继续 BC。热启动用阶段 B 的最优点，不从头开始。
