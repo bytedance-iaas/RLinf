@@ -111,9 +111,11 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 ```bash
 export EMBODIED_PATH=$PWD/examples/sft        # 或 examples/embodiment（评测/RL）
+CFG=so101_sft_v4                                   # 换成本阶段的配置名
+OUT=/data08/henryg/pai/results/$CFG                # 换成本阶段的输出目录
 .venv/bin/python -m toolkits.preflight_config \
-  --config-path $PWD/examples/sft/config/ --config-name <配置名> \
-  runner.logger.log_path=<输出目录>
+  --config-path $PWD/examples/sft/config/ --config-name $CFG \
+  runner.logger.log_path=$OUT
 ```
 
 必须看到 `PREFLIGHT OK`。它检查路径存在性、批量整除性、模型-数据一致性——这些错误如果漏到运行时，通常表现为跑了一整夜才发现方向错了。

@@ -464,7 +464,7 @@ timeout 1800 .venv/bin/python evaluations/eval_embodied_agent.py \
 
 ```bash
 .venv/bin/python tools_so101_session/gen_planner_demos.py \
-  --num 12 --seed0 79000 --out $DATA/probe
+  --num 12 --seed0 79000 --out $DATA/probe > $SCRATCH/probe.out 2>&1
 ```
 
 **参数**
@@ -480,8 +480,8 @@ timeout 1800 .venv/bin/python evaluations/eval_embodied_agent.py \
 **验收** ≥8/12 成功、成功轨迹中位长度 ≤530 步（预算 640 的 1.1 倍余量）。**不过就不要往下走。**
 
 ```bash
-# 成功数
-grep -oE 'TOTAL success [0-9]+' <生成日志> | grep -oE '[0-9]+$'
+# 成功数（把 B1 的 stdout 存下来再统计；上一条命令加 > $SCRATCH/probe.out 2>&1 即可）
+grep -oE 'TOTAL success [0-9]+' $SCRATCH/probe.out | grep -oE '[0-9]+$'
 # 成功轨迹的中位长度
 .venv/bin/python - <<'PY'
 import glob, json, h5py, numpy as np
@@ -820,8 +820,9 @@ gate(){ # $1=检查点 $2=种子 $3=区域模式(legacy 或空)
 
 # ① 筛选：全部检查点跑种子 777（峰值在中段，不能只评最后几个）
 for CK in $OUT/*/checkpoints/global_step_*; do echo "$(basename $CK) $(gate $CK 777 legacy)"; done
-# ② 确认：候选跑种子 888，按 (777+888)/2 选最优
-for CK in <上一步靠前的几个>; do echo "$(basename $CK) $(gate $CK 888 legacy)"; done
+# ② 确认：把①里靠前的几个检查点填进来，跑种子 888，按 (777+888)/2 选最优
+CANDIDATES="$OUT/*/checkpoints/global_step_2500 $OUT/*/checkpoints/global_step_2250"
+for CK in $CANDIDATES; do echo "$(basename $CK) $(gate $CK 888 legacy)"; done
 # ③ 诚实复测：只对选中的那个，跑两个从未参与挑选的种子 —— 这才是报告里的数字
 BEST=$OUT/so101_sft_openpi_pi05/checkpoints/global_step_2500
 gate $BEST 1313 legacy;  gate $BEST 1414 legacy

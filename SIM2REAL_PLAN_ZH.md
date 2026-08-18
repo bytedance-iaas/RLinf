@@ -205,7 +205,8 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 TOKENIZERS_PARALLELISM=false
 Mac 侧建隧道：
 
 ```bash
-ssh -N -L 18080:localhost:18080 <user>@<h200-host>
+H200_HOST="user@10.0.0.5"        # 改成你的用户名@主机
+ssh -N -L 18080:localhost:18080 "$H200_HOST"
 ```
 
 ### 4.5 起客户端（Mac 侧）

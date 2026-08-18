@@ -171,6 +171,6 @@
 | `SO101_PIPELINE_ZH.md` | **端到端可复现流程**（从数据集到 PPO 产物）+ 摘要 + 局限 |
 | `PPO_V13_RUNBOOK_ZH.md` | PPO 成功配方的详细步骤与失败对照表 |
 | `PPO_CODE_WALKTHROUGH_ZH.md` | PPO 的代码级全流程（带文件行号） |
-| `SIM2REAL_PLAN_ZH.md` | 真机部署方案与阻断项 |
+| `SIM2REAL_PLAN_ZH.md` | 真机部署方案（离线门已通过，含导出→验证→起服务→分级上机） |
 | `V10_REPRODUCTION_ZH.md` | 阶段 A–E 的更详细版本 |
 | `.claude/skills/rlinf-embodied-training/SKILL.md` | 工程纪律（含已证伪诊断清单） |

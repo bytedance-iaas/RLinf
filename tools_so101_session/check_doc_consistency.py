@@ -143,6 +143,20 @@ def main():
         for n in sorted(invoked - indexed):
             fails.append(f"{'清单遗漏':16} {n:34} 命令里让你跑它，但 §2 工具清单没列")
 
+    # 9. Every bash block must parse. A block that cannot even be parsed cannot
+    #    have been run, and placeholders like <生成日志> inside a pipeline are how
+    #    an un-runnable command looks correct at a glance.
+    import subprocess, tempfile
+    for i, blk in enumerate(re.findall(r'```bash\n(.*?)```', text, re.S)):
+        body = "\n".join(re.sub(r'^> ?', '', ln) for ln in blk.split("\n"))
+        with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as fh:
+            fh.write(body); path = fh.name
+        r = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
+        os.unlink(path)
+        if r.returncode:
+            first = (r.stderr.strip().split("\n") or [""])[0][-60:]
+            fails.append(f"{'代码块语法':16} {'第 %d 块' % (i + 1):34} {first}")
+
     print(f"检查 {doc}")
     print(f"  注册表条目：仓库里 {len(entries)} 个，本文档用 {len(used_as_cfg)} 个")
     src = open(REGISTRY, encoding="utf-8").read()
