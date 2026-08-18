@@ -1159,6 +1159,10 @@ def validate_embodied_cfg(cfg):
                     return "arm_pd_ee_delta_pose_align_interpolate_by_planner_gripper_pd_joint_target_delta_pos_interpolate_by_planner"
                 elif "widowx" in robot:
                     return "arm_pd_ee_target_delta_pose_align2_gripper_pd_joint_pos"
+                elif "so100" in robot or "so101" in robot:
+                    # SO100/SO101: absolute joint-position control (the 6-dim
+                    # PI0.5 output maps straight onto the arm joints + gripper).
+                    return "pd_joint_pos"
                 elif "panda" in robot:
                     return "pd_ee_body_target_delta_pose_real_root_frame"
                 else:
