@@ -1,6 +1,6 @@
 ---
 name: rlinf-embodied-training
-description: General engineering discipline for embodied SFT/RL training in RLinf (VLA policies such as PI0/PI0.5/OpenVLA on ManiSkill or other sims). Use when designing a training recipe or reward, choosing warm-start checkpoints, building/calibrating a sim environment for a new robot, converting demonstration data, launching/stopping/monitoring long runs, or diagnosing zero-success and silent hangs. Principles first; robot- and machine-specific facts are in the appendices.
+description: Engineering discipline for embodied SFT/RL in RLinf (VLA policies such as PI0/PI0.5/OpenVLA on ManiSkill or other sims) AND for the artifacts the work is delivered as. Use when designing a training recipe or reward, choosing warm-start checkpoints, building/calibrating a sim environment for a new robot, converting demonstration data, launching/stopping/monitoring long runs, diagnosing zero-success and silent hangs, closing a sim2real gap, or writing/auditing the reproduction document, scripts and configs that ship with the result. Principles first; robot- and machine-specific facts are in the appendices.
 ---
 
 # RLinf Embodied Training — Engineering Discipline
@@ -8,7 +8,6 @@ description: General engineering discipline for embodied SFT/RL training in RLin
 General principles for training VLA policies (SFT + RL) in RLinf. Each rule is stated generally; **Evidence:** lines cite the incident that proved it (SO101+PI0.5 project, 2026-08). Appendices hold project/machine specifics.
 
 ---
-
 ## 1. Recipe design: check preconditions before training anything
 
 **On-policy RL (PPO) is an amplifier of existing success, not a from-scratch discoverer.** Before any RL run, verify at least one of:
@@ -60,6 +59,63 @@ A pretrained VLA has narrow exploration (approx_kl ~0.01–0.04/step under flow-
 4. Does the reward give a gradient into the missing behavior? (add a bridge term if not)
 5. Still zero → the recipe lacks preconditions → build the sim-demo SFT pipeline.
 6. Success exists but collapses under RL → freeze test → conservative-PPO bundle → if still collapsing, STOP iterating versions and verify the reference recipe itself (does the official example actually amplify from a BC start?) before any further variant.
+
+## 1c. The PPO precondition must be measured IN THE ROLLOUT DISTRIBUTION, not deterministically
+
+§1 says PPO needs the start policy to "already succeed sometimes in the target environment". That sentence hid an ambiguity that cost a full run: **which success — the deterministic eval, or the noisy rollouts PPO actually learns from?** They can differ by 50+ points.
+
+**Measured on 2026-08-13 (freeze test, lr=1e-9, real training path):** the same checkpoint scored `eval/success_once` **0.539** (deterministic) and `env/success_once` **0.010** (under the official flow-noise `[0.16,0.12,200]`). PPO saw ~1% success in 24,576 samples/iteration, had almost no success signal to amplify, optimised the dense reward instead, and by step 9 (~108 updates) had destroyed the policy — the deterministic eval fell to 0.0 too.
+
+**The threshold was already in this project's own logs**, unread until now (tensorboard `env/success_once`, first epochs):
+
+| run | noisy-rollout success at start | deterministic eval at start | outcome |
+|---|---|---|---|
+| pp4 | 5-9% | 36.7% | amplified to 75.0% |
+| v10 | 10-15% | 61.7% | amplified to 68.8% |
+| pp5 | ~20% | 31.2% | still collapsed (necessary, not sufficient) |
+| v11 | **1.0%** | 53.9% | destroyed by step 9 |
+| v6 | 0.5% | 0.0% | never left zero |
+
+**Rule: before launching PPO, measure `env/success_once` under the exact rollout noise you will train with. Below ~5% do not launch.** Cheapest probe: the freeze test (`actor.optim.lr=actor.optim.value_lr=1e-9`, `runner.val_check_interval=1`) — it exercises the REAL training path (same workers, env creation, model construction, weight sync) while leaving weights unchanged, and it reports both numbers in one epoch (~15 min).
+
+**Why long-horizon tasks are structurally harder here:** noise is injected per decision, so staying on the BC ridge is a product over decisions. Decisions per episode = `max_episode_steps / num_action_chunks`: official ManiSkill 80/5 = **16**, official LIBERO 240/5 = **48**, this SO101 task 640/5 = **128**. At a per-decision on-ridge probability of 0.97 that is 61% / 23% / **2%**. Copying a reference recipe's noise parameters onto an 8x longer horizon is not "aligning with the reference" — it is a materially different amount of injected noise per trajectory.
+
+**Do NOT use `runner.only_eval=True` as the probe.** It is not a "skip training" switch: `rlinf/config.py:826-830` sources the model spec from `cfg.rollout.model` instead of `cfg.actor.model`, and `env_worker.py:108` / `huggingface_worker.py:70` skip training-env creation. Three coupled changes, so a training config run under it exercises a different path (and typically dies on missing keys — which is the lucky outcome; a config with just enough keys would silently build a DIFFERENT model and hand back a number you would believe).
+
+## 1d. PPO from a BC start: the three knobs that decided it, and the one that was inert
+
+A campaign that failed seven times and then worked, on the same task and start.
+What separated the working run from the failing ones, in order of impact:
+
+**Updates per epoch is the decisive quantity — recalibrate it, do not inherit it.**
+`updates = num_envs × (max_episode_steps / num_action_chunks) × rollout_epoch / global_batch_size`.
+The published recipe's 12 updates/epoch destroyed the policy (61.7% → 7.0% by
+epoch 9); the same start at **1 update/epoch** climbed to 73.4%. Set
+`global_batch_size = samples per epoch` to force exactly one. The published
+value is calibrated on benchmarks with 16-48 noisy decisions per episode; a
+task with 64-128 is a different regime, and this is the parameter that
+expresses the difference.
+
+**Check whether you are discarding half the model's predicted horizon.** The
+policy was SFT-trained with `action_horizon: 10` but the eval/RL configs
+executed `num_action_chunks: 5` — copied from the reference examples and never
+derived. Executing all 10 raised the DETERMINISTIC score 55% → 66.4% (free, and
+it applies to deployment too) and halved noisy decisions per episode, which
+raised rollout success 1.0% → 4.7%. Whenever `num_action_chunks < action_horizon`,
+ask why.
+
+**Confirm a knob is live before sweeping it.** `noise_params` belongs to
+flow-SDE; with `noise_method: flow_noise` the magnitude comes from
+`noise_logvar_range` through a learned noise head (`openpi_action_model.py:47-58`).
+An 8x sweep of `noise_params` moved nothing — the correct knob then took rollout
+success 4.7% → 39.1%. This also retroactively voids the "halve the exploration
+noise" item of the old conservative bundle: it never did anything, and the runs
+it was credited with succeeded for other reasons.
+
+**Order of operations:** freeze-probe the rollout precondition (§1c) → fix the
+chunk/noise settings until `env/success_once` ≥ 5% → then and only then tune the
+update schedule. Fixing the precondition alone is not enough: a variant with 39%
+rollout success still collapsed at 12 updates/epoch.
 
 ## 2. Reward design
 
@@ -184,51 +240,6 @@ Two Phase-2 failures were ALREADY-documented Phase-1 lessons that were not consu
 
 - **Failure loop (user-mandated standing workflow): after EVERY failure — (1) distill the lesson INTO this skill immediately, (2) RE-LOAD the updated skill, (3) walk the relevant 4b gate with it before building the next stage.** Checklists that are only written at retrospectives and never read at build time do not prevent repeats (two Phase-1 lessons were repeated verbatim in Phase-2 because the doc wasn't consulted).
 
-## 7. Verification & reporting
-
-- **Gate seeds and verification seeds must be DISJOINT, and the number you report is the verification number.** Selecting the best checkpoint on seeds A,B and reporting its A,B score bakes in selection bias (measured: gate 83.2% vs fresh-seed 77-80%; and a fixed eval episode set read a 63% policy as 75%). Protocol: select on gate seeds → re-measure on ≥2 never-used seeds → report both, verification first.
-- **On spatial tasks report a PER-REGION breakdown, never just the mean** — a mean hides a dead corner (58% corner inside an "80%" policy; 0% band inside a "22%" one). Use spawn-restricted evals (sub-region sampling) or spawn-vs-outcome logging.
-- **Judge a run by its BEST checkpoint, never by its first two.** Early checkpoints are undertrained; on precision tasks the useful policy can appear anywhere in the schedule and the series oscillates violently. Direction verdicts must wait for the peak of the screened set.
-  > Evidence: v8 read 7.8% / 0.8% at steps 250/500 and was flagged DIRECTION-SUSPECT — then hit 54.7% at step_1000 and 61.7% at step_2500 (honest 56.7%). The premature flag would have killed the project's best run.
-- **A single checkpoint's score is a SAMPLE from a noisy process, not a property of the recipe.** SFT on sparse-coverage precision tasks oscillates wildly between checkpoints (5.5%→22.7%→12.5% at 1000-step spacing). Gate EVERY saved checkpoint, and before claiming a recipe-level conclusion from one number, ask what checkpoint-to-checkpoint variance is.
-- Claims require evidence: measurements for physics claims, full-frame reads for behavior claims, curves + video frames for training claims.
-- Any image you cite must be SENT to the user (reading it only puts it in your own context).
-- Eval videos in RLinf are often N×N env-grid montages — crop a single tile and zoom before judging behavior; the per-step reward burned into frames decodes distance.
-- Never promise "this won't happen again." Offer bounded damage (deadline checks, verdict points) and falsifiable criteria instead.
-- When a run plateaus: look at actual behavior (video frames) before theorizing.
-
----
-
-## Appendix A — SO101 + PI0.5 project specifics (current as of 2026-08-10)
-
-**TRUE task spec (user-confirmed / measured — supersedes all earlier "phases"):** red + blue 2.9cm cubes each independently uniform over the BROWN zone of the board (28.2×21.6cm; only anti-overlap constraint, no min separation); board 30.1×21.6cm with 1.9cm black band at −y (dataset frames; user's tape numbers set aside per "按第一个图片"); brown zone / tray / base share one centerline; base front to board near edge ~1.2cm ("紧贴"); tray 10.16×7.62×4.45cm (user-measured) flush at far edge; **success = cube in tray AND released AND 5 arm joints within 0.08 rad mean-abs of the measured home pose** (tolerance from the 87 real episodes: max deviation 0.076); home/reset pose = median of real first frames `[0.046,-0.880,1.013,0.586,-0.008,-0.931]` (folded, gripper near closed).
-
-- Env: `SO101GrabRedCube-v1` (`rlinf/envs/maniskill/tasks/so101_pick_place.py`), robot uid `so101` (widened-limit so100, `so101_agent.py`), `pd_joint_pos`, budget 320 @15Hz. Reward ladder: reach + close-bridge + grasp + lift + 2·transport, placed = 6.0+1.5·homing, success = 8 (hold-hover maxes 5.4 — anti-hack arithmetic in comments). Cameras: front nadir 640×480, f=755.2, eye [-0.520,-0.007,0.559]; wrist 640×480 on Fixed_Jaw (pose visually calibrated only — numerical calibration pending). Env-var tools: `SO101_LOG_DIST` (grasp diagnostics), `SO101_SPAWN_MODE=legacy` (old 6×8cm box), `SO101_SPAWN_FRAC="x0,x1,y0,y1"` (sub-region targeting), `SO101_SPAWN_LOG=<csv>` (spawn-vs-outcome), `SO101_COLLECT_DIR` (ManiskillEnv rollout recorder, flush-on-first-success npz).
-- **PENDING (user approval required per the every-parameter rule): control_freq 15→30Hz** (real fps=30; budget would go 320→640, samples 128×128=16384=8×2048), cube mass 24.4g→8g (user bound <10g), v4 demo regeneration at 640×480. The parameter approval table lives in the conversation of 2026-08-10.
-- Calibration (`so101_calib.py`): normalized↔radians, homed frame tick 2048 (do NOT subtract homing_offset), SIGN all +1, OFFSET=[0,0,0,+0.6,0,0], gripper map norm0→−1.0 rad / norm100→+0.5 rad, clip to widened URDF limits.
-- Integration: `rlinf/config.py::get_robot_control_mode`, `action_utils.prepare_actions_for_maniskill` (norm_to_rad), `maniskill_env._wrap_obs` (`so101_state_norm`, wrist_images). Preflight tool: `python -m toolkits.preflight_config` (§4b).
-- Demo generator (`scratchpad/gen_planner_demos.py`): raise-arm prefix from real home → planner grasp (micro-lift verify) → FK-grid transport (payload compensation, closed-loop refine) → release → homing. True-task planner ceiling: **70% overall (45/64); near-base band ~25%, one corner ~0/22 (likely 5-DoF-infeasible)**.
-- **Checkpoints that EXIST** (all others deleted in the 2026-08-09 disk purge): real-data SFT `so101_sft_openpi_pi05/global_step_8000`; subset-task best `so101_sft_pp6b/.../global_step_1000` (honest ~80% on the OLD 9%-area task, no-homing semantics — current warm start); `so101_sft_pp5/.../global_step_2000` (81.6% subset); true-task best `so101_sft_v3/.../global_step_3000` (**22.7%** gate=verify; bands 15.6/22.7/31.3; note SFT variance — neighbors read 5.5/12.5). v3b/v3c/v3d rounds: continued-SFT degradation + stats-poisoning + data-doubling-null results; ckpts deleted or obsolete.
-- Sim datasets: `so101-sim-demos-v3` (472 eps, 160×120 — obsolete once 640×480 regeneration lands as `so101-sim-demos-v4`); older pp/sim sets deleted. TrainConfigs `pi05_so101_v3` / `pi05_so101_v4` in `dataconfig/__init__.py` (`HF_LEROBOT_HOME=/data08/henryg/pai/data`).
-- Dataset facts: real set `henry-guo/so101-pick-place-v2` = 87 eps, **fps 30**, 640×480 front+wrist; LeRobot column `action` singular → `action_sequence_keys=("action",)`; openpi maybe_download takes local paths only; eval configs read `rollout.model`; absolute `--config-path` for hydra.
-- **CURRENT BEST (2026-08-12): `so101_sft_v8/so101_sft_openpi_pi05/checkpoints/global_step_2500` — 56.7% honest** (seeds 1313/1414: 57.8/55.5; 8 further seeds 57.0-65.6, mean 61.3) in the pp-era 6x8cm spawn box, at FULL fidelity (640x480, 30Hz, measured geometry, 8g cube, success = in-box AND arm-home). Same ckpt on the full brown zone: **9.4%** — a box-trained policy does NOT transfer outward. Datasets: `so101-sim-demos-v8` (247 planner demos, 0.44cm spacing), `so101-sim-demos-v9` (v8 planner demos + 477 policy rollouts, ~0.26cm). Configs `so101_sft_v8.yaml` / `so101_sft_v9.yaml`; pipelines `scratchpad/{gen_v8_legacy,v8_pipeline,v8_verify,v9_expert_iter}.sh`. Full command-level runbooks: `V8_COMMANDS.md` / `V8_COMMANDS_ZH.md` (repo root).
-- Open items: wrist camera never numerically calibrated (sim-vs-real board-mask IoU ~0; user specs say 106deg H-FOV native, sim has 86deg) — matters for sim2real, not for in-sim scores; spawn margin 2cm excludes 11% of real cube starts.
-- Standing user rules: EVERY parameter pre-approved with provenance; GPU launches confirmed (overnight grants explicit); failure loop = update skill → reload → walk §4b gate.
-
-## Appendix B — This machine (8×H200, IPv6)
-
-- **IPv6 everywhere; two in-tree fixes, do not revert**: bracketed IPv6 in `collective_group.py` tcp:// URL; dual-stack AF_INET6 port probe in `cluster.py::find_free_port` (IPv4-only probing published ports already taken on IPv6 → flaky `TCPStore recvValue failed` → silent first-rollout hangs; worth upstreaming).
-- Rendering on compute-only driver: exact-version driver libs symlinked into `.venv/nvidia_gl/` + private ICD; env vars `VK_ICD_FILENAMES`, `LD_LIBRARY_PATH`, `XDG_RUNTIME_DIR=/tmp/xdg-runtime`, `MUJOCO_GL=egl`. apt's libnvidia-gl is version-mismatched — never install it.
-- `RAY_local_fs_capacity_threshold=0.99` (host /tmp ~96% full), `HF_HUB_OFFLINE=1` (everything local), proxy `http://[fdbd:dc61:d:297::16]:8888` (lowercase vars + `/root/.wgetrc`).
-- Validated scale: **128 envs + global_batch 2048** (320 envs hangs). PID 1 is `sleep infinity` → zombies accumulate, harmless.
-- Isaac Lab is effectively unavailable here (needs full RTX graphics stack; this box has a compute-only driver).
-
-## Appendix C — Incident registry
-
-The 50-item symptom→root-cause→prevention table backing these principles lives in the project work report: `SO101_WORK_REPORT.md` (repo root), §2 and the per-phase tables. Consult it when something here needs the original context.
-
-- **This box: `/dev/shm` defaults to 64MB (container default) — remount to 16G before multi-worker runs** (`mount -o remount,size=16G /dev/shm`, root works here) and sweep stale `cuda.shm.*` between runs. Peak GPU memory for the true-task RL config (640×480 dual camera, 64 envs, micro_batch 32, no_shard) is ~90GB/card idle-to-rollout; micro_batch 128 at this resolution genuinely OOMs at 141GB.
-
 ## 6d. Pipeline handoff bugs waste GPU silently — three that actually happened
 
 Long overnight pipelines are chains of `stage A finishes -> stage B starts`. Every joint in that chain is a place where the GPUs can go idle for hours with nothing crashing and nothing logging an error. Real incidents (SO101, 2026-08-12/13), each costing 1.5-4.5 h of 8xH200 idle:
@@ -273,64 +284,22 @@ distribution before naming a root cause, and always run the A/B against a
 pre-registered acceptance threshold so a null result is a decision, not a
 debate.
 
-## 1c. The PPO precondition must be measured IN THE ROLLOUT DISTRIBUTION, not deterministically
+## 7. Verification & reporting
 
-§1 says PPO needs the start policy to "already succeed sometimes in the target environment". That sentence hid an ambiguity that cost a full run: **which success — the deterministic eval, or the noisy rollouts PPO actually learns from?** They can differ by 50+ points.
+- **Gate seeds and verification seeds must be DISJOINT, and the number you report is the verification number.** Selecting the best checkpoint on seeds A,B and reporting its A,B score bakes in selection bias (measured: gate 83.2% vs fresh-seed 77-80%; and a fixed eval episode set read a 63% policy as 75%). Protocol: select on gate seeds → re-measure on ≥2 never-used seeds → report both, verification first.
+- **On spatial tasks report a PER-REGION breakdown, never just the mean** — a mean hides a dead corner (58% corner inside an "80%" policy; 0% band inside a "22%" one). Use spawn-restricted evals (sub-region sampling) or spawn-vs-outcome logging.
+- **Judge a run by its BEST checkpoint, never by its first two.** Early checkpoints are undertrained; on precision tasks the useful policy can appear anywhere in the schedule and the series oscillates violently. Direction verdicts must wait for the peak of the screened set.
+  > Evidence: v8 read 7.8% / 0.8% at steps 250/500 and was flagged DIRECTION-SUSPECT — then hit 54.7% at step_1000 and 61.7% at step_2500 (honest 56.7%). The premature flag would have killed the project's best run.
+- **A single checkpoint's score is a SAMPLE from a noisy process, not a property of the recipe.** SFT on sparse-coverage precision tasks oscillates wildly between checkpoints (5.5%→22.7%→12.5% at 1000-step spacing). Gate EVERY saved checkpoint, and before claiming a recipe-level conclusion from one number, ask what checkpoint-to-checkpoint variance is.
+- Claims require evidence: measurements for physics claims, full-frame reads for behavior claims, curves + video frames for training claims.
+- Any image you cite must be SENT to the user (reading it only puts it in your own context).
+- Eval videos in RLinf are often N×N env-grid montages — crop a single tile and zoom before judging behavior; the per-step reward burned into frames decodes distance.
+- Never promise "this won't happen again." Offer bounded damage (deadline checks, verdict points) and falsifiable criteria instead.
+- When a run plateaus: look at actual behavior (video frames) before theorizing.
 
-**Measured on 2026-08-13 (freeze test, lr=1e-9, real training path):** the same checkpoint scored `eval/success_once` **0.539** (deterministic) and `env/success_once` **0.010** (under the official flow-noise `[0.16,0.12,200]`). PPO saw ~1% success in 24,576 samples/iteration, had almost no success signal to amplify, optimised the dense reward instead, and by step 9 (~108 updates) had destroyed the policy — the deterministic eval fell to 0.0 too.
+---
 
-**The threshold was already in this project's own logs**, unread until now (tensorboard `env/success_once`, first epochs):
-
-| run | noisy-rollout success at start | deterministic eval at start | outcome |
-|---|---|---|---|
-| pp4 | 5-9% | 36.7% | amplified to 75.0% |
-| v10 | 10-15% | 61.7% | amplified to 68.8% |
-| pp5 | ~20% | 31.2% | still collapsed (necessary, not sufficient) |
-| v11 | **1.0%** | 53.9% | destroyed by step 9 |
-| v6 | 0.5% | 0.0% | never left zero |
-
-**Rule: before launching PPO, measure `env/success_once` under the exact rollout noise you will train with. Below ~5% do not launch.** Cheapest probe: the freeze test (`actor.optim.lr=actor.optim.value_lr=1e-9`, `runner.val_check_interval=1`) — it exercises the REAL training path (same workers, env creation, model construction, weight sync) while leaving weights unchanged, and it reports both numbers in one epoch (~15 min).
-
-**Why long-horizon tasks are structurally harder here:** noise is injected per decision, so staying on the BC ridge is a product over decisions. Decisions per episode = `max_episode_steps / num_action_chunks`: official ManiSkill 80/5 = **16**, official LIBERO 240/5 = **48**, this SO101 task 640/5 = **128**. At a per-decision on-ridge probability of 0.97 that is 61% / 23% / **2%**. Copying a reference recipe's noise parameters onto an 8x longer horizon is not "aligning with the reference" — it is a materially different amount of injected noise per trajectory.
-
-**Do NOT use `runner.only_eval=True` as the probe.** It is not a "skip training" switch: `rlinf/config.py:826-830` sources the model spec from `cfg.rollout.model` instead of `cfg.actor.model`, and `env_worker.py:108` / `huggingface_worker.py:70` skip training-env creation. Three coupled changes, so a training config run under it exercises a different path (and typically dies on missing keys — which is the lucky outcome; a config with just enough keys would silently build a DIFFERENT model and hand back a number you would believe).
-
-## 1d. PPO from a BC start: the three knobs that decided it, and the one that was inert
-
-A campaign that failed seven times and then worked, on the same task and start.
-What separated the working run from the failing ones, in order of impact:
-
-**Updates per epoch is the decisive quantity — recalibrate it, do not inherit it.**
-`updates = num_envs × (max_episode_steps / num_action_chunks) × rollout_epoch / global_batch_size`.
-The published recipe's 12 updates/epoch destroyed the policy (61.7% → 7.0% by
-epoch 9); the same start at **1 update/epoch** climbed to 73.4%. Set
-`global_batch_size = samples per epoch` to force exactly one. The published
-value is calibrated on benchmarks with 16-48 noisy decisions per episode; a
-task with 64-128 is a different regime, and this is the parameter that
-expresses the difference.
-
-**Check whether you are discarding half the model's predicted horizon.** The
-policy was SFT-trained with `action_horizon: 10` but the eval/RL configs
-executed `num_action_chunks: 5` — copied from the reference examples and never
-derived. Executing all 10 raised the DETERMINISTIC score 55% → 66.4% (free, and
-it applies to deployment too) and halved noisy decisions per episode, which
-raised rollout success 1.0% → 4.7%. Whenever `num_action_chunks < action_horizon`,
-ask why.
-
-**Confirm a knob is live before sweeping it.** `noise_params` belongs to
-flow-SDE; with `noise_method: flow_noise` the magnitude comes from
-`noise_logvar_range` through a learned noise head (`openpi_action_model.py:47-58`).
-An 8x sweep of `noise_params` moved nothing — the correct knob then took rollout
-success 4.7% → 39.1%. This also retroactively voids the "halve the exploration
-noise" item of the old conservative bundle: it never did anything, and the runs
-it was credited with succeeded for other reasons.
-
-**Order of operations:** freeze-probe the rollout precondition (§1c) → fix the
-chunk/noise settings until `env/success_once` ≥ 5% → then and only then tune the
-update schedule. Fixing the precondition alone is not enough: a variant with 39%
-rollout success still collapsed at 12 updates/epoch.
-
-## 7. sim2real: measure the gap offline before the robot moves
+## 7b. sim2real: measure the gap offline before the robot moves
 
 A sim-trained policy has no right to be trusted on real observations, and you
 can find out for free. Feed recorded REAL observations (images + proprioception)
@@ -354,6 +323,39 @@ a 30-hour retrain would have bought nothing.
 **Render your training data and LOOK at it.** The wrist defect was invisible in
 code review and in every metric for weeks; it took one grid of frames sampled
 from actual training episodes. Do this once per camera when a new env is built.
+
+**What closed it: co-training, not more simulator fidelity.** Mixing the 87 real
+teleop episodes into the sim dataset and continuing SFT took the ratio 4.47 →
+**0.70** in ~7 h, while sim ring-1 success did not fall (57.8% → ~60%). Fixing
+the wrist camera properly would have cost a 30-hour retrain and, per the ablation
+above, bought little. **Order the sim2real interventions by measured contribution,
+and prefer the one that adds real data over the one that improves the simulator.**
+
+**Hold out real episodes or the number is not a number.** Round one upsampled all
+87 real episodes into training and then read the offline metric on episodes from
+that same set: 0.84, a training-set score that cannot authorise anything. Round
+two trained on 0–69 and held out 70–86; 0.70 on the held-out slice is the first
+figure that measures generalisation. This is §7's gate-vs-verification seed rule
+applied to sim2real data.
+
+**The channel that did not matter can start mattering.** Before co-training,
+dropping the wrist input changed nothing (4.47 → 4.59). After it, the same
+checkpoint scored 0.90 with both cameras and 1.58 with the front alone — the
+model now uses real wrist images. Re-run input ablations after any change to the
+training distribution; a conclusion about which inputs matter is only valid for
+the distribution it was measured on.
+
+**Deploying through the robot vendor's own stack beats a hand-written loop.**
+LeRobot's `async_inference` client keeps an action queue, re-requests at half a
+chunk and blends overlapping chunks, so it does not depend on a tight round-trip
+budget; a synchronous "execute the chunk, then ask for the next" loop does. Its
+server loads only LeRobot-layout checkpoints, but for PI0.5 the export is nearly
+free: RLinf's openpi backend IS the LeRobot pi05 module tree (measured: all 813
+tensors match by name and shape, no reshaping). What needs care in such an export
+is never the weights — it is the normalisation stats (the template's belong to
+ITS dataset) and the action-chunk length. **Verify an export by re-running the
+metric that authorised deployment, not by comparing key sets**: identical keys
+with the wrong stats is a silently different policy.
 
 ## 8. Gate on both axes when an intervention trades one metric against another
 
@@ -410,3 +412,129 @@ Two lessons:
 Re-measuring on the correct horizon moved the gate from 0.79 to **0.70** — it
 still passed, so this one was caught for free. It would not have been free if it
 had gone the other way, and nothing in the run would have flagged it.
+
+## 9. Delivering the work: the documents and tools are artifacts too, and they rot the same way
+
+Training discipline (§1–§8) is about not wasting GPU. This section is about the other half of the project's cost, which went unmeasured until a user review forced it: **the reproduction document, the scripts directory and the checked-in configs are deliverables, and every failure mode above has an exact analogue in them.** A document that cannot be executed is the same class of defect as a run that cannot be reproduced — it just fails later, on someone else.
+
+### 9a. Reading a document is not reviewing it. Write the check.
+
+Every defect found in the SO101 reproduction doc survived multiple careful re-readings by its author and was found either by the user or by a five-line script. That is not carelessness; it is what proofreading is worth on structured content.
+
+Mechanise the classes, not the instances:
+
+| Check | What it catches | Cost |
+|---|---|---|
+| `bash -n` every command block | Commands that were never run. **A block that cannot parse cannot have been executed** | 20 lines |
+| Resolve every name against its definition | Registry entries vs configs vs result dirs vs datasets — four categories that look identical and drift apart | 60 lines |
+| Two-way check of any summary table | Entries used but unlisted, and entries listed but unused | 10 lines |
+| Every script the doc tells you to run must be in the doc's own tool index | Tools added mid-document with nowhere to look them up | 8 lines |
+| Every referenced path/script/config exists on disk | Renamed or deleted artifacts | 15 lines |
+
+> Evidence: an audit of "does every step have command / parameters / rationale / inputs / outputs / acceptance" reported **29 of 30 steps incomplete** — while the author had been fixing them one at a time as the user pointed at each. `tools_so101_session/check_doc_consistency.py` is the implementation; it caught a missing `--repo-id` on a documented command, a table claiming six registry entries where seven were used, and two placeholder-broken command blocks.
+
+**Corollary — a count you cannot enumerate is not a check.** "The pipeline uses 7 registry entries" hides an error; printing all seven with their datasets does not. Any tool that reports a number should print the members.
+
+### 9b. Fix the class, not the instance the user pointed at
+
+The repeated pattern of this project's document phase: user points at defect X → author fixes X → user points at X′ of the same class. Each fix was correct and each left the class intact.
+
+**When a defect is reported, first ask what class it belongs to and enumerate the whole class before fixing anything.** The enumeration is usually a one-line grep or a short script, and it converts an open-ended stream of user-found defects into one bounded pass.
+
+> Evidence: "D3 has no command" was true of C3, D3, E4 and E5 as well; "so101_smoke.py is not in the tool list" was true of `check_doc_consistency.py` too; "why is v4 still in the doc" applied to 89 prose occurrences, not the one line quoted.
+
+### 9c. A portability refactor can convert wrong-but-working into broken
+
+Making a hard-coded path overridable is a safe-looking change. It is only safe if you enumerate what the path was being used FOR.
+
+> Evidence: 43 shipped scripts wrote logs to a hard-coded session scratchpad. Making `$SCRATCH` overridable fixed that — and broke 14 of them, because they ALSO invoked their Python helpers out of that same directory (`python "$SCRATCH/gen_planner_demos.py"`), which had happened to work when the helpers lived beside the logs. The documented stage-E2 command would have died on the first line. Rule: after a mechanical refactor, grep every use of the symbol you changed, not just the ones that motivated the change.
+
+### 9d. Mark what is dead, or half your directory is a trap
+
+A tools directory that accumulates a project's history contains, by the end, roughly as many abandoned approaches as working ones. Undifferentiated, it invites someone to reproduce a dead end.
+
+Stamp every script with a machine-readable status line as its **first line**, so it is visible on open and greppable in bulk. Five tiers proved sufficient: `ACTIVE` (the current pipeline runs it), `TOOL` (stage-agnostic), `EVIDENCE` (a one-off control a documented claim rests on), `SUPERSEDED` (earlier task spec), `REFUTED` (tried, does not work). **Generate the index from the stamps** so it cannot drift from the files.
+
+The `REFUTED` notes carry the real value — say what failed and by how much, because that is the part a reader cannot reconstruct: pure self-distillation lost 53 points; the noise sweep moved nothing because the knob is inert for `flow_noise`; `only_eval` is not a clean probe.
+
+> Evidence: 87 scripts classified — 26 ACTIVE, 20 TOOL, 7 EVIDENCE, 26 SUPERSEDED, 8 REFUTED. Nearly half were traps.
+
+### 9e. Tools rot silently; a tool nobody runs is worse than no tool
+
+`so101_smoke.py` asserted a task id (`SO101PickCube-v1`) that had been renamed long before. Anyone running it hit a failure at step 1 that had nothing to do with their environment. The tool had been written, documented and never re-run.
+
+**Any check the docs tell a reader to run must itself be run whenever the thing it checks changes** — ideally by making it part of the same pass. Corollary: when writing a document that quotes a tool's output, run the tool and paste the real output; quoted-from-memory output is how the rot starts.
+
+### 9f. Documented commands must be executed at least once, verbatim
+
+> Evidence: the documented `calculate_norm_stats` invocation omitted `--repo-id`, which the tool requires — in two documents. The install command named `--env maniskill`, which is not in `SUPPORTED_ENVS` (it is `maniskill_libero`), so the very first command of the reproduction exited immediately. Both had been in the documents for days and read past repeatedly.
+
+Placeholders are allowed but must stay shell-valid: `H200_HOST="user@10.0.0.5"`, not `<user>@<host>`. Angle brackets break the parse, which both defeats `bash -n` and guarantees the block was never tested.
+
+### 9g. Environment setup is part of the pipeline, and it is where reproduction actually fails
+
+A reproduction document that starts with "clone, checkout, install" and moves on has skipped the part most likely to fail, because install scripts cover the framework and never the project-specific pieces.
+
+For this project the install script produced a working RLinf and **three separate blockers remained**, each failing in a way that does not point at its cause:
+
+| Missing piece | How it fails |
+|---|---|
+| Project-specific robot asset (widened-limit URDF), gitignored and not in the asset download | The motion planner declares the target unreachable; the stage-B probe scores 0/12 with no error |
+| Vulkan/EGL libraries for a compute-only driver | `ErrorIncompatibleDriver` at first render |
+| `/dev/shm` at the container default 64 MB | NCCL failure that **looks like GPU OOM** (§6) |
+
+**End the install section with one acceptance command that exercises all of it** and say which failure points at which step. Assets that live under a `.gitignore`d path need their reconstruction recipe written down — including, for a modified upstream file, the exact edits and an assertion that fails loudly if upstream changes.
+
+### 9h. One source of truth per fact, in documents as in configs
+
+§4a's "a parameter has ONE source of truth" applies verbatim to documentation. Two tables listing overlapping information will diverge, and the reader who spots the divergence loses trust in both.
+
+> Evidence: the doc carried a registry-entry table (§1.4) and an all-artifacts table (§1.5). An entry added to one was missed in the other; the user found it and asked, reasonably, "如何相信你？" The fix was deleting one table, not reconciling them.
+
+**In prose, name artifacts by function** ("stage B's best checkpoint", "the narrow-box dataset") and let literal names live only in the commands and in one table. Serial numbers like `v4`/`v8`/`v13` carry no meaning to a reader and are load-bearing only on disk.
+
+### 9i. Delivery has more surfaces than the repository
+
+The work existed in four places — repo, delivery directory, pushed branch, published render — and only three were updated by habit. The one that required remembering was the one that went stale, and the user noticed before I did.
+
+**Enumerate the delivery surfaces once, then make the update mechanical.** Any surface whose update depends on remembering will eventually be stale.
+
+## Appendix A — SO101 + PI0.5 project specifics (current as of 2026-08-17)
+
+**Status: the pipeline is finished through the offline sim2real gate and is waiting on a real-robot trial.** Stages A–G reproduce from `SO101_PIPELINE_ZH.md` (repo root); the delivery set is 64 files, listed in `henry-so101/repro_files.txt`.
+
+| Stage | What it does | Result (honest seeds) |
+|---|---|---|
+| A | SFT on 87 real episodes | 0.0% in sim — a warm start, not a policy |
+| B | 420 planner demos, full board; **freezes the lineage's norm_stats** | 12.5% full board |
+| C | Spawn narrowed to 48 cm² (density law) | 56.7% in-box |
+| D | Expert iteration (policy successes + planner demos) | 76.6% in-box, 19.5% full board |
+| E | Ring-1 expansion to 96 cm² | 55.1% ring-1 — **negative result**, kept as PPO's start |
+| F | PPO, 1 update/epoch | **57.8%** ring-1 (start 52.0%, **+5.9**) |
+| G | Sim+real co-training, held-out split | offline real ratio **0.70** (from 4.47), sim ~60% |
+
+- **Deliverable:** `results/so101_sft_v15/so101_sft_openpi_pi05/checkpoints/global_step_1000`, plus its LeRobot-format export at `results/so101_v15_lerobot` for the deployment stack. Remaining gate before hardware: the export equivalence test (§7b).
+- Env: `SO101GrabRedCube-v1` (`rlinf/envs/maniskill/tasks/so101_pick_place.py`), robot uid `so101` (widened-limit so100, `so101_agent.py`), `pd_joint_pos`, budget **640 @30Hz**, cameras 640×480 front + wrist. Env-var tools: `SO101_LOG_DIST`, `SO101_SPAWN_MODE=legacy` (6×8cm box), `SO101_SPAWN_FRAC="x0,x1,y0,y1"` (ring 1 = `0.4294,0.9115,0.5142,0.9817`), `SO101_SPAWN_LOG`, `SO101_COLLECT_DIR` (rollout recorder).
+- **TRUE task spec (user-confirmed / measured — the binding spec):** red + blue 2.9 cm cubes each independently uniform over the BROWN zone (28.2×21.6 cm; anti-overlap only, no min separation); board 30.1×21.6 cm with a 1.9 cm black band at −y; brown zone / tray / base share one centreline; base front to board near edge ~1.2 cm; tray 10.16×7.62×4.45 cm flush at the far edge; **success = cube in tray AND released AND 5 arm joints within 0.08 rad mean-abs of the measured home pose** (tolerance derived from the 87 real episodes, max deviation 0.076); home/reset pose = median of real first frames `[0.046,-0.880,1.013,0.586,-0.008,-0.931]` (folded, gripper near closed). Cube mass 8 g (user bound <10 g); ManiSkill's default density would give 24.4 g.
+- Integration points (where a new robot plugs in): `rlinf/config.py::get_robot_control_mode`, `action_utils.prepare_actions_for_maniskill` (norm→rad), `maniskill_env._wrap_obs` (`so101_state_norm`, `wrist_images`), task auto-registration under `rlinf/envs/maniskill/tasks/`.
+- Demo generator (`tools_so101_session/gen_planner_demos.py`): raise-arm prefix from the real home → planner grasp (with micro-lift verification) → FK-grid transport (payload-offset compensation, closed-loop refine) → release → homing. **True-task planner ceiling ≈ 70% overall**; the near-base band ~25% and one corner ~0/22 (likely 5-DoF-infeasible) — the BC ceiling cannot exceed this.
+- Calibration (`so101_calib.py`): normalized↔radians, homed frame tick 2048 (do NOT subtract homing_offset), SIGN all +1, OFFSET=[0,0,0,+0.6,0,0], gripper map norm0→−1.0 rad / norm100→+0.5 rad, clip to widened URDF limits (3 limits widened vs upstream SO100: shoulder_lift upper 2.48, elbow_flex lower −2.38, wrist_flex lower −3.01 — the sim arm cannot otherwise reach the tray).
+- **Lineage:** every stage warm-starts from the previous one, so all share `assets/pi05_so101_v4/so101-sim-demos-v4/norm_stats.json`. Verified byte-identical across all seven training outputs; `assets/` contains no stats directory for v8/v9/v10/v14/v15 precisely because they never recomputed.
+- Dataset facts: real set `henry-guo/so101-pick-place-v2` = 87 eps, fps 30, 640×480 front+wrist, **LeRobot v3.0 layout** (episodes concatenated into shared mp4s, per-camera frame offsets differ); materialised on this box as `so101-pick-place-v1-trimmed`. Column `action` singular → `action_sequence_keys=("action",)`.
+- Two independent environments: the RLinf `.venv` (py3.11, openpi, lerobot 0.1.0 with no `async_inference`) and a lerobot conda env (py3.12, current lerobot, no openpi). Deployment needs the second; training the first.
+- Known limits carried into deployment: trained only on ring 1 (96 cm²; full board 14.8%); 2 cm spawn margin excludes ~11% of real cube starts; the sim wrist camera still points at the robot body, so the two domains carry asymmetric information; physics parameters beyond mass are declared defaults.
+- Standing user rules: EVERY parameter pre-approved with provenance; GPU launches confirmed (overnight grants explicit); failure loop = update skill → reload → walk §4b gate.
+
+## Appendix B — This machine (8×H200, IPv6)
+
+- **IPv6 everywhere; two in-tree fixes, do not revert**: bracketed IPv6 in `collective_group.py` tcp:// URL; dual-stack AF_INET6 port probe in `cluster.py::find_free_port` (IPv4-only probing published ports already taken on IPv6 → flaky `TCPStore recvValue failed` → silent first-rollout hangs; worth upstreaming).
+- Rendering on compute-only driver: exact-version driver libs symlinked into `.venv/nvidia_gl/` + private ICD; env vars `VK_ICD_FILENAMES`, `LD_LIBRARY_PATH`, `XDG_RUNTIME_DIR=/tmp/xdg-runtime`, `MUJOCO_GL=egl`. apt's libnvidia-gl is version-mismatched — never install it.
+- `RAY_local_fs_capacity_threshold=0.99` (host /tmp ~96% full), `HF_HUB_OFFLINE=1` (everything local), proxy `http://[fdbd:dc61:d:297::16]:8888` (lowercase vars + `/root/.wgetrc`).
+- Validated scale: **128 envs + global_batch 2048** (320 envs hangs). PID 1 is `sleep infinity` → zombies accumulate, harmless.
+- Isaac Lab is effectively unavailable here (needs full RTX graphics stack; this box has a compute-only driver).
+
+## Appendix C — Incident registry
+
+The 50-item symptom→root-cause→prevention table backing these principles lives in the project work report: `SO101_WORK_REPORT.md` (repo root), §2 and the per-phase tables. Consult it when something here needs the original context.
+
+- **This box: `/dev/shm` defaults to 64MB (container default) — remount to 16G before multi-worker runs** (`mount -o remount,size=16G /dev/shm`, root works here) and sweep stale `cuda.shm.*` between runs. Peak GPU memory for the true-task RL config (640×480 dual camera, 64 envs, micro_batch 32, no_shard) is ~90GB/card idle-to-rollout; micro_batch 128 at this resolution genuinely OOMs at 141GB.
