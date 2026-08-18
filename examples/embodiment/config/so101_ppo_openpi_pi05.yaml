@@ -1,15 +1,31 @@
 # SO101 pick-and-place PPO on ManiSkill with an OpenPI PI0.5 policy.
 #
-# Hyperparameters follow the pi-RL official recipe (as in
-# libero_spatial_ppo_openpi_pi05.yaml). Task-structural deviations are marked
-# [TASK]:
-#   [TASK] episode budget 640 (30 Hz task; the official 240 was for LIBERO)
-#   [TASK] ignore_terminations=True -- success is hold-style, and the reward
-#          ladder in so101_pick_place.py is arithmetically built on success
-#          paying every step. Do not set this to False without revisiting it.
-#   [TASK] rollout arithmetic preserves the official invariant of 24,576 fresh
-#          samples per iteration = 12 minibatches of 2048:
-#          64 envs x (640/5 = 128 chunks) x rollout_epoch 3 = 24,576
+# Three parameters below depart from the pi-RL official recipe. Each was A/B'd
+# on this task; the official values are a KNOWN-FAILING combination here
+# (deterministic eval collapsed to ~0 by step 9), so do not "restore" them.
+#
+#   num_action_chunks: 10 (not 5)
+#     The checkpoint is trained with action_horizon 10. Executing only the first
+#     5 predictions throws half of them away and re-plans twice as often.
+#     Deterministic eval alone gains ~11 points from this, before any RL.
+#
+#   openpi.noise_logvar_range: [0.02, 0.04] (not [0.08, 0.16])
+#     This is the parameter flow_noise actually reads. noise_params below is
+#     dead for noise_method: flow_noise -- it only feeds flow_sde.
+#
+#   one update per epoch, i.e. global_batch_size == samples per epoch
+#     samples = num_envs x (max_episode_steps / num_action_chunks) x rollout_epoch
+#             = 64 x (640 / 10) x 1 = 4096
+#     The official 12 updates/epoch collapses this task: same start, same noise,
+#     same chunk length, 12 updates went 61.7% -> 35.9% (step 4) -> 7.0%
+#     (step 9). This task takes 64 noisy decisions per episode against the
+#     official ManiSkill benchmark's 16, on a much narrower BC ridge.
+#
+# Before a long run, probe under the ROLLOUT distribution (not deterministic
+# eval) with lr=1e-9: env/success_once should be >= 5%. Historically, runs that
+# amplified started at 5-15% and runs that never took off started at 0.5-1.0%.
+# It is necessary but not sufficient -- a 39% variant still collapsed under the
+# wrong update count.
 defaults:
   - env/maniskill_so101_pick_place@env.train
   - env/maniskill_so101_pick_place@env.eval
@@ -73,7 +89,7 @@ algorithm:
 env:
   group_name: "EnvGroup"
   train:
-    rollout_epoch: 3
+    rollout_epoch: 1
     total_num_envs: 64
     auto_reset: True
     ignore_terminations: True  # [TASK] see header
@@ -112,13 +128,13 @@ actor:
   # (~25x the activations). Pure gradient-accumulation granularity: global_batch
   # is unchanged and the loss is scaled by 1/grad_accum, so the math is identical.
   micro_batch_size: 32
-  global_batch_size: 2048
+  global_batch_size: 4096  # == samples/epoch -> exactly 1 update
   seed: 42
   enable_offload: False
   model:
     model_path: "/path/to/model/so101_sft_openpi_pi05" # SO101 PI0.5 SFT checkpoint
     model_type: "openpi"
-    num_action_chunks: 5   # chunk actions the env executes per policy call
+    num_action_chunks: 10  # == the SFT action_horizon; see header
     num_steps: 4           # [TASK] flow_noise pairing (ManiSkill official)
     add_value_head: True
     action_dim: 6          # SO101: 5 arm joints + gripper
@@ -129,14 +145,16 @@ actor:
       num_images_in_input: 2   # front (3rd_view_camera) + wrist camera
       noise_method: "flow_noise"
       action_horizon: 10       # must match the SFT chunk size (H)
-      noise_params: [0.16, 0.12, 200]
+      # flow_noise reads noise_logvar_range; noise_params only feeds flow_sde.
+      noise_logvar_range: [0.02, 0.04]
+      noise_params: [0.16, 0.12, 200]  # unused while noise_method is flow_noise
       joint_logprob: True      # False for flow_sde, True for flow_noise
     openpi_data:
       # Must be the stats the SFT checkpoint was trained with.
       norm_stats_path: "/path/to/assets/so101/norm_stats.json"
 
   optim:
-    lr: 5.0e-6
+    lr: 2.0e-6      # lowered from the official 5e-6 to pair with 1 update/epoch
     value_lr: 1.0e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
