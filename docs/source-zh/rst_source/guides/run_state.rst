@@ -10,7 +10,7 @@ RLinf 现有的 logger（TensorBoard、wandb、SwanLab）属于**数据面**：�
 .. note::
 
    控制面由训练 driver 写入，当前为 ``schema_version: 2``。
-   它不替代任何 metric backend —— 后者见 :doc:`日志 <../logger>`。
+   它不替代任何 metric backend —— 后者见 :doc:`日志 <logger>`。
 
 落盘位置
 --------
