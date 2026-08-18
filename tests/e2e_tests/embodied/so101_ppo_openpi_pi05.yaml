@@ -95,7 +95,7 @@ rollout:
   enable_offload: False
   pipeline_stage_num: 1
   model:
-    model_path: "/workspace/models/henry-pi05-sft-openpi" # SO101 PI0.5 SFT checkpoint
+    model_path: "/workspace/dataset/RLinf-Pi05-SO101-ManiSkill-SFT" # SO101 PI0.5 SFT checkpoint
     precision: ${actor.model.precision}
 
 actor:
@@ -109,7 +109,7 @@ actor:
   seed: 42
   enable_offload: False
   model:
-    model_path: "/workspace/models/henry-pi05-sft-openpi" # SO101 PI0.5 SFT checkpoint
+    model_path: "/workspace/dataset/RLinf-Pi05-SO101-ManiSkill-SFT" # SO101 PI0.5 SFT checkpoint
     model_type: "openpi"
     num_action_chunks: 10  # == the SFT action_horizon; see header
     num_steps: 4           # [TASK] flow_noise pairing (ManiSkill official)
@@ -128,7 +128,7 @@ actor:
       joint_logprob: True      # False for flow_sde, True for flow_noise
     openpi_data:
       # Must be the stats the SFT checkpoint was trained with.
-      norm_stats_path: "/workspace/models/henry-pi05-sft-openpi/RLinf/LeIsaac-SO101-LiftCube-Data/norm_stats.json"
+      norm_stats_path: "/workspace/dataset/RLinf-Pi05-SO101-ManiSkill-SFT/norm_stats.json"
 
   optim:
     lr: 2.0e-6      # lowered from the official 5e-6 to pair with 1 update/epoch
