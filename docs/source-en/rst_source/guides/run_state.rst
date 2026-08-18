@@ -11,7 +11,7 @@ facts you need to answer "is my job still alive, and how far along is it?"
 .. note::
 
    The control plane is written by the training driver as of ``schema_version: 2``.
-   Nothing here replaces the metric backends — see :doc:`Logging <../logger>`
+   Nothing here replaces the metric backends — see :doc:`Logging <logger>`
    for those.
 
 Where it lives

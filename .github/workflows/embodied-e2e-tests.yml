@@ -765,6 +765,31 @@ jobs:
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openpi05_pipeline
 
+      - name: SO101 unit tests
+        timeout-minutes: 10
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          pytest tests/unit_tests/test_so101_maniskill.py -q
+
+      - name: SO101 simulator smoke test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+          export MUJOCO_GL=egl
+          source .venv/bin/activate
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          python -m toolkits.so101_smoke
+
+      - name: SO101 PPO Pi05 training pipeline test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          bash tests/e2e_tests/embodied/run.sh so101_ppo_openpi_pi05
+
       - name: Libero-Spatial PPO test
         timeout-minutes: 20
         run: |

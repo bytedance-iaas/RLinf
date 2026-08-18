@@ -180,14 +180,34 @@ class ManiskillEnv(gym.Env):
                 }
 
         # Default
-        obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(
+        sensor_data = raw_obs["sensor_data"]
+        obs_image = sensor_data["3rd_view_camera"]["rgb"].to(
             torch.uint8
         )  # [B, H, W, C]
+        # Optional wrist view: tasks that mount a "wrist_camera" sensor expose a
+        # second image. Tasks without one report None, which
+        # EmbodiedOutput.prepare_observations already treats the same as an absent
+        # key -- so single-camera tasks keep their previous behavior exactly.
+        wrist_image = (
+            sensor_data["wrist_camera"]["rgb"].to(torch.uint8)
+            if "wrist_camera" in sensor_data
+            else None
+        )
         proprioception: torch.Tensor = self.env.unwrapped.agent.robot.get_qpos().to(
             obs_image.device, dtype=torch.float32
         )
+        # ManiSkill reports joint positions in radians; the SO101 LeRobot dataset
+        # records them in LeRobot NORMALIZED units, so convert the proprioceptive
+        # state to match the policy's normalization stats. Enable via the env cfg
+        # key ``so101_state_norm: True``. Stays on the GPU -- this runs once per
+        # env per step.
+        if getattr(self.cfg, "so101_state_norm", False):
+            from rlinf.envs.maniskill.so101_calib import rad_to_norm_torch
+
+            proprioception = rad_to_norm_torch(proprioception)
         return {
             "main_images": obs_image,
+            "wrist_images": wrist_image,
             "states": proprioception,
             "task_descriptions": self.instruction,
         }
