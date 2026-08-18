@@ -196,6 +196,15 @@ class ManiskillEnv(gym.Env):
         proprioception: torch.Tensor = self.env.unwrapped.agent.robot.get_qpos().to(
             obs_image.device, dtype=torch.float32
         )
+        # ManiSkill reports joint positions in radians; the SO101 LeRobot dataset
+        # records them in LeRobot NORMALIZED units, so convert the proprioceptive
+        # state to match the policy's normalization stats. Enable via the env cfg
+        # key ``so101_state_norm: True``. Stays on the GPU -- this runs once per
+        # env per step.
+        if getattr(self.cfg, "so101_state_norm", False):
+            from rlinf.envs.maniskill.so101_calib import rad_to_norm_torch
+
+            proprioception = rad_to_norm_torch(proprioception)
         return {
             "main_images": obs_image,
             "wrist_images": wrist_image,
