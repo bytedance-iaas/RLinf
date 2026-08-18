@@ -1,5 +1,7 @@
 #!/bin/bash
 # STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 v3 第二轮
+# NOTE: 仍引用 $SCRATCH/convert_v3_demos.py —— 那个转换器属于早期任务规格，没有随本仓库保留。
+#       本脚本已归类 SUPERSEDED，跑不起来是预期的；主线的对应步骤见 SO101_PIPELINE_ZH.md。
 # Overnight round 2: S1b more stratified demos (25/cell, extra 25 on weak cells)
 # -> S2b rebuild dataset (all v3_demos_cell* incl. round 1) + norm_stats
 # -> S3b SFT round 2 (from v3 step_3000) -> S4b gate + bands.
@@ -30,7 +32,7 @@ worker(){
     local FRAC=${SPEC%%;*}; local REST=${SPEC#*;}; local SEED=${REST%%;*}; local NUM=${REST##*;}
     local TAG=B$(echo "$FRAC" | tr ',.' '_-')
     rm -rf /data08/henryg/pai/data/v3_demos_cell$TAG
-    SO101_SPAWN_FRAC=$FRAC timeout 7200 .venv/bin/python "$SCRATCH/gen_planner_demos.py" \
+    SO101_SPAWN_FRAC=$FRAC timeout 7200 .venv/bin/python tools_so101_session/gen_planner_demos.py \
       --num $NUM --seed0 $SEED --out /data08/henryg/pai/data/v3_demos_cell$TAG \
       > "$SCRATCH/v3b_gen_${TAG}.out" 2>&1
     local N=$(grep -oE 'TOTAL success [0-9]+' "$SCRATCH/v3b_gen_${TAG}.out" | grep -oE '[0-9]+$' || echo 0)

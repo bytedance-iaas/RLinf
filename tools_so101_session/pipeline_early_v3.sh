@@ -1,5 +1,7 @@
 #!/bin/bash
 # STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 v3 时代流水线，被阶段 B 取代
+# NOTE: 仍引用 $SCRATCH/convert_v3_demos.py —— 那个转换器属于早期任务规格，没有随本仓库保留。
+#       本脚本已归类 SUPERSEDED，跑不起来是预期的；主线的对应步骤见 SO101_PIPELINE_ZH.md。
 # OVERNIGHT true-task pipeline (user pre-approved incl. GPU):
 #  S1 stratified planner demos (16 cells, 4 parallel CPU workers)
 #  S2 convert -> so101-sim-demos-v3 + norm_stats
@@ -37,7 +39,7 @@ worker(){ # $1 worker-id, cells passed as remaining args "x0,x1,y0,y1;seed"
     local FRAC=${SPEC%%;*}; local SEED=${SPEC##*;}
     local TAG=$(echo "$FRAC" | tr ',.' '_-')
     rm -rf /data08/henryg/pai/data/v3_demos_cell_$TAG
-    SO101_SPAWN_FRAC=$FRAC timeout 4500 .venv/bin/python "$SCRATCH/gen_planner_demos.py" \
+    SO101_SPAWN_FRAC=$FRAC timeout 4500 .venv/bin/python tools_so101_session/gen_planner_demos.py \
       --num 22 --seed0 $SEED --out /data08/henryg/pai/data/v3_demos_cell_$TAG \
       > "$SCRATCH/v3_gen_${TAG}.out" 2>&1
     local N=$(grep -oE 'TOTAL success [0-9]+' "$SCRATCH/v3_gen_${TAG}.out" | grep -oE '[0-9]+$' || echo 0)

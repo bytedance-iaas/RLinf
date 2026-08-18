@@ -90,7 +90,7 @@ log "S3 conversion starting (append-to-v9-copy; no re-encode of the 672 base epi
 
 FREE=$(df --output=avail -BG /data08 | tail -1 | tr -dc '0-9')
 [ "$FREE" -lt 200 ] && { log "S3 ABORT: disk <200G"; exit 3; }
-timeout 21600 .venv/bin/python "$SCRATCH/convert_append_region.py" > "$SCRATCH/convert_v10.out" 2>&1
+timeout 21600 .venv/bin/python tools_so101_session/convert_append_region.py > "$SCRATCH/convert_v10.out" 2>&1
 grep -qa '^DONE:' "$SCRATCH/convert_v10.out" || { log "S3 FAIL: conversion"; tail -3 "$SCRATCH/convert_v10.out" >> "$STATUS"; exit 1; }
 log "S3 $(grep -a '^DONE:' "$SCRATCH/convert_v10.out" | tail -1)"
 NEP=$(grep -oaE 'DONE: [0-9]+' "$SCRATCH/convert_v10.out" | grep -oE '[0-9]+' | tail -1)

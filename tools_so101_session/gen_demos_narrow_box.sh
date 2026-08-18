@@ -26,7 +26,7 @@ log "v8 legacy-box generation started (pid $$) — 8 workers x 32 attempts"
 worker(){
   local W=$1 SEED=$2
   rm -rf /data08/henryg/pai/data/v8_demos_w$W
-  timeout 14400 .venv/bin/python "$SCRATCH/gen_planner_demos.py" \
+  timeout 14400 .venv/bin/python tools_so101_session/gen_planner_demos.py \
     --num 32 --seed0 $SEED --out /data08/henryg/pai/data/v8_demos_w$W \
     > "$SCRATCH/v8_gen_w$W.out" 2>&1
   local N=$(grep -oE 'TOTAL success [0-9]+' "$SCRATCH/v8_gen_w$W.out" | grep -oE '[0-9]+$' || echo 0)

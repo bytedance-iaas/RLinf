@@ -57,7 +57,7 @@ until grep -q 'ready for conversion' "$STATUS" 2>/dev/null; do
 done
 
 # ---- S1: convert ----
-timeout 7200 .venv/bin/python "$SCRATCH/convert_narrow_box.py" > "$SCRATCH/convert_v8.out" 2>&1
+timeout 7200 .venv/bin/python tools_so101_session/convert_narrow_box.py > "$SCRATCH/convert_v8.out" 2>&1
 grep -q 'DONE:' "$SCRATCH/convert_v8.out" || { log "S1 FAIL: conversion"; tail -3 "$SCRATCH/convert_v8.out" >> "$STATUS"; exit 1; }
 log "S1 $(grep -E '^DONE|^length' "$SCRATCH/convert_v8.out" | tr '\n' ' ')"
 NEP=$(grep -oE 'DONE: [0-9]+' "$SCRATCH/convert_v8.out" | grep -oE '[0-9]+')

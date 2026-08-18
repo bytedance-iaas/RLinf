@@ -1064,7 +1064,7 @@ SCRATCH=/tmp/so101_runs bash tools_so101_session/gen_demos_annulus.sh
 
 | 项 | 值 | 为什么 |
 |---|---|---|
-| `SCRATCH` | 任意可写目录 | 脚本把日志和状态写进 `$SCRATCH`（默认 `/tmp/so101_runs`）；**它本来硬编码的是写作时的会话目录** |
+| `SCRATCH` | 任意可写目录 | **只是日志目录**：脚本把 stdout、`*.status` 和中间统计写在这里，不放任何代码或数据。不设就是 `/tmp/so101_runs`，会自动创建。这些 `.sh` 原本硬编码的是写作时的会话临时目录，换机器就会在第一次重定向时失败，所以改成了可覆盖 |
 | 输出目录 | `$DATA/v10_demos_w*` | `convert_append_region.py:67` 按此 glob 找 |
 | 依赖 | 等 E1 打出完成标记后才开工 | 脚本内部会等 `collect_policy_successes.sh` 结束 |
 

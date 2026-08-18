@@ -87,7 +87,7 @@ N=$(ls $COLLECT/*.npz 2>/dev/null | wc -l)
 log "S1 DONE: $N successful policy rollouts"
 
 # ---- S2: convert (planner + policy mixed) ----
-timeout 10800 .venv/bin/python "$SCRATCH/convert_expert_iter.py" > "$SCRATCH/convert_v9.out" 2>&1
+timeout 10800 .venv/bin/python tools_so101_session/convert_expert_iter.py > "$SCRATCH/convert_v9.out" 2>&1
 grep -q 'DONE:' "$SCRATCH/convert_v9.out" || { log "S2 FAIL: conversion"; tail -3 "$SCRATCH/convert_v9.out" >> "$STATUS"; exit 1; }
 log "S2 $(grep '^DONE:' "$SCRATCH/convert_v9.out")"
 NEP=$(grep -oE 'DONE: [0-9]+' "$SCRATCH/convert_v9.out" | grep -oE '[0-9]+')

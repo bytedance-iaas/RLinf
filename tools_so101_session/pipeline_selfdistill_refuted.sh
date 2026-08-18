@@ -32,7 +32,7 @@ FREE_GB=$(df --output=avail -BG /data08 | tail -1 | tr -dc '0-9')
 log "v5 pipeline started (pid $$)"
 
 # ---- S1: merge ----
-timeout 14400 .venv/bin/python "$SCRATCH/merge_datasets.py" > "$SCRATCH/merge_v5.out" 2>&1
+timeout 14400 .venv/bin/python tools_so101_session/merge_datasets.py > "$SCRATCH/merge_v5.out" 2>&1
 grep -q 'MERGE DONE' "$SCRATCH/merge_v5.out" || { log "S1 GATE FAIL: merge crashed"; tail -3 "$SCRATCH/merge_v5.out" >> "$STATUS"; exit 1; }
 NREAL=$(grep -oE 'real=[0-9]+' "$SCRATCH/merge_v5.out" | cut -d= -f2)
 NSIM=$(grep -oE 'sim=[0-9]+' "$SCRATCH/merge_v5.out" | cut -d= -f2)

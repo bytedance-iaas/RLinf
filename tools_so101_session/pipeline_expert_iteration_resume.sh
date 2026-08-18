@@ -83,7 +83,7 @@ while :; do
   if [ "$RESTARTED" = "0" ]; then
     log "S2 converter died without DONE: -> restarting once with a 6h budget"
     RESTARTED=1
-    timeout 21600 .venv/bin/python "$SCRATCH/convert_expert_iter.py" > "$SCRATCH/convert_v9.out" 2>&1 &
+    timeout 21600 .venv/bin/python tools_so101_session/convert_expert_iter.py > "$SCRATCH/convert_v9.out" 2>&1 &
     sleep 60; continue
   fi
   log "S2 FAIL (restart also died) — aborting"; exit 1

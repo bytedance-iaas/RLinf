@@ -120,7 +120,7 @@ while true; do
 done
 clean; sleep 5
 
-SERIES=$(.venv/bin/python "$SCRATCH/parse_eval_series.py" "$LOG" 2>/dev/null | grep -v epochs)
+SERIES=$(.venv/bin/python tools_so101_session/parse_eval_series.py "$LOG" 2>/dev/null | grep -v epochs)
 log "eval series: $(echo "$SERIES" | tr '\n' ' ')"
 [ -z "$SERIES" ] && { log "no evals recorded"; exit 0; }
 BESTIDX=$(echo "$SERIES" | awk '{print NR, $1}' | sort -k2 -gr | head -1 | awk '{print $1}')

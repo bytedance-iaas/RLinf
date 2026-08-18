@@ -1,5 +1,7 @@
 #!/bin/bash
 # STATUS: SUPERSEDED — 早期任务规格，已被主线取代。别用来复现。 pp 时代的整段流水线
+# NOTE: 仍引用 $SCRATCH/convert_pp_demos.py —— 那个转换器属于早期任务规格，没有随本仓库保留。
+#       本脚本已归类 SUPERSEDED，跑不起来是预期的；主线的对应步骤见 SO101_PIPELINE_ZH.md。
 # Phase-2 full pipeline: run when GPUs are free. Each stage gates on the
 # previous one's verdict; status lines go to STATUS. Fully detached-safe.
 set -uo pipefail
@@ -44,10 +46,10 @@ log "stage0 env validation OK"
 
 # ---- stage 1: generate pp demos (probe 2, then 180) ----
 export CUDA_VISIBLE_DEVICES=7
-.venv/bin/python "$SCRATCH/gen_planner_demos.py" --num 2 --seed0 5000 --out /data08/henryg/pai/data/so101_pp_demos_probe >> "$STATUS" 2>&1
+.venv/bin/python tools_so101_session/gen_planner_demos.py --num 2 --seed0 5000 --out /data08/henryg/pai/data/so101_pp_demos_probe >> "$STATUS" 2>&1
 grep -q "TOTAL success [12]/2" "$STATUS" || { log "STAGE1 PROBE FAILED - aborting"; exit 1; }
 log "stage1 probe OK; generating 180 demos"
-.venv/bin/python "$SCRATCH/gen_planner_demos.py" --num 180 --seed0 6000 --out /data08/henryg/pai/data/so101_pp_demos > "$SCRATCH/gen_pp.out" 2>&1
+.venv/bin/python tools_so101_session/gen_planner_demos.py --num 180 --seed0 6000 --out /data08/henryg/pai/data/so101_pp_demos > "$SCRATCH/gen_pp.out" 2>&1
 NOK=$(grep -oE 'TOTAL success [0-9]+' "$SCRATCH/gen_pp.out" | grep -oE '[0-9]+$' || echo 0)
 log "stage1 done: $NOK/180 successful demos"
 [ "${NOK:-0}" -ge 80 ] || { log "STAGE1 too few successes - aborting"; exit 1; }

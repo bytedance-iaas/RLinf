@@ -75,7 +75,7 @@ stop_trainer(){
 while true; do
   sleep 600
   if ! kill -0 "$TRAINER" 2>/dev/null; then log "trainer exited on its own"; break; fi
-  SERIES=$(.venv/bin/python "$SCRATCH/parse_eval_series.py" "$LOG")
+  SERIES=$(.venv/bin/python tools_so101_session/parse_eval_series.py "$LOG")
   EPOCHS=$(echo "$SERIES" | grep -oE 'epochs=[0-9]+' | cut -d= -f2)
   EVALS=$(echo "$SERIES" | grep -vE 'epochs=')
   N=$(echo "$EVALS" | grep -c . || echo 0)
@@ -98,4 +98,4 @@ PY
   fi
   [ "${EPOCHS:-0}" -ge 300 ] && { log "AUTO-STOP R3 iter cap 300"; stop_trainer; break; }
 done
-log "v6 done. eval series: $(.venv/bin/python "$SCRATCH/parse_eval_series.py" "$LOG" | grep -v epochs | tr '\n' ' ')"
+log "v6 done. eval series: $(.venv/bin/python tools_so101_session/parse_eval_series.py "$LOG" | grep -v epochs | tr '\n' ' ')"
