@@ -14,8 +14,8 @@ def t1():
     from rlinf.envs.maniskill import import_all_tasks
     import_all_tasks()
     from mani_skill.utils.registration import REGISTERED_ENVS
-    assert "SO101PickCube-v1" in REGISTERED_ENVS, "SO101PickCube-v1 not registered"
-    return "SO101PickCube-v1 registered"
+    assert "SO101GrabRedCube-v1" in REGISTERED_ENVS, "SO101GrabRedCube-v1 not registered"
+    return "SO101GrabRedCube-v1 registered"
 stage("task registration", t1)
 
 # 2) openpi pi05_so101 config entry present
@@ -48,7 +48,7 @@ def t5():
     import gymnasium as gym
     from rlinf.envs.maniskill import import_all_tasks
     import_all_tasks()
-    env = gym.make("SO101PickCube-v1", num_envs=2, obs_mode="rgb", control_mode="pd_joint_pos", sim_backend="gpu")
+    env = gym.make("SO101GrabRedCube-v1", num_envs=2, obs_mode="rgb", control_mode="pd_joint_pos", sim_backend="gpu")
     obs, _ = env.reset()
     sd = obs["sensor_data"]
     qpos = env.unwrapped.agent.robot.get_qpos()

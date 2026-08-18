@@ -72,19 +72,116 @@ A–F 解决"在仿真里会不会做这件事"，**G 解决"换成真实图像�
 | `/dev/shm` | **≥ 8 GB**（容器默认 64 MB 会让 NCCL 直接失败，报错看起来像显存不足）：`mount -o remount,size=16G /dev/shm` |
 | CPU | ≥ 32 核（示范生成 8 进程并行） |
 
-### 1.2 代码与数据
+### 1.2 装环境
+
+**为什么不是一条 `install.sh` 就够**：官方安装脚本装好 RLinf + ManiSkill 之后，还有三件**本项目特有**的事没做——SO101 的机器人资产、这台机器的 Vulkan/EGL 驱动、以及 `/dev/shm`。缺任何一件，第一次跑仿真就会失败，而报错信息都不指向真正的原因。
+
+**① 代码与依赖**
 
 ```bash
 git clone https://github.com/bytedance-iaas/RLinf.git && cd RLinf
 git checkout henryg/pi05-maniskill-so101
-bash requirements/install.sh embodied --model openpi --env maniskill
+bash requirements/install.sh embodied --model openpi --env maniskill_libero
 ```
+
+| 参数 | 值 | 说明 |
+|---|---|---|
+| `--model` | `openpi` | PI0.5 走 openpi 后端 |
+| `--env` | **`maniskill_libero`** | ⚠️ **不是 `maniskill`**——`SUPPORTED_ENVS` 里没有那个名字，写错会直接 `Unknown environment` 退出。这个目标装的就是 ManiSkill（`install.sh:1779`） |
+
+它会把 ManiSkill 钉在 **v3.0.0b22**（`install.sh:1781`），并顺带下载官方资产（carrot、partnet_mobility）到 `rlinf/envs/maniskill/assets/`。产物是仓库根目录下的 `.venv`。
+
+**② SO101 机器人资产（`install.sh` 不会给你）**
+
+ManiSkill v3.0.0b22 自带 **SO100**，与 SO101 机械通用，但**三个关节限位不够**——真机能把方块放进 23 cm 外的托盘，仿真机器人却够不到那个位姿（`so101_agent.py:14-22`）。所以本项目注册了一个继承 SO100 的 `so101` agent，用改过限位的 URDF。
+
+这份资产**被 `.gitignore` 排除**（`.gitignore:21`），clone 之后一定没有，要自己生成：
+
+```bash
+SRC=.venv/lib/python3.11/site-packages/mani_skill/assets/robots/so100
+DST=rlinf/envs/maniskill/assets/so101
+mkdir -p $DST
+cp $SRC/so100.urdf $DST/so101.urdf
+cp $SRC/so100.srdf $DST/so101.srdf 2>/dev/null || true
+ln -sfn $PWD/$SRC/meshes $DST/meshes          # 网格不复制，直接软链
+
+python3 - <<'PY'
+import re, pathlib
+p = pathlib.Path("rlinf/envs/maniskill/assets/so101/so101.urdf")
+s = p.read_text()
+for old, new in [('upper="1.5708"', 'upper="2.48"'),      # shoulder_lift
+                 ('lower="-1.5708"', 'lower="-2.38"'),     # elbow_flex
+                 ('lower="-1.8"',   'lower="-3.01"')]:     # wrist_flex
+    assert s.count(old) == 1, f"{old} 命中 {s.count(old)} 次，URDF 版本可能变了"
+    s = s.replace(old, new)
+p.write_text(s)
+print("URDF 限位已放宽 3 处")
+PY
+```
+
+| 关节 | ManiSkill 原值 | 改成 | 为什么 |
+|---|---|---|---|
+| `shoulder_lift` 上限 | 1.5708 | **2.48** | 够不到托盘上方 |
+| `elbow_flex` 下限 | −1.5708 | **−2.38** | 同上 |
+| `wrist_flex` 下限 | −1.8 | **−3.01** | 抓取时爪子要朝下 |
+
+**PhysX 和 mplib 运动规划器读的都是这个 URDF**——限位不改，规划器会直接判定目标不可达，阶段 B 的探针会 0/12。
+
+**③ Vulkan / EGL（这台机器特有）**
+
+计算卡驱动只装了计算部分，没有 GL/Vulkan 用户态库，ManiSkill 一渲染就报 `ErrorIncompatibleDriver`。做法是把匹配版本的库软链到 venv 下，并写一份**私有 ICD**：
+
+```bash
+DRV=/data08/yichen/NVIDIA-Linux-x86_64-580.105.08    # 必须与 nvidia-smi 的驱动版本一致
+mkdir -p .venv/nvidia_gl
+for so in libEGL_nvidia libGLX_nvidia libGLESv2_nvidia libGLESv1_CM_nvidia libcuda libnvidia-glcore libnvidia-eglcore libnvidia-glsi; do
+  for f in $DRV/$so.so.580.105.08; do [ -e "$f" ] && ln -sf "$f" .venv/nvidia_gl/; done
+done
+ln -sf $DRV/libGLX_nvidia.so.580.105.08 .venv/nvidia_gl/libGLX_nvidia.so.0
+ln -sf $DRV/libEGL_nvidia.so.580.105.08 .venv/nvidia_gl/libEGL_nvidia.so.0
+
+cat > .venv/nvidia_gl/nvidia_icd.json <<JSON
+{"file_format_version":"1.0.1","ICD":{"library_path":"$PWD/.venv/nvidia_gl/libGLX_nvidia.so.0","api_version":"1.3.289"}}
+JSON
+```
+
+驱动版本用 `nvidia-smi --query-gpu=driver_version --format=csv,noheader` 查，**软链的库必须与它同版本**，否则符号对不上。§1.3 的 `VK_ICD_FILENAMES` 和 `LD_LIBRARY_PATH` 指的就是这里。
+
+**④ `/dev/shm`**
+
+```bash
+mount -o remount,size=16G /dev/shm      # 容器默认 64 MB
+```
+
+不改的话 NCCL 会失败，而**报错看起来像显存不足**——见 §11。
+
+**⑤ 基座权重与真机数据**
 
 | 资源 | 落地路径 |
 |---|---|
 | PI0.5 基座（LeRobot 格式） | `checkpoints/lerobot_pi05_base`（14 GB） |
 | 真机数据集 87 集 | `$HF_LEROBOT_HOME/henry-guo/so101-pick-place-v2` |
-| ManiSkill 资产 | `hf download --repo-type dataset RLinf/maniskill_assets` → 复制到 `rlinf/envs/maniskill/assets/`（`.gitignore` 排除了这个目录，clone 后一定没有） |
+
+**⑥ 装完必须冒烟自检**
+
+```bash
+export REPO_PATH=$PWD PYTHONPATH=$PWD MUJOCO_GL=egl
+export VK_ICD_FILENAMES=$PWD/.venv/nvidia_gl/nvidia_icd.json LD_LIBRARY_PATH=$PWD/.venv/nvidia_gl
+export XDG_RUNTIME_DIR=/tmp/xdg-runtime; mkdir -p $XDG_RUNTIME_DIR
+.venv/bin/python tools_so101_session/so101_smoke.py
+```
+
+五项全 `[OK]` 才算装好（实测输出）：
+
+```
+[OK]   task registration: SO101GrabRedCube-v1 registered
+[OK]   openpi pi05_so101 registry: pi05_so101 present, data=LeRobotSO101DataConfig, pi05=True, horizon=10
+[OK]   so101 policy transforms: SO101Inputs/Outputs import ok, action_dim=6, example_state=(6,)
+[OK]   action passthrough (so100): so100 passthrough ok, shape=(4, 5, 6)
+[OK]   GPU env reset + obs contract: qpos=(2, 6) 3rd_view=torch.Size([2, 480, 640, 3]) wrist=torch.Size([2, 480, 640, 3]) instr0='Grab the red cube'
+```
+
+**每一项对应上面的一步**：第 1、5 项挂了查 ②（资产）或 ③（Vulkan），第 2、3 项挂了是代码分支不对，第 5 项的 `3rd_view` / `wrist` 形状不是 `480×640×3` 说明相机配置被改过。
 
 ### 1.3 环境变量（每个终端）
 
