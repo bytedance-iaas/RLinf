@@ -122,9 +122,9 @@ def test_gripper_uses_its_own_map_not_the_arm_conversion():
     assert closed < opened, "norm 0 must be the CLOSED end"
 
     # And it must NOT agree with what the arm-style conversion would produce.
-    tick = 0.0 * calib._RAW_SCALE[calib.GRIPPER_IDX] + calib._RAW_OFFSET[
-        calib.GRIPPER_IDX
-    ]
+    tick = (
+        0.0 * calib._RAW_SCALE[calib.GRIPPER_IDX] + calib._RAW_OFFSET[calib.GRIPPER_IDX]
+    )
     arm_style = (tick - calib.CENTER_TICK) * calib.RAD_PER_TICK
     assert abs(arm_style - closed) > 0.1, (
         "gripper conversion collapsed back onto the arm formula"
@@ -238,6 +238,8 @@ def test_inputs_mask_out_an_absent_wrist_view():
         "observation/state": np.zeros(6),
         "observation/image": np.zeros((480, 640, 3), dtype=np.uint8),
     }
-    got = so101_policy.SO101Inputs(model_type=_model.ModelType.PI0, has_wrist_image=False)(data)
+    got = so101_policy.SO101Inputs(
+        model_type=_model.ModelType.PI0, has_wrist_image=False
+    )(data)
     assert bool(got["image_mask"]["left_wrist_0_rgb"]) is False
     assert bool(got["image_mask"]["base_0_rgb"]) is True

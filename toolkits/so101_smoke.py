@@ -48,7 +48,10 @@ def main() -> int:
     import xml.etree.ElementTree as ET
 
     limits = {
-        j.get("name"): (float(j.find("limit").get("lower")), float(j.find("limit").get("upper")))
+        j.get("name"): (
+            float(j.find("limit").get("lower")),
+            float(j.find("limit").get("upper")),
+        )
         for j in ET.parse(urdf).getroot().findall("joint")
         if j.find("limit") is not None
     }
@@ -63,10 +66,15 @@ def main() -> int:
         f"lower={limits['elbow_flex'][0]}",
     )
     meshes = [m.get("filename") for m in ET.parse(urdf).getroot().iter("mesh")]
-    check("mesh paths absolute", all(m.startswith("/") for m in meshes), f"{len(meshes)} meshes")
+    check(
+        "mesh paths absolute",
+        all(m.startswith("/") for m in meshes),
+        f"{len(meshes)} meshes",
+    )
 
     print("== env construction ==")
     import mani_skill.envs  # noqa: F401
+
     from rlinf.envs.maniskill import import_all_tasks  # noqa: F401
 
     env = gym.make(
@@ -112,6 +120,7 @@ def main() -> int:
 
     print("== gripper geometry ==")
     # The regression that made grasping impossible: closed must actually close.
+
     def jaw_gap():
         # Read the poses fresh each time: `.pose.p` is a snapshot, not a live view.
         agent = env.unwrapped.agent
@@ -134,10 +143,16 @@ def main() -> int:
     for _ in range(30):
         env.step(torch.as_tensor(norm_to_rad(open_cmd), device=qpos.device))
     gap_open = jaw_gap()
-    print(f"    jaw gap: closed={gap_closed * 100:.1f} cm, open={gap_open * 100:.1f} cm")
+    print(
+        f"    jaw gap: closed={gap_closed * 100:.1f} cm, open={gap_open * 100:.1f} cm"
+    )
     check("closing narrows the jaws", gap_closed < gap_open)
     # 2.9 cm cube: the closed gap must go under it or the policy can never grasp.
-    check("closed gap clears the 2.9 cm cube", gap_closed < 0.029, f"{gap_closed * 100:.1f} cm")
+    check(
+        "closed gap clears the 2.9 cm cube",
+        gap_closed < 0.029,
+        f"{gap_closed * 100:.1f} cm",
+    )
 
     env.close()
     print()
