@@ -30,7 +30,6 @@ reasonable placeholders -- calibrate them against a real front/wrist camera
 frame before sim2real transfer.
 """
 
-import numpy as np
 import sapien
 import torch
 from mani_skill.envs.tasks.tabletop.pick_cube import PickCubeEnv
@@ -44,18 +43,30 @@ from mani_skill.utils.structs.pose import Pose
 SO101_INSTRUCTION = "Grab the red cube"
 
 # Real object dimensions (meters).
-CUBE_HALF = 0.0145                       # 2.9 cm cube edge
-BOX_HALF = [0.0381, 0.0508, 0.0222]      # USER-MEASURED tray 4x3x1.75in, LONG (10.16cm) edge along y
-BOARD_HALF = [0.108, 0.1505, 0.0024]     # FROM DATASET FRAMES (user: 按第一个图片): 21.6cm(x, matches 8.5in) x 30.1cm(y)
-BLACK_END_LEN = 0.019                    # black band at -y edge, 1.9cm as measured in the dataset frames
-BROWN_HALF_Y = (2 * BOARD_HALF[1] - BLACK_END_LEN) / 2  # brown zone half-length (cubes spawn here only)
-BOARD_CY_OFF = -BLACK_END_LEN / 2        # board center offset so the BROWN zone is centered on the base axis (user: 盒子/棕区/底座中线对齐)
-BOARD_COLOR = [0.76, 0.62, 0.42, 1.0]    # kraft cardboard tan
-BOX_COLOR = [0.08, 0.08, 0.09, 1.0]      # dark/black-rimmed open tray
-STRIP_COLOR = [0.05, 0.05, 0.05, 1.0]    # black strip along the far-right board edge
-CREAM_COLOR = [0.96, 0.94, 0.89, 1.0]    # cream/off-white desk surface
-GROUND = 0.002                           # top of the cream desk cover (objects rest here)
-LIFT_HEIGHT = 0.06                       # red cube lifted this high above start = success
+CUBE_HALF = 0.0145  # 2.9 cm cube edge
+BOX_HALF = [
+    0.0381,
+    0.0508,
+    0.0222,
+]  # USER-MEASURED tray 4x3x1.75in, LONG (10.16cm) edge along y
+BOARD_HALF = [
+    0.108,
+    0.1505,
+    0.0024,
+]  # FROM DATASET FRAMES (user: 按第一个图片): 21.6cm(x, matches 8.5in) x 30.1cm(y)
+BLACK_END_LEN = 0.019  # black band at -y edge, 1.9cm as measured in the dataset frames
+BROWN_HALF_Y = (
+    2 * BOARD_HALF[1] - BLACK_END_LEN
+) / 2  # brown zone half-length (cubes spawn here only)
+BOARD_CY_OFF = (
+    -BLACK_END_LEN / 2
+)  # board center offset so the BROWN zone is centered on the base axis (user: 盒子/棕区/底座中线对齐)
+BOARD_COLOR = [0.76, 0.62, 0.42, 1.0]  # kraft cardboard tan
+BOX_COLOR = [0.08, 0.08, 0.09, 1.0]  # dark/black-rimmed open tray
+STRIP_COLOR = [0.05, 0.05, 0.05, 1.0]  # black strip along the far-right board edge
+CREAM_COLOR = [0.96, 0.94, 0.89, 1.0]  # cream/off-white desk surface
+GROUND = 0.002  # top of the cream desk cover (objects rest here)
+LIFT_HEIGHT = 0.06  # red cube lifted this high above start = success
 
 # Front camera: near-top-down (overhead) to match the real dataset front camera.
 # Looks straight down over the workspace; world +x (away from the arm, toward the
@@ -67,13 +78,17 @@ LIFT_HEIGHT = 0.06                       # red cube lifted this high above start
 # both domains go through the IDENTICAL letterbox path. Focal MEASURED from
 # the real board extents at the user-measured camera height (~0.55m above
 # board): f=710px at 640w -> 177.5px at 160w.
-FRONT_CAM_EYE = [-0.520, -0.007, 0.559]   # above the brown-zone center + small offsets matching the real framing
+FRONT_CAM_EYE = [
+    -0.520,
+    -0.007,
+    0.559,
+]  # above the brown-zone center + small offsets matching the real framing
 FRONT_CAM_TARGET = [-0.520, -0.007, 0.0]
 FRONT_CAM_W, FRONT_CAM_H = 640, 480
 FRONT_CAM_INTRINSIC = [[755.2, 0.0, 320.0], [0.0, 755.2, 240.0], [0.0, 0.0, 1.0]]
 WRIST_CAM_INTRINSIC = [[343.5, 0.0, 320.0], [0.0, 343.5, 240.0], [0.0, 0.0, 1.0]]
 FRONT_CAM_UP = [1.0, 0.0, 0.0]
-FRONT_CAM_FOV = 0.84                      # ~board fills 60% of frame width, as in the real image
+FRONT_CAM_FOV = 0.84  # ~board fills 60% of frame width, as in the real image
 
 # Wrist camera (mounted on the gripper): looks forward-down over the jaw tips so
 # the jaws sit at the bottom of the frame and the workspace ahead is visible.
@@ -146,12 +161,25 @@ class SO101GrabRedCubeEnv(PickCubeEnv):
         wrist_mount = self.agent.robot.links_map[WRIST_CAMERA_MOUNT_LINK]
         return [
             CameraConfig(
-                "3rd_view_camera", front_pose, FRONT_CAM_W, FRONT_CAM_H, None,
-                0.01, 100, intrinsic=FRONT_CAM_INTRINSIC,
+                "3rd_view_camera",
+                front_pose,
+                FRONT_CAM_W,
+                FRONT_CAM_H,
+                None,
+                0.01,
+                100,
+                intrinsic=FRONT_CAM_INTRINSIC,
             ),
             CameraConfig(
-                "wrist_camera", wrist_pose, FRONT_CAM_W, FRONT_CAM_H, None,
-                0.01, 100, intrinsic=WRIST_CAM_INTRINSIC, mount=wrist_mount,
+                "wrist_camera",
+                wrist_pose,
+                FRONT_CAM_W,
+                FRONT_CAM_H,
+                None,
+                0.01,
+                100,
+                intrinsic=WRIST_CAM_INTRINSIC,
+                mount=wrist_mount,
             ),
         ]
 
@@ -164,18 +192,43 @@ class SO101GrabRedCubeEnv(PickCubeEnv):
         light = sapien.render.RenderMaterial(base_color=[0.9, 0.9, 0.9, 1.0])
         builder = self.scene.create_actor_builder()
         # floor (light interior)
-        builder.add_box_visual(pose=sapien.Pose(p=[0, 0, floor_half_thickness]), half_size=[outer_half_x, outer_half_y, floor_half_thickness], material=light)
-        builder.add_box_collision(pose=sapien.Pose(p=[0, 0, floor_half_thickness]), half_size=[outer_half_x, outer_half_y, floor_half_thickness])
+        builder.add_box_visual(
+            pose=sapien.Pose(p=[0, 0, floor_half_thickness]),
+            half_size=[outer_half_x, outer_half_y, floor_half_thickness],
+            material=light,
+        )
+        builder.add_box_collision(
+            pose=sapien.Pose(p=[0, 0, floor_half_thickness]),
+            half_size=[outer_half_x, outer_half_y, floor_half_thickness],
+        )
         # 4 rim walls (black)
         walls = [
-            ([outer_half_x - wall_half_thickness, 0, outer_half_z], [wall_half_thickness, outer_half_y, outer_half_z]),
-            ([-(outer_half_x - wall_half_thickness), 0, outer_half_z], [wall_half_thickness, outer_half_y, outer_half_z]),
-            ([0, outer_half_y - wall_half_thickness, outer_half_z], [outer_half_x, wall_half_thickness, outer_half_z]),
-            ([0, -(outer_half_y - wall_half_thickness), outer_half_z], [outer_half_x, wall_half_thickness, outer_half_z]),
+            (
+                [outer_half_x - wall_half_thickness, 0, outer_half_z],
+                [wall_half_thickness, outer_half_y, outer_half_z],
+            ),
+            (
+                [-(outer_half_x - wall_half_thickness), 0, outer_half_z],
+                [wall_half_thickness, outer_half_y, outer_half_z],
+            ),
+            (
+                [0, outer_half_y - wall_half_thickness, outer_half_z],
+                [outer_half_x, wall_half_thickness, outer_half_z],
+            ),
+            (
+                [0, -(outer_half_y - wall_half_thickness), outer_half_z],
+                [outer_half_x, wall_half_thickness, outer_half_z],
+            ),
         ]
         for wall_center, wall_half_size in walls:
-            builder.add_box_visual(pose=sapien.Pose(p=wall_center), half_size=wall_half_size, material=black)
-            builder.add_box_collision(pose=sapien.Pose(p=wall_center), half_size=wall_half_size)
+            builder.add_box_visual(
+                pose=sapien.Pose(p=wall_center),
+                half_size=wall_half_size,
+                material=black,
+            )
+            builder.add_box_collision(
+                pose=sapien.Pose(p=wall_center), half_size=wall_half_size
+            )
         builder.set_initial_pose(sapien.Pose(p=[0, 0, 0]))
         return builder.build_kinematic(name=name)
 
@@ -190,19 +243,27 @@ class SO101GrabRedCubeEnv(PickCubeEnv):
 
         # Cream/off-white desk surface covering the wooden table (matches real).
         self.table_cover = actors.build_box(
-            self.scene, half_sizes=[0.7, 0.7, 0.001], color=CREAM_COLOR,
-            name="table_cover", body_type="kinematic",
+            self.scene,
+            half_sizes=[0.7, 0.7, 0.001],
+            color=CREAM_COLOR,
+            name="table_cover",
+            body_type="kinematic",
             initial_pose=sapien.Pose(p=[self.cube_spawn_center[0], 0, GROUND - 0.001]),
         )
 
         # Light-brown wooden board the cubes rest on (kinematic).
         self.board = actors.build_box(
-            self.scene, half_sizes=BOARD_HALF, color=BOARD_COLOR, name="board",
-            body_type="kinematic", initial_pose=sapien.Pose(p=[0, 0, BOARD_HALF[2]]),
+            self.scene,
+            half_sizes=BOARD_HALF,
+            color=BOARD_COLOR,
+            name="board",
+            body_type="kinematic",
+            initial_pose=sapien.Pose(p=[0, 0, BOARD_HALF[2]]),
         )
         # Red target cube + blue distractor cube (dynamic). Density set for a
         # USER-BOUNDED mass: real cube <10g -> 8g at 2.9cm => 328 kg/m^3
         # (ManiSkill's default density 1000 gives 24.4g, a 2.4x dynamics error).
+
         def _build_light_cube(color, name, initial_position):
             cube_builder = self.scene.create_actor_builder()
             cube_builder.add_box_collision(half_size=[CUBE_HALF] * 3, density=328.0)
@@ -213,15 +274,22 @@ class SO101GrabRedCubeEnv(PickCubeEnv):
             cube_builder.initial_pose = sapien.Pose(p=initial_position)
             return cube_builder.build(name=name)
 
-        self.red_cube = _build_light_cube([0.85, 0.05, 0.05, 1], "red_cube", [0, 0, CUBE_HALF])
-        self.blue_cube = _build_light_cube([0.05, 0.10, 0.85, 1], "blue_cube", [0, 0.08, CUBE_HALF])
+        self.red_cube = _build_light_cube(
+            [0.85, 0.05, 0.05, 1], "red_cube", [0, 0, CUBE_HALF]
+        )
+        self.blue_cube = _build_light_cube(
+            [0.05, 0.10, 0.85, 1], "blue_cube", [0, 0.08, CUBE_HALF]
+        )
         # Open tray (black rim + light interior) beyond the far edge of the board,
         # ~20 cm in front of the gripper -- matches the real black-rimmed open box.
         self.box = self._build_open_tray(name="box")
         # Black END of the board (part of the board, -y side; user-confirmed).
         self.strip = actors.build_box(
-            self.scene, half_sizes=[BOARD_HALF[0], BLACK_END_LEN / 2, 0.0005], color=STRIP_COLOR,
-            name="edge_strip", body_type="kinematic",
+            self.scene,
+            half_sizes=[BOARD_HALF[0], BLACK_END_LEN / 2, 0.0005],
+            color=STRIP_COLOR,
+            name="edge_strip",
+            body_type="kinematic",
             initial_pose=sapien.Pose(p=[0, 0, 0.005]),
         )
         # PickCubeEnv reward/obs reference self.cube -> alias to the red target.
@@ -264,13 +332,27 @@ class SO101GrabRedCubeEnv(PickCubeEnv):
             # Board center shifted -y so the BROWN zone (not the whole board)
             # is centered on the base/tray axis (user: 中线对齐).
             board_center_y = cy + BOARD_CY_OFF
-            self.board.set_pose(Pose.create_from_pq(
-                torch.tensor([[board_center_x, board_center_y, GROUND + BOARD_HALF[2]]]).repeat(b, 1)))
+            self.board.set_pose(
+                Pose.create_from_pq(
+                    torch.tensor(
+                        [[board_center_x, board_center_y, GROUND + BOARD_HALF[2]]]
+                    ).repeat(b, 1)
+                )
+            )
             # Black end of the board at -y (part of the board itself, per user).
-            self.strip.set_pose(Pose.create_from_pq(
-                torch.tensor([
-                    [board_center_x, board_center_y - BOARD_HALF[1] + BLACK_END_LEN / 2, GROUND + 2 * BOARD_HALF[2] + 0.0005]
-                ]).repeat(b, 1)))
+            self.strip.set_pose(
+                Pose.create_from_pq(
+                    torch.tensor(
+                        [
+                            [
+                                board_center_x,
+                                board_center_y - BOARD_HALF[1] + BLACK_END_LEN / 2,
+                                GROUND + 2 * BOARD_HALF[2] + 0.0005,
+                            ]
+                        ]
+                    ).repeat(b, 1)
+                )
+            )
 
             # Red target cube: ALWAYS spawned within the board (with margin) and
             # inside the SO100 reach -- far half (+x toward the box), image-left (+y).
@@ -283,35 +365,73 @@ class SO101GrabRedCubeEnv(PickCubeEnv):
             # the old 6x8cm sub-box (for historical comparisons only), and
             # ``spawn_frac`` targets a sub-region of the active ranges (for
             # weak-region data collection).
-            frac_x0, frac_x1, frac_y0, frac_y1 = self._spawn_frac or (0.0, 1.0, 0.0, 1.0)
+            frac_x0, frac_x1, frac_y0, frac_y1 = self._spawn_frac or (
+                0.0,
+                1.0,
+                0.0,
+                1.0,
+            )
             red = torch.zeros((b, 3))
             blue = torch.zeros((b, 3))
             if self._spawn_mode == "legacy":
-                red[:, 0] = board_center_x + (frac_x0 + torch.rand((b,)) * (frac_x1 - frac_x0)) * 0.06
-                red[:, 1] = cy + 0.02 + (frac_y0 + torch.rand((b,)) * (frac_y1 - frac_y0)) * 0.08
+                red[:, 0] = (
+                    board_center_x
+                    + (frac_x0 + torch.rand((b,)) * (frac_x1 - frac_x0)) * 0.06
+                )
+                red[:, 1] = (
+                    cy
+                    + 0.02
+                    + (frac_y0 + torch.rand((b,)) * (frac_y1 - frac_y0)) * 0.08
+                )
                 blue[:, 0] = board_center_x - 0.05 + torch.rand((b,)) * 0.04
                 blue[:, 1] = cy - 0.06 + torch.rand((b,)) * 0.04
             else:
                 # Spawn zone = BROWN region only (user: cubes never on the black
                 # end), centered on the base axis. Margin 2cm (design choice).
                 spawn_margin = 0.02
-                spawn_x_lo, spawn_x_hi = -BOARD_HALF[0] + spawn_margin, BOARD_HALF[0] - spawn_margin
-                spawn_y_lo, spawn_y_hi = -BROWN_HALF_Y + spawn_margin, BROWN_HALF_Y - spawn_margin
-                red[:, 0] = board_center_x + spawn_x_lo + (frac_x0 + torch.rand((b,)) * (frac_x1 - frac_x0)) * (spawn_x_hi - spawn_x_lo)
-                red[:, 1] = cy + spawn_y_lo + (frac_y0 + torch.rand((b,)) * (frac_y1 - frac_y0)) * (spawn_y_hi - spawn_y_lo)
+                spawn_x_lo, spawn_x_hi = (
+                    -BOARD_HALF[0] + spawn_margin,
+                    BOARD_HALF[0] - spawn_margin,
+                )
+                spawn_y_lo, spawn_y_hi = (
+                    -BROWN_HALF_Y + spawn_margin,
+                    BROWN_HALF_Y - spawn_margin,
+                )
+                red[:, 0] = (
+                    board_center_x
+                    + spawn_x_lo
+                    + (frac_x0 + torch.rand((b,)) * (frac_x1 - frac_x0))
+                    * (spawn_x_hi - spawn_x_lo)
+                )
+                red[:, 1] = (
+                    cy
+                    + spawn_y_lo
+                    + (frac_y0 + torch.rand((b,)) * (frac_y1 - frac_y0))
+                    * (spawn_y_hi - spawn_y_lo)
+                )
                 # blue: same brown zone; USER SPEC: no minimum separation, only
                 # physical non-overlap (3cm ~= touching cubes)
-                blue[:, 0] = board_center_x + spawn_x_lo + torch.rand((b,)) * (spawn_x_hi - spawn_x_lo)
-                blue[:, 1] = cy + spawn_y_lo + torch.rand((b,)) * (spawn_y_hi - spawn_y_lo)
+                blue[:, 0] = (
+                    board_center_x
+                    + spawn_x_lo
+                    + torch.rand((b,)) * (spawn_x_hi - spawn_x_lo)
+                )
+                blue[:, 1] = (
+                    cy + spawn_y_lo + torch.rand((b,)) * (spawn_y_hi - spawn_y_lo)
+                )
                 for _ in range(10):
-                    bad = (
-                        torch.linalg.norm(blue[:, :2] - red[:, :2], axis=1) < 0.03
-                    )
+                    bad = torch.linalg.norm(blue[:, :2] - red[:, :2], axis=1) < 0.03
                     if not bad.any():
                         break
                     nb = int(bad.sum())
-                    blue[bad, 0] = board_center_x + spawn_x_lo + torch.rand((nb,)) * (spawn_x_hi - spawn_x_lo)
-                    blue[bad, 1] = cy + spawn_y_lo + torch.rand((nb,)) * (spawn_y_hi - spawn_y_lo)
+                    blue[bad, 0] = (
+                        board_center_x
+                        + spawn_x_lo
+                        + torch.rand((nb,)) * (spawn_x_hi - spawn_x_lo)
+                    )
+                    blue[bad, 1] = (
+                        cy + spawn_y_lo + torch.rand((nb,)) * (spawn_y_hi - spawn_y_lo)
+                    )
             red[:, 2] = board_top + CUBE_HALF
             blue[:, 2] = board_top + CUBE_HALF
             self.red_cube.set_pose(Pose.create_from_pq(red))
@@ -342,7 +462,10 @@ class SO101GrabRedCubeEnv(PickCubeEnv):
 
     # --- obs / success / reward for grab-and-lift -----------------------------
     def _get_obs_extra(self, info: dict):
-        obs = dict(is_grasped=info["is_grasped"], tcp_pose=self.agent.tcp_pose.raw_pose)
+        obs = {
+            "is_grasped": info["is_grasped"],
+            "tcp_pose": self.agent.tcp_pose.raw_pose,
+        }
         if "state" in self.obs_mode:
             obs.update(
                 obj_pose=self.red_cube.pose.raw_pose,
@@ -396,7 +519,8 @@ class SO101GrabRedCubeEnv(PickCubeEnv):
         # binary is_grasped jump (+1 AND unlocking the lift term) is what makes
         # grasping strictly dominate hovering.
         tcp_to_obj = torch.linalg.norm(
-            self.red_cube.pose.p - self.agent.tcp_pose.p, axis=1)
+            self.red_cube.pose.p - self.agent.tcp_pose.p, axis=1
+        )
         reward = 1 - torch.tanh(5 * tcp_to_obj)
         is_grasped = info["is_grasped"]
         # Gradient bridge for the gripper: the binary is_grasped term gives the
@@ -409,6 +533,7 @@ class SO101GrabRedCubeEnv(PickCubeEnv):
             GRIPPER_RAD_CLOSED,
             GRIPPER_RAD_OPEN,
         )
+
         grip_q = self.agent.robot.get_qpos()[:, -1]
         closedness = torch.clamp(
             (GRIPPER_RAD_OPEN - grip_q) / (GRIPPER_RAD_OPEN - GRIPPER_RAD_CLOSED),
@@ -418,7 +543,8 @@ class SO101GrabRedCubeEnv(PickCubeEnv):
         reward = reward + 0.5 * (tcp_to_obj < 0.04).float() * closedness
         reward = reward + is_grasped
         lift = torch.clamp(
-            (self.red_cube.pose.p[:, 2] - self._red_start_z) / LIFT_HEIGHT, 0.0, 1.0)
+            (self.red_cube.pose.p[:, 2] - self._red_start_z) / LIFT_HEIGHT, 0.0, 1.0
+        )
         reward = reward + lift * is_grasped
         # Phase 2 transport: while holding the cube, pull it toward a waypoint
         # above the tray. Gated by is_grasped so it cannot be farmed empty-handed.
@@ -428,8 +554,7 @@ class SO101GrabRedCubeEnv(PickCubeEnv):
         # (env.train.ignore_terminations=True), so success pays every step.
         box_target = self.box.pose.p.clone()
         box_target[:, 2] = box_target[:, 2] + 0.10
-        cube_to_box = torch.linalg.norm(
-            self.red_cube.pose.p - box_target, axis=1)
+        cube_to_box = torch.linalg.norm(self.red_cube.pose.p - box_target, axis=1)
         reward = reward + 2.0 * (1 - torch.tanh(5 * cube_to_box)) * is_grasped
         # Homing stage (success = placed AND home, user-confirmed semantics).
         # Reward ladder arithmetic (per-step, ignore_terminations pays states
