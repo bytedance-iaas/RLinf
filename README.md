@@ -30,6 +30,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
+- [2026/08] 🔥 RLinf supports real2sim RL on the SO101 (SO-ARM101) arm: a measured real pick-and-place workcell rebuilt in ManiSkill, RL-finetuned with π₀.₅. Doc: [SO101 (Real2Sim)](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/so101.html).
 - [2026/08] 🔥 RLinf officially supports three more accelerators: Moore Threads (MUSA), Huawei Ascend (CANN), and AMD (ROCm). Docs: [Moore Threads MUSA](https://rlinf.readthedocs.io/en/latest/rst_source/guides/moore_threads_musa.html), [Ascend CANN](https://rlinf.readthedocs.io/en/latest/rst_source/guides/ascend_cann.html), [AMD ROCm](https://rlinf.readthedocs.io/en/latest/rst_source/guides/amd_rocm.html).
 - [2026/08] 🔥 RLinf supports GRPO training for Moonlight-16B-A3B (DeepSeek-V3 MLA + MoE). Doc: [Moonlight-16B GRPO](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/moonlight.html).
 - [2026/08] 🔥 RLinf supports MolmoAct2 evaluation on LIBERO. Doc: [MolmoAct2](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/molmoact2.html).

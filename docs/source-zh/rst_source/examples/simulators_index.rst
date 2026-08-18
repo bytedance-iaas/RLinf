@@ -180,6 +180,17 @@
        </p>
      </div>
 
+     <div style="flex: 0 0 32%; box-sizing: border-box;">
+       <a href="embodied/so101.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/embody.jpg"
+         style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/so101.html" style="text-decoration: underline; color: blue;">
+           <b>基于 SO101 机械臂的强化学习（Real2Sim）</b>
+         </a><br>
+         依实测几何在 ManiSkill 中重建真实 SO101 工作台，并用 &#960;&#8320;.&#8325; 做强化学习微调
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -187,6 +198,7 @@
    :maxdepth: 2
 
    ManiSkill <embodied/maniskill>
+   SO101（Real2Sim） <embodied/so101>
    LIBERO <embodied/libero>
    Behavior <embodied/behavior>
    MetaWorld <embodied/metaworld>
