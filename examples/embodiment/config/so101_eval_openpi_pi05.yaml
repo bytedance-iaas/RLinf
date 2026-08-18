@@ -96,7 +96,7 @@ actor:
   model:
     model_path: "/path/to/model/so101_sft_openpi_pi05"
     model_type: "openpi"
-    num_action_chunks: 5
+    num_action_chunks: 10  # == the SFT action_horizon; ~11 pts over 5
     num_steps: 4
     add_value_head: True
     action_dim: 6
@@ -107,7 +107,8 @@ actor:
       num_images_in_input: 2
       noise_method: "flow_noise"
       action_horizon: 10
-      noise_params: [0.16, 0.12, 200]
+      noise_logvar_range: [0.02, 0.04]
+      noise_params: [0.16, 0.12, 200]  # unused while noise_method is flow_noise
       joint_logprob: True
     openpi_data:
       norm_stats_path: "/path/to/assets/so101/norm_stats.json"
