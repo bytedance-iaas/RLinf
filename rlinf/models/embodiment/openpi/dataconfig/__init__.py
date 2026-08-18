@@ -73,6 +73,9 @@ from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.robotwin_aloha_dataconfig import (
     LeRobotAlohaDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+    LeRobotSO101DataConfig,
+)
 
 _CONFIGS = [
     TrainConfig(
@@ -580,6 +583,26 @@ _CONFIGS = [
             assets=AssetsConfig(asset_id="assets/droid"),
         ),
         pytorch_weight_path="checkpoints/torch/pi05_droid_polaris",
+    ),
+    TrainConfig(
+        # SO101/SO100 6-DoF arm, real LeRobot pick-place dataset.
+        # discrete_state_input=True is mandatory for pi0.5: it has no state_proj,
+        # so the discretized state in the prompt is the only path from
+        # proprioception into the model.
+        name="pi05_so101",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="henry-guo/so101-pick-place-v2",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,  # absolute joint-position actions
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
     ),
 ]
 
