@@ -177,6 +177,7 @@ def rad_to_norm_torch(qpos):
     key = (qpos.device, qpos.dtype)
     cached = _TORCH_CONST_CACHE.get(key)
     if cached is None:
+
         def _t(a):
             return torch.as_tensor(a, dtype=qpos.dtype, device=qpos.device)
 
@@ -189,9 +190,7 @@ def rad_to_norm_torch(qpos):
     norm = (tick - raw_offset) / raw_scale
     # Gripper: same dedicated inverse map as the numpy path. Built out-of-place so
     # this stays safe on a tensor the caller still owns (qpos is ManiSkill's).
-    gripper = (
-        (qpos[..., GRIPPER_IDX] - GRIPPER_RAD_CLOSED) / _GRIPPER_SPAN * 100.0
-    )
+    gripper = (qpos[..., GRIPPER_IDX] - GRIPPER_RAD_CLOSED) / _GRIPPER_SPAN * 100.0
     return torch.cat([norm[..., :GRIPPER_IDX], gripper.unsqueeze(-1)], dim=-1)
 
 
