@@ -1,15 +1,8 @@
-# SO101 pick-and-place PPO on ManiSkill with an OpenPI PI0.5 policy.
-#
-# Hyperparameters follow the pi-RL official recipe (as in
-# libero_spatial_ppo_openpi_pi05.yaml). Task-structural deviations are marked
-# [TASK]:
-#   [TASK] episode budget 640 (30 Hz task; the official 240 was for LIBERO)
-#   [TASK] ignore_terminations=True -- success is hold-style, and the reward
-#          ladder in so101_pick_place.py is arithmetically built on success
-#          paying every step. Do not set this to False without revisiting it.
-#   [TASK] rollout arithmetic preserves the official invariant of 24,576 fresh
-#          samples per iteration = 12 minibatches of 2048:
-#          64 envs x (640/5 = 128 chunks) x rollout_epoch 3 = 24,576
+# Minimal e2e smoke for the SO101 ManiSkill PPO path. Keeps the real recipe's
+# structure (chunks=10, one update per epoch) and only shrinks the sizes:
+# 16 envs x (20 steps / 10 chunks) x 1 epoch = 32 samples = global_batch_size.
+# 32 also satisfies validate_cfg's requirement that global_batch_size divide by
+# micro_batch_size * actor_world_size (8 * 4 on the 4-GPU box).
 defaults:
   - env/maniskill_so101_pick_place@env.train
   - env/maniskill_so101_pick_place@env.eval
@@ -78,15 +71,15 @@ env:
     auto_reset: True
     ignore_terminations: True  # [TASK] see header
     use_fixed_reset_state_ids: False
-    max_episode_steps: 10
-    max_steps_per_rollout_epoch: 10
+    max_episode_steps: 20
+    max_steps_per_rollout_epoch: 20
   eval:
     rollout_epoch: 1
     total_num_envs: 8
     auto_reset: True
     ignore_terminations: True
-    max_episode_steps: 10
-    max_steps_per_rollout_epoch: 10
+    max_episode_steps: 20
+    max_steps_per_rollout_epoch: 20
     use_fixed_reset_state_ids: True
     group_size: ${algorithm.group_size}
     is_eval: True
@@ -112,13 +105,13 @@ actor:
   # (~25x the activations). Pure gradient-accumulation granularity: global_batch
   # is unchanged and the loss is scaled by 1/grad_accum, so the math is identical.
   micro_batch_size: 8
-  global_batch_size: 32
+  global_batch_size: 32   # == 16 envs x (20/10 decisions) x 1 epoch = 1 update
   seed: 42
   enable_offload: False
   model:
     model_path: "/workspace/models/henry-pi05-sft-openpi" # SO101 PI0.5 SFT checkpoint
     model_type: "openpi"
-    num_action_chunks: 5   # chunk actions the env executes per policy call
+    num_action_chunks: 10  # == the SFT action_horizon; see header
     num_steps: 4           # [TASK] flow_noise pairing (ManiSkill official)
     add_value_head: True
     action_dim: 6          # SO101: 5 arm joints + gripper
@@ -129,14 +122,16 @@ actor:
       num_images_in_input: 2   # front (3rd_view_camera) + wrist camera
       noise_method: "flow_noise"
       action_horizon: 10       # must match the SFT chunk size (H)
-      noise_params: [0.16, 0.12, 200]
+      # flow_noise reads noise_logvar_range; noise_params only feeds flow_sde.
+      noise_logvar_range: [0.02, 0.04]
+      noise_params: [0.16, 0.12, 200]  # unused while noise_method is flow_noise
       joint_logprob: True      # False for flow_sde, True for flow_noise
     openpi_data:
       # Must be the stats the SFT checkpoint was trained with.
       norm_stats_path: "/workspace/models/henry-pi05-sft-openpi/RLinf/LeIsaac-SO101-LiftCube-Data/norm_stats.json"
 
   optim:
-    lr: 5.0e-6
+    lr: 2.0e-6      # lowered from the official 5e-6 to pair with 1 update/epoch
     value_lr: 1.0e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
