@@ -369,6 +369,8 @@ SO101_COLLECT_DIR=$DATA/rollouts SO101_SPAWN_MODE=legacy python evaluations/eval
 | `offline_replay_check.py` | "策略在真实观测下还能不能用"——**上机前的门**，不碰机器人 |
 | `toolkits/preflight_config.py` | "这次启动会不会白跑一夜"——路径存在性、**批量算术**、模型-数据一致性 |
 | `toolkits/invariant_audit.py` | "有没有不报错但结果是错的地方"——9 项静默错误检查 |
+| `so101_smoke.py` | "环境到底装好没有"——五项串起来查：任务注册、注册表条目、策略变换、动作透传、GPU 建环境并核对观测形状（§1.2 ⑥） |
+| `check_doc_consistency.py` | "文档里的名字还对得上仓库吗"——按类别解析每个名字，并双向核对 §1.5 的产物表 |
 
 `preflight_config.py` 的**批量算术**那一项对 PPO 是命门：`updates/epoch = num_envs × (预算÷块长) × rollout_epoch ÷ global_batch`，这个数决定 PPO 是放大还是摧毁策略。这个工具自己曾漏算 `rollout_epoch` 因子、把 12 次报成 4 次——守门的工具算错，等于没有门。
 

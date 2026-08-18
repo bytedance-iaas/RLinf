@@ -133,6 +133,16 @@ def main():
     else:
         print("  （本文档没有 §1.5 产物表，跳过双向核对）")
 
+    # 8. Every script the document TELLS YOU TO RUN must also appear in its tool
+    #    list. so101_smoke.py was added to the install section and left out of §2,
+    #    so a reader meeting it mid-document had nowhere to look it up.
+    tools = re.search(r'## 2\. 工具清单.*?(?=\n## 3\.)', text, re.S)
+    if tools:
+        invoked = set(re.findall(r'tools_so101_session/([A-Za-z0-9_]+\.(?:py|sh))', commands))
+        indexed = set(re.findall(r'`([A-Za-z0-9_]+\.(?:py|sh))`', tools.group(0)))
+        for n in sorted(invoked - indexed):
+            fails.append(f"{'清单遗漏':16} {n:34} 命令里让你跑它，但 §2 工具清单没列")
+
     print(f"检查 {doc}")
     print(f"  注册表条目：仓库里 {len(entries)} 个，本文档用 {len(used_as_cfg)} 个")
     src = open(REGISTRY, encoding="utf-8").read()
