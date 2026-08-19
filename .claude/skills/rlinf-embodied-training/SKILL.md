@@ -92,15 +92,17 @@ A pretrained VLA has narrow exploration (approx_kl ~0.01–0.04/step under flow-
 
 **Measured (freeze test, lr=1e-9, real training path):** the same checkpoint scored `eval/success_once` **0.539** (deterministic) and `env/success_once` **0.010** (under the official flow-noise `[0.16,0.12,200]`). PPO saw ~1% success in 24,576 samples/iteration, had almost no success signal to amplify, optimised the dense reward instead, and by step 9 (~108 updates) had destroyed the policy — the deterministic eval fell to 0.0 too.
 
-**The threshold was already in this project's own logs**, unread until now (tensorboard `env/success_once`, first epochs):
+**Five runs, sorted by the quantity that turned out to predict the outcome.** The deterministic column is there to show that it does NOT predict it — the two runs with the highest deterministic scores are one success and one total loss. (All from one project; read from `env/success_once` in the first epochs.)
 
-| run (one project's numbering) | noisy-rollout success at start | deterministic eval at start | outcome |
-|---|---|---|---|
-| pp4 | 5-9% | 36.7% | amplified to 75.0% |
-| v10 | 10-15% | 61.7% | amplified to 68.8% |
-| pp5 | ~20% | 31.2% | still collapsed (necessary, not sufficient) |
-| v11 | **1.0%** | 53.9% | destroyed by step 9 |
-| v6 | 0.5% | 0.0% | never left zero |
+| noisy-rollout success at start | deterministic eval at start | outcome |
+|---|---|---|
+| 0.5% | 0.0% | never left zero |
+| **1.0%** | **53.9%** | destroyed by step 9 — the highest-but-one deterministic score in the table |
+| 5–9% | 36.7% | amplified to 75.0% |
+| 10–15% | **61.7%** | amplified to 68.8% |
+| ~20% | 31.2% | **still collapsed** — the precondition is necessary, not sufficient |
+
+Read it as three bands: **below ~1% nothing happens or the policy is destroyed; 5–15% amplifies; above that the precondition is satisfied and other things (the update schedule, §1d) decide.** The deterministic score at 53.9% sat above two of the runs that succeeded, and its run was destroyed within nine steps.
 
 **Rule: before launching PPO, measure `env/success_once` under the exact rollout noise you will train with. Below ~5% do not launch.** Cheapest probe: the freeze test (`actor.optim.lr=actor.optim.value_lr=1e-9`, `runner.val_check_interval=1`) — it exercises the REAL training path (same workers, env creation, model construction, weight sync) while leaving weights unchanged, and it reports both numbers in one epoch (~15 min).
 
@@ -464,7 +466,7 @@ Mechanise the classes, not the instances:
 
 ### 9b. Fix the class, not the instance the user pointed at
 
-The repeated pattern of this project's document phase: user points at defect X → author fixes X → user points at X′ of the same class. Each fix was correct and each left the class intact.
+The pattern to watch for: a reviewer points at defect X → the author fixes X → the reviewer points at X′ of the same class. Each fix is correct and each leaves the class intact, so the stream of reported defects never ends and its length looks like the reviewer's diligence rather than a missing step.
 
 **When a defect is reported, first ask what class it belongs to and enumerate the whole class before fixing anything.** The enumeration is usually a one-line grep or a short script, and it converts an open-ended stream of user-found defects into one bounded pass.
 
