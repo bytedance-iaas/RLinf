@@ -25,21 +25,26 @@ RLinf 是面向具身智能的强化学习训练框架。本文覆盖两部分�
 RLinf Dashboard 支持 HTTP Basic 认证。**通过 API 网关对外发布时必须启用该认证**，否则
 Chart 会在渲染阶段直接拒绝安装，以避免将无鉴权页面暴露至公网。
 
-建议将凭据预先写入 Kubernetes Secret，使其不会进入 Helm 的 release 历史记录：
+凭据必须预先创建为 Kubernetes Secret，Chart 只接受引用已有 Secret，不支持在 values 中直接
+填写用户名密码——Helm 会将 values 原样保存在 release 历史中，任何能执行 `helm get values`
+的人都可以读到明文。
 
 ```bash
 kubectl create namespace rlinf
 
-kubectl create secret generic rlinf-dashboard-auth -n rlinf \
+kubectl create secret generic physical-ai-auth -n rlinf \
   --from-literal=username=<用户名> \
   --from-literal=password='<密码>'
 ```
 
-Chart 默认读取 `username` 与 `password` 两个 key。若已有 Secret 使用其他 key 名称，可通过
-`dashboard.auth.usernameKey` 与 `dashboard.auth.passwordKey` 指定。
+这里使用 `physical-ai-auth` 作为统一名称，便于集群内多个组件共用同一套凭据。
 
-> 凭据亦可直接写入 values 文件，由 Helm 自动创建 Secret。但该方式会将明文保留在 release
-> 历史中（通过 `helm get values` 可读取），仅建议用于私有测试环境。
+> ⚠️ Secret 必须与 Release 位于同一 namespace。Kubernetes 不允许 Pod 引用其他 namespace 的
+> Secret，因此"集群通用"指的是**名称与凭据内容统一**，需要在每个用到它的 namespace 中各创建
+> 一份同名 Secret。
+
+Chart 默认读取 `username` 与 `password` 两个 key。若 Secret 使用其他 key 名称，可通过
+`dashboard.auth.usernameKey` 与 `dashboard.auth.passwordKey` 指定。
 
 ## 2. 编写 values 文件
 
@@ -65,7 +70,7 @@ dashboard:
     tag: ""            # 留空表示与 image.tag 保持一致
   auth:
     enabled: true
-    existingSecret: rlinf-dashboard-auth
+    existingSecret: physical-ai-auth
 ```
 
 其余可选配置：

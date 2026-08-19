@@ -83,17 +83,23 @@ dashboard:
   # actually write.
   logsPath: /workspace/RLinf/logs
 
-  # Optional HTTP Basic authentication. Production should point at an existing Kubernetes Secret;
-  # the inline username/password mode is convenient for a private test deployment, but Helm stores
-  # values in the release history. Both modes inject credentials only through secretKeyRef. When
-  # APIG exposes the dashboard publicly, the chart requires auth to be enabled.
+  # HTTP Basic authentication, supplied only through a Secret you create beforehand. The chart
+  # cannot build one from values on purpose: Helm stores values verbatim in the release history,
+  # so a password passed that way stays readable to anyone who can run `helm get values`.
+  #
+  #   kubectl create secret generic physical-ai-auth -n <namespace> \
+  #     --from-literal=username=<user> --from-literal=password=<password>
+  #
+  # The Secret must live in the same namespace as the release — Kubernetes does not let a pod
+  # reference a Secret from another one. Sharing one set of credentials across components means
+  # creating the same Secret name in each namespace that needs it.
+  #
+  # Required whenever APIG publishes the dashboard; the chart refuses to render without it.
   auth:
     enabled: false
     existingSecret: ""
     usernameKey: username
     passwordKey: password
-    username: ""
-    password: ""
 
   # Tiny by design: it serves a UI and tails logs. Raise memory if the log directory grows into
   # the tens of GB.
