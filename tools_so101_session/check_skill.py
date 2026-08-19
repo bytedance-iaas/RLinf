@@ -97,6 +97,27 @@ def main():
     scan(CJK, "非英文引语", "改写成实际观察到了什么，而不是引用某人的话")
     scan(DATES, "日期", "规则不该带日期；快照才需要，且用 git 更可靠")
 
+    # 4b: what an evidence line may contain. The standard is not brevity -- the
+    # long ones carry mechanism, which is the point -- but that every clause is
+    # either the failure mode or a number that makes the rule worth obeying.
+    # These four kinds of clause are none of that.
+    EVIDENCE_NOISE = [
+        (r"single most|most expensive|biggest mistake|worst (?:mistake|failure)",
+         "最高级——对别的项目没有意义，删掉"),
+        (r"of the project\b|in this project|this project's",
+         "项目相对的排名/限定，读者无法换算"),
+        (r"[Tt]he user (?:caught|had to|pointed)|human reviewer had to",
+         "'谁发现的'不是证据；要说的是流程为什么没发现"),
+        (r"\*\*(?:Operational rule|Rule):", "证据里重述规则——规则已在本节主张里"),
+    ]
+    for i, line in enumerate(rules.split("\n"), 1):
+        if not line.strip().startswith("> Evidence:") or "lint-ok" in line:
+            continue
+        for pat, hint in EVIDENCE_NOISE:
+            m = re.search(pat, line)
+            if m:
+                fails.append((i, "证据夹带", m.group(0)[:20], hint, line.strip()[:90]))
+
     # 5: numbering unique and ordered
     ids = [s[0] for s in secs]
     dupes = sorted({x for x in ids if ids.count(x) > 1})
