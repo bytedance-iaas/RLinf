@@ -30,74 +30,49 @@ release strands its disk and starts on an empty one.
 
 ## Dashboard authentication
 
-The RLinf Dashboard supports static HTTP Basic authentication. For production,
-put the credentials in an existing Kubernetes Secret and let Helm inject only
-Secret references into the dashboard sidecar:
+The dashboard serves HTTP Basic authentication from a Kubernetes Secret that you create before
+installing. The chart never builds that Secret from values: Helm keeps values verbatim in the
+release history, so a password passed that way stays readable to anyone who can run
+`helm get values`.
 
 ```bash
-chmod 600 /secure/path/rlinf-dashboard-auth.env
-kubectl create secret generic rlinf-dashboard-auth -n rlinf \
-  --from-env-file=/secure/path/rlinf-dashboard-auth.env
-
-helm upgrade --install rlinf ./docker/charts/rlinf -n rlinf \
-  --set dashboard.auth.enabled=true \
-  --set dashboard.auth.existingSecret=rlinf-dashboard-auth
+kubectl create secret generic physical-ai-auth -n <namespace> \
+  --from-literal=username=<user> \
+  --from-literal=password=<password>
 ```
-
-The protected env file uses the Secret's key names:
-
-```text
-username=operator
-password=replace-with-a-secret
-```
-
-The default Secret keys are `username` and `password`; set
-`dashboard.auth.usernameKey` or `dashboard.auth.passwordKey` when an existing
-Secret uses different keys. Basic Auth must stay behind the chart's HTTPS APIG
-route (or another TLS-terminating ingress).
-
-For a private test deployment, Helm can create the Secret from a protected
-values file:
 
 ```yaml
 dashboard:
   auth:
     enabled: true
-    username: operator
-    password: replace-me
+    existingSecret: physical-ai-auth
 ```
+
+The default keys are `username` and `password`; point `dashboard.auth.usernameKey` /
+`dashboard.auth.passwordKey` elsewhere if the Secret uses different ones.
+
+**The Secret has to be in the release's own namespace.** Kubernetes does not let a pod reference a
+Secret from another namespace, so one shared credential across several components means creating
+the same Secret name in each namespace that needs it — the name is what is common, not the object.
+`physical-ai-auth` is the convention used here for that reason.
+
+Credentials are read when the dashboard container starts. To rotate them, update the data in the
+same Secret, keeping the name and keys, then restart only that sidecar so the training process
+keeps running:
 
 ```bash
-chmod 600 private-values.yaml
-helm upgrade --install rlinf ./docker/charts/rlinf -n rlinf -f private-values.yaml
+kubectl exec -n <namespace> <release>-0 -c dashboard -- sh -c 'kill -TERM 1'
 ```
 
-Inline credentials are stored in Helm's release history, so an existing Secret
-is preferred. For production, use an existing Secret from the first deployment;
-do not migrate a Helm-created inline Secret to an `existingSecret` with the same
-name, because Helm may delete the release-owned Secret during that upgrade.
+Enabling or disabling auth, renaming the Secret or its keys, or changing either image tag all
+change the pod template and therefore recreate the whole pod. Do those while no training job is
+running. The `/healthz` endpoint stays unauthenticated and reports process liveness only;
+`/api/health`, the UI, the API, SSE streams, media and the OpenAPI docs all require credentials.
 
-Secret values are read when the dashboard container starts. A safe in-place
-rotation means updating the data in the same Secret, with the same name and key
-names, then restarting only that sidecar (not the StatefulSet pod and its
-training process):
-
-```bash
-kubectl exec -n rlinf rlinf-0 -c dashboard -- sh -c 'kill -TERM 1'
-```
-
-Enabling or disabling authentication, changing the Secret name/key names, or
-changing either image tag changes the StatefulSet pod template and therefore
-recreates the whole pod. Make those changes only when no training job is
-running. The unauthenticated `/healthz` endpoint contains only process liveness;
-`/api/health`, the UI, API, SSE streams, media, and OpenAPI docs all require
-credentials.
-
-Authentication requires a Dashboard image built from a commit that supports
-`RLINF_DASHBOARD_AUTH_MODE`. When auth is enabled, the startup probe deliberately
-rejects older images that ignore the Secret instead of exposing an apparently
-healthy but unauthenticated service. Build and publish a new Dashboard image,
-then set `dashboard.image.tag` to that tag before enabling auth.
+Auth needs a dashboard image built from a commit that supports `RLINF_DASHBOARD_AUTH_MODE`. When
+auth is on, the startup probe asserts that the protected endpoint actually answers 401, so an
+older image that ignores the Secret never becomes Ready instead of quietly serving an
+unauthenticated dashboard.
 
 ## Defaults worth knowing
 
@@ -123,7 +98,7 @@ gateway:
 | Value | New gateway | Existing gateway | Notes |
 |---|---|---|---|
 | `dashboard.auth.enabled` | `true` | `true` | Required whenever APIG exposes the RLinf Dashboard |
-| `dashboard.auth.existingSecret` | recommended | recommended | Secret holding the Basic username and password |
+| `dashboard.auth.existingSecret` | **required** | **required** | Pre-created Secret with the Basic credentials |
 | `apig.enabled` | `true` | `true` | Off means no public entry point |
 | `apig.create` | `true` | `false` | Picks which mode |
 | `apig.subnetIds` | **required** | — | A subnet in this cluster's VPC |
@@ -140,7 +115,7 @@ silently never gets an address.
 dashboard:
   auth:
     enabled: true
-    existingSecret: rlinf-dashboard-auth
+    existingSecret: physical-ai-auth
 
 apig:
   enabled: true
@@ -184,7 +159,7 @@ UI traffic only, never training data.
 dashboard:
   auth:
     enabled: true
-    existingSecret: rlinf-dashboard-auth
+    existingSecret: physical-ai-auth
 
 apig:
   enabled: true
