@@ -37,6 +37,35 @@ from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.placement import HybridComponentPlacement
 
 
+def build_rollout_model_config(cfg: DictConfig, model_cfg: DictConfig) -> DictConfig:
+    """Derive the rollout's model config from the actor's model config.
+
+    The rollout reuses the actor's model definition and overrides only what is
+    genuinely rollout-specific. ``enable_fused_prefix`` is one of those: the
+    fused prefix layers wrap a custom autograd Function that ``torch.compile``
+    cannot trace through, so a compiled rollout wants them off even when the
+    actor wants them on. Leaving ``rollout.model.openpi.enable_fused_prefix``
+    unset keeps the actor's value, which is the historical behaviour.
+
+    Args:
+        cfg: The full run config.
+        model_cfg: The actor's model config the rollout is derived from.
+
+    Returns:
+        A deep copy of ``model_cfg`` with the rollout-specific overrides applied.
+    """
+    rollout_model_config = copy.deepcopy(model_cfg)
+    with open_dict(rollout_model_config):
+        rollout_model_config.precision = cfg.rollout.model.precision
+        rollout_model_config.model_path = cfg.rollout.model.model_path
+        rollout_fused = OmegaConf.select(
+            cfg, "rollout.model.openpi.enable_fused_prefix", default=None
+        )
+        if rollout_fused is not None:
+            rollout_model_config.openpi.enable_fused_prefix = bool(rollout_fused)
+    return rollout_model_config
+
+
 class MultiStepRolloutWorker(Worker):
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
@@ -138,10 +167,7 @@ class MultiStepRolloutWorker(Worker):
         self.rollout_queue_size = self.cfg.rollout.get("rollout_queue_size", 0)
 
     def init_worker(self):
-        rollout_model_config = copy.deepcopy(self.model_cfg)
-        with open_dict(rollout_model_config):
-            rollout_model_config.precision = self.cfg.rollout.model.precision
-            rollout_model_config.model_path = self.cfg.rollout.model.model_path
+        rollout_model_config = build_rollout_model_config(self.cfg, self.model_cfg)
 
         self.hf_model: BasePolicy = get_model(rollout_model_config)
 
