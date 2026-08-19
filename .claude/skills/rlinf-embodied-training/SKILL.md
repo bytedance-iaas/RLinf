@@ -1,13 +1,35 @@
 ---
 name: rlinf-embodied-training
-description: Engineering discipline for embodied SFT/RL in RLinf (VLA policies such as PI0/PI0.5/OpenVLA on ManiSkill or other sims) AND for the artifacts the work is delivered as. Use when designing a training recipe or reward, choosing warm-start checkpoints, building/calibrating a sim environment for a new robot, converting demonstration data, launching/stopping/monitoring long runs, diagnosing zero-success and silent hangs, closing a sim2real gap, or writing/auditing the reproduction document, scripts and configs that ship with the result. Principles first; robot- and machine-specific facts are in the appendices.
+description: General engineering discipline for training and shipping embodied policies (VLA models such as PI0/PI0.5/OpenVLA, in RLinf on ManiSkill or any simulator) — applies to any robot and task, not one project. Use when designing a training recipe or reward, building/calibrating a sim environment for a new robot, converting demonstration data, choosing warm-start checkpoints, launching/monitoring long runs, diagnosing zero-success or silent hangs, closing a sim2real gap, deciding whether a reported number can be trusted, or writing the document/scripts the work ships as. Section 0 is the four gates in the order you need them; project- and machine-specific facts are appendices.
+---
+# Embodied Training — Engineering Discipline
+
+Rules for training and shipping embodied policies (VLA models such as PI0/PI0.5/OpenVLA on ManiSkill or any other simulator). **Every rule is stated so it applies to any robot and any task**; the `> Evidence:` lines cite the specific incident that paid for it, and those come from one project — a 6-DoF arm doing pick-and-place, trained in sim and validated against real hardware. Appendix A holds that project's own facts and is a snapshot, not a rule.
+
+Read this before starting, not after a failure. Most of these rules exist because a written rule was not consulted at build time.
+
 ---
 
-# RLinf Embodied Training — Engineering Discipline
+## 0. Use it as four gates, in this order
 
-General principles for training VLA policies (SFT + RL) in RLinf. Each rule is stated generally; **Evidence:** lines cite the incident that proved it (all from one project: SO101 + PI0.5, real-arm pick-and-place via ManiSkill). Appendices hold project/machine specifics — those ARE snapshots and say so.
+The rules below are grouped, but the order you need them in is this. Each gate has a cost of skipping it, measured on real runs.
+
+**Gate 1 — Before you build the task (§4, §4a).** Is every fact encoded in the sim MEASURED or USER-CONFIRMED? Object spawn distribution, scene geometry, success semantics, camera resolution and aspect, control frequency, object mass. An eyeballed guess is not a provenance.
+> Cost of skipping: the single most expensive mistake of the reference project — ~2 days of 8-GPU compute optimising a task whose spawn region covered 9% of the real distribution. Every number produced was real and meaningless.
+
+**Gate 2 — Before you train (§1, §4b, §5).** Is the task physically solvable by a scripted controller? Do demonstrations exist at sufficient DENSITY for the task's positional tolerance? Do the demos fit the episode budget? Does the batch arithmetic close? Run the preflight tool; a checklist you write at a retrospective and do not read at build time prevents nothing.
+> Cost of skipping: a 12-hour run chased a task that was physically impossible; a 30-minute scripted probe would have caught it.
+
+**Gate 3 — Before you believe a number (§7).** Were the selection seeds and the reporting seeds disjoint? Did you evaluate EVERY checkpoint, not the last one? Is the number a per-region breakdown or a mean hiding a dead corner? Is checkpoint-to-checkpoint variance known before you conclude anything about the recipe?
+> Cost of skipping: gate 83.2% vs fresh-seed 77–80%; a run flagged DIRECTION-SUSPECT at 7.8% peaked at 61.7% four checkpoints later.
+
+**Gate 4 — Before you ship (§7b, §9).** Does the policy work on REAL observations, measured offline? Is the deliverable — document, scripts, configs — executable by someone else, checked by a script rather than by re-reading?
+> Cost of skipping: a policy that scored 0.10 in sim scored 4.47 on real observations, i.e. 4.5× worse than freezing the arm. And of 30 documented reproduction steps, 29 were incomplete while being fixed one at a time as each was pointed out.
+
+**The meta-rule that generates the rest:** after every failure, ask *which automated check would have caught this* — and write it. A rule that lives only in prose gets skipped exactly when it matters (§6c).
 
 ---
+
 ## 1. Recipe design: check preconditions before training anything
 
 **On-policy RL (PPO) is an amplifier of existing success, not a from-scratch discoverer.** Before any RL run, verify at least one of:
@@ -21,7 +43,7 @@ A pretrained VLA has narrow exploration (approx_kl ~0.01–0.04/step under flow-
 > Evidence: every frame-level insight in the project came from the user forcing a pause; guards only monitored progress *within* the plan, never the plan.
 
 **Verify the task is physically solvable before any long run**: drive the env with a scripted controller / motion planner to a full success. If a planner can't do it, RL never will.
-> Evidence: a 12-hour RL run chased a task that was physically impossible (gripper couldn't close below 8.1cm on a 2.9cm cube); a 30-minute planner probe would have caught it. Later, the planner probe (100/150 success) proved the fixed env solvable in one hour.
+> Evidence: a 12-hour RL run chased a task that was physically impossible (the gripper could not close below 8.1 cm on a 2.9 cm object); a 30-minute planner probe would have caught it. Later, the planner probe (100/150 success) proved the fixed env solvable in one hour.
 
 **Nonzero initial success is NECESSARY but NOT SUFFICIENT.** A BC (behavior-cloned) warm start with high zero-shot success can still be DESTROYED by vanilla PPO within ~10 epochs: the cloned behavior is a narrow ridge; exploration noise knocks rollouts off it, failures near the ridge dominate the data, and advantages push the policy toward the noise-robust hover attractor. (Observed 3x: 50%-zero-shot starts collapsed to 0 by epoch 5–10 under default knobs, while an RL-grown 1.5% behavior — learned under the same noise — survived 740 epochs.) RL from a BC start needs protection — historically the **conservative-PPO bundle** (halved noise, lr ~2e-6, update_epoch 2, clip 0.1, entropy_bonus 0), but its validated regime is ONLY mid-competence planner-BC starts (~45-50%); outside that regime use the published reference recipe instead (§1b — fresh-sample-dominated updates, not smaller steps). **The bundle is calibrated in UPDATES PER EPOCH, not knob values: keep `global_batch_size = num_envs × (budget/num_action_chunks)` so each epoch does exactly ONE update.** Tripling the episode budget silently tripled updates/epoch and re-triggered soft BC-erosion (eval fell 71.9%→30% BELOW the 46.9% zero-shot while train rose — train↑/eval↓ converging is the fingerprint). Longer episodes also blow up return variance (value_loss 100+, kl→8e-4); and set save_interval ≤10 in fast-moving phases or the peak checkpoint is lost (71.9% peak at epoch 10 vs save_interval 50).
 
@@ -36,7 +58,11 @@ A pretrained VLA has narrow exploration (approx_kl ~0.01–0.04/step under flow-
 **Before adopting ANY collapse diagnosis, check the refuted-diagnoses list (§6c) FIRST.** Cold-critic (huge value_loss/grad_norm at RL start) is a seductive and ALREADY-REFUTED primary explanation: v7's warmup held success and cut value_loss, yet v7b still collapsed — the destroyer was BC-brittleness. The cold-critic signature (value_loss 50–110, grad_norm 300–400 vs healthy ~23) is REAL but it is a co-symptom of a fresh value head on bimodal returns, not proof of causation. A diagnosis that was refuted once must clear a HIGHER bar (a controlled comparison, not just a matching fingerprint) before it justifies a new run.
 > Evidence: pp5 collapse was initially re-diagnosed as cold-critic and a warmup phase was launched — repeating the v6→v7→v7b arc that the skill itself documents as a misdiagnosis. The user caught it ("你这是又把方向搞错了?").
 
-**Expert-iteration protocol that works (validated twice):** (1) run deterministic evals of the current best policy on 6-8 NEVER-USED seeds with the rollout recorder on (`SO101_COLLECT_DIR`), which yields ~n_envs x n_seeds x success_rate trajectories for free while also producing an unbiased estimate of that policy; (2) convert those successes AND mix them with the original planner demos (iRe-VLA — pure self-distillation narrows the policy; v5 lost 53 pts that way); (3) SFT from the SAME policy at a GENTLE lr (1e-5, not the 2.5e-5 used for fresh behaviour), 2000 steps, save every 250; (4) gate on the usual seed-separated protocol. Historical gain: +18 pts (63.3% -> 81.6%).
+**Expert-iteration protocol that works (validated twice):** (1) run deterministic evals of the current best policy on 6-8 NEVER-USED seeds with the rollout recorder on (the env's rollout-recorder env var), which yields ~n_envs x n_seeds x success_rate trajectories for free while also producing an unbiased estimate of that policy; (2) convert those successes AND mix them with the original planner demos (iRe-VLA — pure self-distillation narrows the policy; v5 lost 53 pts that way); (3) SFT from the SAME policy at a GENTLE lr (1e-5, not the 2.5e-5 used for fresh behaviour), 2000 steps, save every 250; (4) gate on the usual seed-separated protocol. Historical gain: +18 pts (63.3% -> 81.6%).
+
+> **On the run names in the evidence lines** (`pp4`, `pp5`, `v6`…`v15`): they are one project's
+> internal run numbering, kept only so the incident can be traced back to its logs. They carry no
+> meaning outside it — read them as "run A", "run B".
 
 ## 1b. Published reference recipes — ALIGN FIRST, hand-roll knobs only after the reference fails
 
@@ -68,7 +94,7 @@ A pretrained VLA has narrow exploration (approx_kl ~0.01–0.04/step under flow-
 
 **The threshold was already in this project's own logs**, unread until now (tensorboard `env/success_once`, first epochs):
 
-| run | noisy-rollout success at start | deterministic eval at start | outcome |
+| run (one project's numbering) | noisy-rollout success at start | deterministic eval at start | outcome |
 |---|---|---|---|
 | pp4 | 5-9% | 36.7% | amplified to 75.0% |
 | v10 | 10-15% | 61.7% | amplified to 68.8% |
@@ -78,7 +104,7 @@ A pretrained VLA has narrow exploration (approx_kl ~0.01–0.04/step under flow-
 
 **Rule: before launching PPO, measure `env/success_once` under the exact rollout noise you will train with. Below ~5% do not launch.** Cheapest probe: the freeze test (`actor.optim.lr=actor.optim.value_lr=1e-9`, `runner.val_check_interval=1`) — it exercises the REAL training path (same workers, env creation, model construction, weight sync) while leaving weights unchanged, and it reports both numbers in one epoch (~15 min).
 
-**Why long-horizon tasks are structurally harder here:** noise is injected per decision, so staying on the BC ridge is a product over decisions. Decisions per episode = `max_episode_steps / num_action_chunks`: official ManiSkill 80/5 = **16**, official LIBERO 240/5 = **48**, this SO101 task 640/5 = **128**. At a per-decision on-ridge probability of 0.97 that is 61% / 23% / **2%**. Copying a reference recipe's noise parameters onto an 8x longer horizon is not "aligning with the reference" — it is a materially different amount of injected noise per trajectory.
+**Why long-horizon tasks are structurally harder here:** noise is injected per decision, so staying on the BC ridge is a product over decisions. Decisions per episode = `max_episode_steps / num_action_chunks`: a short benchmark task 80/5 = **16**, a medium one 240/5 = **48**, the long-horizon task in question 640/5 = **128**. At a per-decision on-ridge probability of 0.97 that is 61% / 23% / **2%**. Copying a reference recipe's noise parameters onto an 8x longer horizon is not "aligning with the reference" — it is a materially different amount of injected noise per trajectory.
 
 **Do NOT use `runner.only_eval=True` as the probe.** It is not a "skip training" switch: `rlinf/config.py:826-830` sources the model spec from `cfg.rollout.model` instead of `cfg.actor.model`, and `env_worker.py:108` / `huggingface_worker.py:70` skip training-env creation. Three coupled changes, so a training config run under it exercises a different path (and typically dies on missing keys — which is the lucky outcome; a config with just enough keys would silently build a DIFFERENT model and hand back a number you would believe).
 
@@ -139,30 +165,30 @@ rollout success still collapsed at 12 updates/epoch.
 - **Unit audit first**: identify the units of dataset actions/states vs sim controller (normalized vs radians vs degrees) before wiring anything.
 - **Every conversion must round-trip** (`norm→rad→norm` error ≈ 1e-6) and be validated against the FULL dataset range vs sim joint limits (all joints, not just the suspicious one — audit siblings together).
 - **Never reuse a conversion across different mechanisms.** For every actuator (especially grippers, which have different linkages than arm servos), measure the command→physical-travel curve in sim (`set_qpos` sweep + measure the physical quantity) before trusting any derived mapping.
-  > Evidence: the arm servo tick→rad conversion applied to the gripper left an 8.1cm minimum jaw gap vs a 2.9cm cube — undetectable from code review, obvious from a 10-line measurement sweep.
+  > Evidence: the arm servo tick→rad conversion applied to the gripper left an 8.1 cm minimum jaw gap against a 2.9 cm object — undetectable from code review, obvious from a 10-line measurement sweep.
 - Clip commanded targets to URDF joint limits (real calibrations often include uncalibrated full-turn ranges).
-- **Object physical parameters (mass/density at minimum) come from real bounds, not sim defaults.** ManiSkill's default density (1000) gave a 24.4g cube where the real one is <10g — a 2.4× dynamics error sitting silently under every grasp. Ask the user for bounds when unmeasurable; declare friction/etc. as unverified defaults when nobody can say.
+- **Object physical parameters (mass/density at minimum) come from real bounds, not sim defaults.** ManiSkill's default density (1000) gave a 24.4 g object where the real one is <10 g — a 2.4× dynamics error sitting silently under every grasp. Ask the user for bounds when unmeasurable; declare friction/etc. as unverified defaults when nobody can say.
 - **Per-episode buffers in batched envs must be full-batch tensors updated via `buf[env_idx]=…`** — `_initialize_episode` receives PARTIAL env_idx on auto-reset after early termination. This bug stays dormant while episodes only truncate, then detonates at the first early termination — which for grasp tasks is the first SUCCESS. Test explicitly: `env.reset(options=dict(env_idx=tensor([...])))` then `evaluate()`.
 - Scene fidelity: iterate against REAL photos side-by-side; the user's eye is the judge. Cameras mounted on robot links move when you change joint offsets — re-point them after any calibration change.
 - Sign/offset calibration method: replay a real episode's actions in sim, compare frame-by-frame against the real video (read ALL frames — behavioral claims from 3–4 sampled frames were wrong once already).
 - Wiring a new robot into RLinf usually needs NO new env type: drop the task into the sim's task dir (auto-registered), name cameras to match the wrapper's expectations, and add small branches for control mode and action formatting (see Appendix A file map).
 
-**DENSITY LAW: the BC floor is set by demonstration spacing relative to the task's positional tolerance — and it is a THRESHOLD, not a gradient.** Compute `spacing = sqrt(spawn_area / n_demos)` and compare it against the tolerance the task actually needs (for a 2.9 cm cube with a parallel gripper, ≈ ±0.7 cm). Above the tolerance the nearest demonstration is not close enough to imitate, so BC must genuinely generalise and collapses; below it, BC interpolates and works. Fix the floor by shrinking the spawn area or adding demonstrations — NOT by changing recipes.
+**DENSITY LAW: the BC floor is set by demonstration spacing relative to the task's positional tolerance — and it is a THRESHOLD, not a gradient.** Compute `spacing = sqrt(spawn_area / n_demos)` and compare it against the tolerance the task actually needs (for a 2.9 cm object with a parallel gripper, ≈ ±0.7 cm). Above the tolerance the nearest demonstration is not close enough to imitate, so BC must genuinely generalise and collapses; below it, BC interpolates and works. Fix the floor by shrinking the spawn area or adding demonstrations — NOT by changing recipes.
 > Evidence (3 points, same env, same recipe, same warm start): spacing 1.01 cm → 12.5% (full board, 420 demos); 0.91 cm → 7.0% (curriculum band, 384 demos); **0.44 cm → 56.7% honest (small box, 247 demos)**. The 0.44 cm run also beat the historical pp-era floor (46.9%) under a STRICTER success criterion. Removing unreachable regions without changing density (the 0.91 cm run) did NOT help — achievability mass is a much weaker lever than spacing.
 
 ## 4a. Task-spec facts: measured or user-confirmed, NEVER assumed
 
 Every sim task encodes real-world facts: where objects can appear, scene geometry, success semantics, data-collection protocol. **Each such fact must carry a provenance tag: MEASURED (from the real dataset — read ALL episodes, not a few frames) or USER-CONFIRMED. An eyeballed guess is not a provenance.** Before training on a new/changed task, list the facts and their provenance in the report; batch the unknowns into ONE question set for the user; measure everything the dataset can answer instead of asking.
-> Evidence: the cube-spawn region was eyeballed from a few calibration frames at 6×8cm; extracting ALL 87 real first frames (a one-hour CPU job) would have shown on DAY ONE that real starts cover the ENTIRE board — the sim box covered 9% of them. It was done days late. **Price of the skipped hour: ~2 days of 8×H200 training compute (10+ SFT/RL runs, incl. an entire "reach 85%" campaign) optimized and celebrated a subset task whose numbers did not transfer (honest 80% on the subset ≈ 22.7% on the true task).** This is the single most expensive mistake of the project. The user had to point it out ("方块可能出现在棕色区域的任何一个地方"). Same audit later caught: wrong success semantics (missing the return-to-home the user required), wrong board size, wrong base-board gap, and an initial arm pose (extended) that contradicted all 87 first frames (folded, gripper closed). **Operational rule: the task-spec audit (this section) is the FIRST gate of any new env — before the first training run, not after the first plateau.**
+> Evidence: the object-spawn region was eyeballed from a few calibration frames at 6×8cm; extracting ALL 87 real first frames (a one-hour CPU job) would have shown on DAY ONE that real starts cover the ENTIRE board — the sim spawn box covered 9% of them. It was done days late. **Price of the skipped hour: ~2 days of 8×H200 training compute (10+ SFT/RL runs, incl. an entire "reach 85%" campaign) optimized and celebrated a subset task whose numbers did not transfer (honest 80% on the subset ≈ 22.7% on the true task).** This is the single most expensive mistake of the project. The user had to point it out ("方块可能出现在棕色区域的任何一个地方"). Same audit later caught: wrong success semantics (missing the return-to-home the user required), wrong board size, wrong base-board gap, and an initial arm pose (extended) that contradicted all 87 first frames (folded, gripper closed). **Operational rule: the task-spec audit (this section) is the FIRST gate of any new env — before the first training run, not after the first plateau.**
 
 **When two measurements CONTRADICT, show the contradiction to the user (annotated image + both numbers) — do not synthesize a theory that reconciles them.** Two invented theories (a 9.3cm phantom black board-end; an "environment changed between dataset and now" era story) each cost an iteration before the user resolved the contradiction in one sentence ("按第一个图片"). The dataset frames are the binding spec when the policy will be validated against dataset-era conditions.
 
-**Image-pipeline parity (calibrate the CAMERA to the PIPELINE, not to your guess):** before designing sim cameras, read how the training pipeline actually processes real images (openpi: `resize_with_pad` = aspect-preserving LETTERBOX, never squash). Sim must render the real camera's aspect ratio (e.g. 160×120 for a 640×480 source) so both domains pass through the IDENTICAL transform. NEVER introduce a sim-side distortion to mimic an unverified pipeline assumption — an anisotropic-intrinsics hack built on "the pipeline squashes to square" put a fake distortion into sim until the user noticed the geometry looked wrong. Cheap camera validations: a known-size cube must render square (pixel-aspect check); a known object length + measured camera height pins the focal; board/object rect fractions real-vs-sim within ~2% is the convergence test.
+**Image-pipeline parity (calibrate the CAMERA to the PIPELINE, not to your guess):** before designing sim cameras, read how the training pipeline actually processes real images (openpi: `resize_with_pad` = aspect-preserving LETTERBOX, never squash). Sim must render the real camera's aspect ratio (e.g. 160×120 for a 640×480 source) so both domains pass through the IDENTICAL transform. NEVER introduce a sim-side distortion to mimic an unverified pipeline assumption — an anisotropic-intrinsics hack built on "the pipeline squashes to square" put a fake distortion into sim until the user noticed the geometry looked wrong. Cheap camera validations: a known-size object must render square (pixel-aspect check); a known object length + measured camera height pins the focal; board/object rect fractions real-vs-sim within ~2% is the convergence test.
 
 **Any change to env facts (reset pose, object positions) silently invalidates downstream TOOL assumptions — rerun the planner probe first after every such change, before interpreting anything else.** Setting the true measured home pose (gripper nearly closed, wrist_roll 0) broke the demo generator's implicit preconditions (open jaws, wrist_roll π/2) → 1/60 probe with misleading per-stage failure labels. Demo generators should start with an explicit raise-arm-to-ready prefix from the true home (which also matches real demo semantics) rather than assuming the ready pose is the reset pose.
 
 **Provenance applies to EVERY numeric parameter, not just real-world facts.** Legal provenances: derived-from-requirement / measured / user-confirmed / published-reference / EXPLICITLY-DECLARED-arbitrary (listed in the report with its risk). The failure mode this kills: a value gets filled in to keep moving ("reference example used 128", "closest 4:3 to the current value"), then later steps inherit it as if validated — provenance laundered by repetition. Verification instinct is crash-triggered (syntax, divisibility) but the expensive errors are the SILENT ones (resolution, spawn ranges) where the pipeline runs fine and just produces worse results — so the audit must be run as a checklist, not left to instinct.
-> Evidence: render resolution 128² was copied from a reference example, then "minimally changed" to 160×120 for aspect ratio — never derived from the requirement (the pipeline feeds the policy 224×168 of real content; sim was delivering ~70% of the real detail, cube 10px vs 14px). Caught only when the user asked why results degrade ("数据集里应该是640x480的"). Fix: render at the real camera's native 640×480 so both domains share the identical resize path.
+> Evidence: render resolution 128² was copied from a reference example, then "minimally changed" to 160×120 for aspect ratio — never derived from the requirement (the pipeline feeds the policy 224×168 of real content; sim was delivering ~70% of the real detail, object 10 px vs 14 px). Caught only when the user asked why results degrade ("数据集里应该是640x480的"). Fix: render at the real camera's native 640×480 so both domains share the identical resize path.
 
 **A parameter has ONE source of truth — when changing it, grep for EVERY consumer before declaring the change done.** Shared quantities (control frequency, resolution, fps) are consumed by parallel paths that don't read each other: the env YAML (RL/eval), the demo generator's own gym.make, the dataset converter's metadata, the task register. Changing one path silently forks the parameter.
 > Evidence: the approved 15→30Hz change was applied to the env yaml only; the demo generator's gym.make (no sim_config → ManiSkill default 20Hz) and the converter (fps=15 hardcoded) kept their own values — one pipeline ran THREE different frequencies (20Hz data, labeled 15, evaluated at 30) and burned a full S1-S4 cycle before the demo-length telltale (median 220, unchanged from the 15Hz era) exposed it. Corollary: the same audit retroactively showed ALL v3-era data was 20Hz-collected/15-labeled/15-evaluated.
@@ -188,8 +214,8 @@ Two Phase-2 failures were ALREADY-documented Phase-1 lessons that were not consu
 - norm_stats: compute per dataset; RLinf rollout workers ALSO look for norm_stats inside the checkpoint dir — copy it into every new warm-start checkpoint.
 - **norm_stats are FROZEN across a checkpoint LINEAGE — never recompute mid-lineage.** A policy's action decoder is calibrated to the stats it was trained under; recomputing stats on an enlarged dataset and continuing SFT from an existing ckpt trains under a shifted convention and degrades monotonically. Recompute ONLY when starting a fresh lineage (new base weights). The per-ckpt stats copy is the lineage's ground truth — restore from there if the assets file was overwritten.
   > Evidence: v3→v3b: dataset 209→472 eps triggered a stats recompute; continued SFT then DECAYED 22.7%→15%→1.6% across steps, and the stats swap ALONE cut the unchanged parent ckpt from 19.5% to 9.4% (controlled A/B, seed 777).
-- **Contact-force grasp flags can be TRUE for useless pinches.** `is_grasping` fires on any contact force — including edge/corner pinches that cannot lift the object (observed: grasped=True while the cube dragged along the table, never rising 1mm). After closing, run a MICRO-LIFT verification (+3cm; payload must rise >1.5cm) before transporting; on failure, regrasp with a jittered grasp point rather than proceeding.
-- **Transported-payload targeting: aim at the PAYLOAD, not the TCP.** A grasped object hangs offset from the TCP (direction set by the grasp yaw, 2–4cm for a small cube); planning the drop by TCP position misses containers whose acceptance window is comparable to the offset. Measure `payload_xy − tcp_xy` once after the grasp (rigid during transport) and subtract it from the target. Blind ±1cm retry variants cannot fix a systematic 2–4cm direction-specific offset.
+- **Contact-force grasp flags can be TRUE for useless pinches.** A contact-based `is_grasping` fires on any contact force — including edge/corner pinches that cannot lift the object (observed: grasped=True while the object dragged along the table, never rising 1 mm). After closing, run a MICRO-LIFT verification (+3cm; payload must rise >1.5cm) before transporting; on failure, regrasp with a jittered grasp point rather than proceeding.
+- **Transported-payload targeting: aim at the PAYLOAD, not the TCP.** A grasped object hangs offset from the TCP (direction set by the grasp yaw, 2–4 cm for a small object); planning the drop by TCP position misses containers whose acceptance window is comparable to the offset. Measure `payload_xy − tcp_xy` once after the grasp (rigid during transport) and subtract it from the target. Blind ±1cm retry variants cannot fix a systematic 2–4cm direction-specific offset.
   > Evidence: pick-and-place drop-miss rate: probe 3/8 with variants-roulette; all failures landed 2–4cm off in +y, exactly the measured hang offset.
 
 ## 6. Run lifecycle & operations
@@ -236,7 +262,7 @@ Two Phase-2 failures were ALREADY-documented Phase-1 lessons that were not consu
 - Say "current binding constraint (evidence grade: X)" — never "root cause found". Two misdiagnoses (dirty-state, cold-critic) came from claiming certainty without a traceback or a controlled comparison; the refuting run is itself valuable evidence when the prediction was written down first.
 - Budget rule: a wrong theory should cost ~1 verdict window (≈40 min), not a night. Stop-rule: after ~3 refuted variants of the same class, stop iterating and question the frame (see ladder step 6).
 - **Every lesson must be tagged MECHANIZED or DOCUMENTED-ONLY, and DOCUMENTED-ONLY needs a stated reason why no automated check is possible.** Writing a rule into this file feels like closure but prevents nothing — three of the most expensive incidents (spawn-box coverage, frequency chain, render resolution) each had a written rule that was never consulted at build time. Post-mortems end with one mandatory question: *which automated check would have caught this?* If none exists, add it to `toolkits/invariant_audit.py` (silent wrong-result class) or `toolkits/preflight_config.py` (launch-blocking class) before moving on.
-  > Evidence: the invariant auditor was written only after the user asked "不就是定期检查出来吧"; on its FIRST run it found two live defects (stale 15fps converters; sim spawn box covering only 89% of real cube starts) that had been sitting undetected behind written-but-unmechanized rules.
+  > Evidence: the invariant auditor was written only after the user asked why this was not simply checked periodically; on its FIRST run it found two live defects (stale 15fps converters; a sim spawn box covering only 89% of real object starts) that had been sitting undetected behind written-but-unmechanized rules.
 
 - **Failure loop (user-mandated standing workflow): after EVERY failure — (1) distill the lesson INTO this skill immediately, (2) RE-LOAD the updated skill, (3) walk the relevant 4b gate with it before building the next stage.** Checklists that are only written at retrospectives and never read at build time do not prevent repeats (two Phase-1 lessons were repeated verbatim in Phase-2 because the doc wasn't consulted).
 
@@ -271,7 +297,7 @@ slightly WORSE (3.9 -> 4.8 cm median, tail 46% -> 48%).**
 What the refutation teaches: the refinement loop reported converging (3.1 cm
 pre-drop error at its own last measurement) while the LANDED position was 4.8
 cm off, so the error is generated **after the gripper opens** — release
-dynamics (residual velocity/pose as the cube leaves the jaws), not position
+dynamics (residual velocity/pose as the object leaves the jaws), not position
 control. Search resolution was never the binding constraint. Next hypotheses
 to test would be release height and gripper-open timing, not IK.
 
@@ -309,9 +335,9 @@ measurement on SIM episodes (in-distribution reference) and a "hold still"
 predictor (action = current state), which is the scale of motion. Report the
 ratio policy-error / hold-still-error: below 1 the policy beats doing nothing,
 at or above 1 it does not.
-> Evidence: the SO101 policy measured 0.10 on sim and **4.47 on real** — its
+> Evidence: a sim-trained policy measured 0.10 on sim and **4.47 on real** — its
 > actions were 4.5x worse than freezing the arm. Cost: 20 minutes, no hardware.
-> `tools_so101_session/offline_replay_check.py` is the implementation.
+> (Reference implementation: `offline_replay_check.py` in the project's tools dir.)
 
 **Do not stop at the first suspect.** The obvious culprit was a known defect
 (the sim wrist camera pointed at the robot's own body, so that input channel was
@@ -324,15 +350,16 @@ a 30-hour retrain would have bought nothing.
 code review and in every metric for weeks; it took one grid of frames sampled
 from actual training episodes. Do this once per camera when a new env is built.
 
-**What closed it: co-training, not more simulator fidelity.** Mixing the 87 real
-teleop episodes into the sim dataset and continuing SFT took the ratio 4.47 →
-**0.70** in ~7 h, while sim ring-1 success did not fall (57.8% → ~60%). Fixing
+**What closed it: co-training, not more simulator fidelity.** Mixing the real
+teleop episodes (87 of them) into the sim dataset and continuing SFT took the
+ratio 4.47 → **0.70** in ~7 h, while in-sim success did not fall (57.8% → ~60%).
+Fixing
 the wrist camera properly would have cost a 30-hour retrain and, per the ablation
 above, bought little. **Order the sim2real interventions by measured contribution,
 and prefer the one that adds real data over the one that improves the simulator.**
 
 **Hold out real episodes or the number is not a number.** Round one upsampled all
-87 real episodes into training and then read the offline metric on episodes from
+all the real episodes into training and then read the offline metric on episodes from
 that same set: 0.84, a training-set score that cannot authorise anything. Round
 two trained on 0–69 and held out 70–86; 0.70 on the held-out slice is the first
 figure that measures generalisation. This is §7's gate-vs-verification seed rule
@@ -368,7 +395,7 @@ in the number you looked at.
 Sim+real co-training is exactly that shape: it targets real-observation
 performance and can eat the simulator competence that took days to build. So
 every checkpoint got BOTH the offline real-observation ratio (the objective,
-starting at 4.47, target <1) and the sim ring-1 success rate (the constraint,
+starting at 4.47, target <1) and the in-sim success rate on the training region (the constraint,
 must not fall from 57.8%).
 
 It caught the trade in flight. At 750 steps the real ratio had improved to 1.16
@@ -419,7 +446,7 @@ Training discipline (§1–§8) is about not wasting GPU. This section is about 
 
 ### 9a. Reading a document is not reviewing it. Write the check.
 
-Every defect found in the SO101 reproduction doc survived multiple careful re-readings by its author and was found either by the user or by a five-line script. That is not carelessness; it is what proofreading is worth on structured content.
+Every defect found in the reference project's reproduction document survived multiple careful re-readings by its author and was found either by the user or by a five-line script. That is not carelessness; it is what proofreading is worth on structured content.
 
 Mechanise the classes, not the instances:
 
@@ -431,7 +458,7 @@ Mechanise the classes, not the instances:
 | Every script the doc tells you to run must be in the doc's own tool index | Tools added mid-document with nowhere to look them up | 8 lines |
 | Every referenced path/script/config exists on disk | Renamed or deleted artifacts | 15 lines |
 
-> Evidence: an audit of "does every step have command / parameters / rationale / inputs / outputs / acceptance" reported **29 of 30 steps incomplete** — while the author had been fixing them one at a time as the user pointed at each. `tools_so101_session/check_doc_consistency.py` is the implementation; it caught a missing `--repo-id` on a documented command, a table claiming six registry entries where seven were used, and two placeholder-broken command blocks.
+> Evidence: an audit of "does every step have command / parameters / rationale / inputs / outputs / acceptance" reported **29 of 30 steps incomplete** — while the author had been fixing them one at a time as the user pointed at each. (Reference implementation: `check_doc_consistency.py` in the project's tools dir.) It caught a missing `--repo-id` on a documented command, a table claiming six registry entries where seven were used, and two placeholder-broken command blocks.
 
 **Corollary — a count you cannot enumerate is not a check.** "The pipeline uses 7 registry entries" hides an error; printing all seven with their datasets does not. Any tool that reports a number should print the members.
 
@@ -441,7 +468,7 @@ The repeated pattern of this project's document phase: user points at defect X �
 
 **When a defect is reported, first ask what class it belongs to and enumerate the whole class before fixing anything.** The enumeration is usually a one-line grep or a short script, and it converts an open-ended stream of user-found defects into one bounded pass.
 
-> Evidence: "D3 has no command" was true of C3, D3, E4 and E5 as well; "so101_smoke.py is not in the tool list" was true of `check_doc_consistency.py` too; "why is v4 still in the doc" applied to 89 prose occurrences, not the one line quoted.
+> Evidence: "this stage has no command" was true of four stages; "this tool is missing from the index" was true of two tools; "why is this internal version number still here" applied to 89 prose occurrences, not the one line quoted.
 
 ### 9c. A portability refactor can convert wrong-but-working into broken
 
@@ -461,7 +488,7 @@ The `REFUTED` notes carry the real value — say what failed and by how much, be
 
 ### 9e. Tools rot silently; a tool nobody runs is worse than no tool
 
-`so101_smoke.py` asserted a task id (`SO101PickCube-v1`) that had been renamed long before. Anyone running it hit a failure at step 1 that had nothing to do with their environment. The tool had been written, documented and never re-run.
+The project's environment smoke test asserted a task id that had been renamed long before. Anyone running it hit a failure at step 1 that had nothing to do with their environment. The tool had been written, documented and never re-run.
 
 **Any check the docs tell a reader to run must itself be run whenever the thing it checks changes** — ideally by making it part of the same pass. Corollary: when writing a document that quotes a tool's output, run the tool and paste the real output; quoted-from-memory output is how the rot starts.
 
