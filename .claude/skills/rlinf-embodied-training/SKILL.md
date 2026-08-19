@@ -14,17 +14,21 @@ Read this before starting, not after a failure. Most of these rules exist becaus
 
 The rules below are grouped, but the order you need them in is this. Each gate has a cost of skipping it, measured on real runs.
 
-**Gate 1 — Before you build the task (§4, §4a).** Is every fact encoded in the sim MEASURED or USER-CONFIRMED? Object spawn distribution, scene geometry, success semantics, camera resolution and aspect, control frequency, object mass. An eyeballed guess is not a provenance.
+**Gate 1 — Before you build the task (§4, §4a; reward semantics §2).** Is every fact encoded in the sim MEASURED or USER-CONFIRMED? Object spawn distribution, scene geometry, success semantics, camera resolution and aspect, control frequency, object mass. An eyeballed guess is not a provenance.
 > Cost of skipping: the single most expensive mistake of the reference project — ~2 days of 8-GPU compute optimising a task whose spawn region covered 9% of the real distribution. Every number produced was real and meaningless.
 
-**Gate 2 — Before you train (§1, §4b, §5).** Is the task physically solvable by a scripted controller? Do demonstrations exist at sufficient DENSITY for the task's positional tolerance? Do the demos fit the episode budget? Does the batch arithmetic close? Run the preflight tool; a checklist you write at a retrospective and do not read at build time prevents nothing.
+**Gate 2 — Before you train (§1, §1b, §1c, §1d, §4b, §5; which checkpoint to start from, §3).** Is the task physically solvable by a scripted controller? Do demonstrations exist at sufficient DENSITY for the task's positional tolerance? Do the demos fit the episode budget? Does the batch arithmetic close? Run the preflight tool; a checklist you write at a retrospective and do not read at build time prevents nothing.
 > Cost of skipping: a 12-hour run chased a task that was physically impossible; a 30-minute scripted probe would have caught it.
 
-**Gate 3 — Before you believe a number (§7).** Were the selection seeds and the reporting seeds disjoint? Did you evaluate EVERY checkpoint, not the last one? Is the number a per-region breakdown or a mean hiding a dead corner? Is checkpoint-to-checkpoint variance known before you conclude anything about the recipe?
+**Gate 3 — Before you believe a number (§7; and §8 when an intervention can trade one metric for another).** Were the selection seeds and the reporting seeds disjoint? Did you evaluate EVERY checkpoint, not the last one? Is the number a per-region breakdown or a mean hiding a dead corner? Is checkpoint-to-checkpoint variance known before you conclude anything about the recipe?
 > Cost of skipping: gate 83.2% vs fresh-seed 77–80%; a run flagged DIRECTION-SUSPECT at 7.8% peaked at 61.7% four checkpoints later.
 
-**Gate 4 — Before you ship (§7b, §9).** Does the policy work on REAL observations, measured offline? Is the deliverable — document, scripts, configs — executable by someone else, checked by a script rather than by re-reading?
+**Gate 4 — Before you ship (§7b, §8b, §9).** Does the policy work on REAL observations, measured offline? Is the deliverable — document, scripts, configs — executable by someone else, checked by a script rather than by re-reading?
 > Cost of skipping: a policy that scored 0.10 in sim scored 4.47 on real observations, i.e. 4.5× worse than freezing the arm. And of 30 documented reproduction steps, 29 were incomplete while being fixed one at a time as each was pointed out.
+
+**While a run is alive (§6, §6b, §6d).** Process truth from `/proc`, detached launches, a startup deadline, a timeout on every stage, and no root cause without a traceback. These are not a gate — they apply continuously, and they are where the idle-GPU hours actually go.
+
+**When something has already failed (§6c, §6e, §6f).** Check the refuted-diagnoses list before adopting a diagnosis; budget a wrong theory at one verdict window, not a night; and after ~3 refuted variants of the same class, stop iterating and question the frame.
 
 **The meta-rule that generates the rest:** after every failure, ask *which automated check would have caught this* — and write it. A rule that lives only in prose gets skipped exactly when it matters (§6c).
 
@@ -455,6 +459,7 @@ Mechanise the classes, not the instances:
 | Two-way check of any summary table | Entries used but unlisted, and entries listed but unused | 10 lines |
 | Every script the doc tells you to run must be in the doc's own tool index | Tools added mid-document with nowhere to look them up | 8 lines |
 | Every referenced path/script/config exists on disk | Renamed or deleted artifacts | 15 lines |
+| For a document meant to be GENERAL: no project proper nouns, no internal run identifiers, no dates on rules, and an entry section that reaches every other section | Rules that only their author can apply | 90 lines |
 
 > Evidence: an audit of "does every step have command / parameters / rationale / inputs / outputs / acceptance" reported **29 of 30 steps incomplete** — while the author had been fixing them one at a time as the user pointed at each. (Reference implementation: `check_doc_consistency.py` in the project's tools dir.) It caught a missing `--repo-id` on a documented command, a table claiming six registry entries where seven were used, and two placeholder-broken command blocks.
 
@@ -516,7 +521,7 @@ For this project the install script produced a working RLinf and **three separat
 
 > Evidence: the doc carried a registry-entry table (§1.4) and an all-artifacts table (§1.5). An entry added to one was missed in the other; a reader found it and asked, reasonably, why anything in the document should be trusted. The fix was deleting one table, not reconciling them.
 
-**In prose, name artifacts by function** ("stage B's best checkpoint", "the narrow-box dataset") and let literal names live only in the commands and in one table. Serial numbers like `v4`/`v8`/`v13` carry no meaning to a reader and are load-bearing only on disk.
+**In prose, name artifacts by function** ("stage B's best checkpoint", "the narrow-box dataset") and let literal names live only in the commands and in one table. Serial numbers like `v4`/`v8`/`v13` carry no meaning to a reader and are load-bearing only on disk. <!-- lint-ok: run-ids are this rule's own example -->
 
 ### 9i. Delivery has more surfaces than the repository
 

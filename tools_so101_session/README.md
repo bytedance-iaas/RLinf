@@ -73,6 +73,7 @@ grep -l 'STATUS: REFUTED' tools_so101_session/*     # 列出所有被证伪的
 | `render_so101.py` | 并排渲染两路策略输入 |
 | `replay_demo.py` | 把真机录制的动作重放进仿真，逐帧对比 |
 | `check_doc_consistency.py` | 把文档里的每个名字按类别对到仓库/磁盘上，并双向核对产物表。人眼复核漏过的表格不一致，它一次查出 |
+| `check_skill.py` | 把 SKILL.md 的"好"定义成 8 条机械判据（无项目专名/运行编号/非英文引语/日期、章节唯一有序、引用可解析、入口覆盖全部章节、附录承载项目特定内容）并一次列全；`--claims` 输出 claim+evidence 清单供判断项复核 |
 | `so101_smoke.py` | 冒烟自检：任务注册、注册表条目、环境可用性 |
 | `supervisor_v2.sh` | 训练监工：按故障类型分流诊断，而不是一律重启 |
 | `verify_calib.py` | 标定验证：烘焙后的参数是否对得上真机 |
