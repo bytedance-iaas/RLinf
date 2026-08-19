@@ -73,6 +73,9 @@ from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.robotwin_aloha_dataconfig import (
     LeRobotAlohaDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+    LeRobotSO101DataConfig,
+)
 
 _CONFIGS = [
     TrainConfig(
@@ -251,33 +254,6 @@ _CONFIGS = [
         num_train_steps=5_000,
         log_interval=5,
         save_interval=250,
-    ),
-    TrainConfig(
-        name="pi05_franka_pnp",
-        model=pi0_config.Pi0Config(
-            pi05=True,
-            action_horizon=5,
-            action_dim=32,
-            discrete_state_input=False,
-        ),
-        data=LeRobotRealworldDataConfig(
-            repo_id="RLinf/pick_red",
-            base_config=DataConfig(prompt_from_task=True),
-            assets=AssetsConfig(
-                assets_dir="checkpoints/torch/pi05_franka_pnp/assets",
-            ),
-            extra_delta_transform=False,
-        ),
-        weight_loader=weight_loaders.CheckpointWeightLoader(
-            "checkpoints/jax/pi05_base/params"
-        ),
-        pytorch_weight_path="checkpoints/torch/pi05_base",
-        seed=0,
-        batch_size=32,
-        num_workers=2,
-        num_train_steps=30_000,
-        log_interval=100,
-        save_interval=10_000,
     ),
     TrainConfig(
         name="pi05_maniskill_sim_real_co_training",
@@ -525,6 +501,285 @@ _CONFIGS = [
             action_train_with_rotation_6d=False,  # User can add extra config in custom dataset
         ),
         pytorch_weight_path="checkpoints/torch/pi0_base",
+    ),
+    TrainConfig(
+        name="pi05_so101",
+        # discrete_state_input=True -> state-conditioned (joint proprio) policy.
+        # This MUST match how your LeRobot PI0.5 was trained; flip to False if that
+        # checkpoint is a stateless (prompt-only) PI0.5.
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="henry-guo/so101-pick-place-v2",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,  # absolute joint-position actions
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        # Sim-demonstration SFT: scripted motion-planner grasps recorded in the
+        # SO101GrabRedCube-v1 sim env (LeRobot v2.1 dataset, fps 15, 128x128
+        # dual-camera, units already in LeRobot-normalized convention via
+        # so101_calib.rad_to_norm). Used to give the policy nonzero initial
+        # success in sim before RL (PPO amplifies success, it does not discover
+        # it). Resolve the repo locally with HF_LEROBOT_HOME=/data08/henryg/pai/data.
+        name="pi05_so101_sim",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-sim-demos",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,  # absolute joint-position actions
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        # Phase-2 (pick-and-place) sim demos: planner grasps the red cube AND
+        # places it into the tray. Same conventions as pi05_so101_sim.
+        name="pi05_so101_pp",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-sim-demos-pp",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        # Phase-2 self-distillation: on-policy SUCCESS rollouts collected from
+        # the best pp RL checkpoint. Same conventions as pi05_so101_pp.
+        name="pi05_so101_pp5",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-sim-demos-pp5",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        # Expert-iteration round 2: pooled on-policy SUCCESS rollouts (pp5+pp6).
+        name="pi05_so101_pp6",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-sim-demos-pp6",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        # Expert-iteration round 3: pooled rollouts incl. HARD-REGION targeted
+        # collection (near-base / -y corner, SO101_SPAWN_FRAC="0,0.45,0,0.45").
+        name="pi05_so101_pp7",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-sim-demos-pp7",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        # TRUE-task rebuild (2026-08-09): full brown-zone spawn, homing success,
+        # 160x120 4:3 cameras. Stratified planner demos + later expert iteration.
+        name="pi05_so101_v3",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-sim-demos-v3",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        # v4: same true task as v3, cameras at NATIVE 640x480 (full parity with
+        # the real dataset through the identical resize_with_pad path).
+        name="pi05_so101_v4",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-sim-demos-v4",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        # v5: REAL(87) + SIM-v4(420) merged at full parity (30fps, 640x480) —
+        # iRe-VLA-style mixing to break planner-demo overfitting.
+        name="pi05_so101_v5",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-mix-v5",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        # v7 CURRICULUM: v4 demos restricted to the brown zone's middle+left
+        # bands (spawn y>=0.25), where the planner succeeds 65-100%.
+        name="pi05_so101_v7",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-sim-demos-v7",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        # v8 TARGET: full fidelity (640x480, 30Hz, true geometry, 8g cube,
+        # homing success) with the spawn narrowed to the pp-era 6x8cm box —
+        # restores pp-era demo density (0.52cm spacing) in a deployable format.
+        name="pi05_so101_v8",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-sim-demos-v8",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        # v15: sim+real co-training with a HELD-OUT real split -- real episodes
+        # 0-69 train, 70-86 are kept out so the offline sim2real check measures
+        # generalisation rather than recall.
+        name="pi05_so101_v15",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-cotrain-v15",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        # v14: sim+real co-training. Same sim episodes as v10 plus the 87 real
+        # teleop episodes upsampled 2x, to close the visual domain gap measured
+        # offline (sim-trained policy scores 4.47 on real observations where the
+        # real-trained one scores 0.22 -- see SIM2REAL_PLAN_ZH.md).
+        name="pi05_so101_v14",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-cotrain-v14",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        # v10: ring-1 expansion — the v9 data plus ring-1 policy rollouts from
+        # v9_step_1250 and planner demos in the ring-1 annulus. Spawn region is
+        # 96 cm^2 (2x v8/v9), SO101_SPAWN_FRAC="0.4294,0.9115,0.5142,0.9817".
+        name="pi05_so101_v10",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-sim-demos-v10",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        # v9: expert iteration round 1 — planner demos + successful policy
+        # rollouts from v8_step_2500, all inside the legacy 6x8cm box.
+        name="pi05_so101_v9",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101-sim-demos-v9",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
     ),
     TrainConfig(
         name="pi05_isaaclab_stack_cube",

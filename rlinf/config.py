@@ -85,15 +85,11 @@ SupportedModel.QWEN3_VL = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_MOE = SupportedModel.register("qwen3_moe", force=True)
 SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
 SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
-SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
-SupportedModel.OPENPI_RLINF = SupportedModel.register("openpi_rlinf", force=True)
+SupportedModel.OPENPI_PYTORCH = SupportedModel.register("openpi_pytorch", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
 SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=True)
-SupportedModel.RLT_TD3_MLP_POLICY = SupportedModel.register(
-    "rlt_td3_mlp_policy", force=True
-)
 SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
 SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
@@ -116,20 +112,17 @@ SupportedModel.QWEN2_5_VL_SFT = SupportedModel.register("qwen2.5_vl", force=True
 SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=True)
 SupportedModel.GR00T_N1D6 = SupportedModel.register("gr00t_n1d6", force=True)
-SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
-SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
 
 EMBODIED_MODEL = set(
     {
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
         SupportedModel.OPENPI,
-        SupportedModel.OPENPI_RLINF,
+        SupportedModel.OPENPI_PYTORCH,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
         SupportedModel.RLT_MLP_POLICY,
-        SupportedModel.RLT_TD3_MLP_POLICY,
         SupportedModel.GR00T,
         SupportedModel.DEXBOTIC_PI,
         SupportedModel.DEXBOTIC_DM0,
@@ -145,7 +138,6 @@ EMBODIED_MODEL = set(
         SupportedModel.CFG_MODEL,
         SupportedModel.RECAP_VALUE_MODEL,
         SupportedModel.STEAM_VALUE_MODEL,
-        SupportedModel.EVO1,
     }
 )
 
@@ -270,7 +262,7 @@ def activation_to_func(
     return activation_func
 
 
-def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
+def validate_rollout_cfg(cfg, algorithm_cfg):
     SupportedModel(cfg.model.model_type)  # To validate model_type is supported
 
     def validate_sglang_cfg(cfg):
@@ -301,15 +293,6 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
             "rollout.model.model_path must be specified for rollout."
         )
 
-        cfg.model.trust_remote_code = cfg.model.get(
-            "trust_remote_code",
-            OmegaConf.select(
-                actor_cfg if actor_cfg is not None else OmegaConf.create({}),
-                "tokenizer.trust_remote_code",
-                default=False,
-            ),
-        )
-
         cfg.disable_log_stats = cfg.get("disable_log_stats", False)
         cfg.detokenize = cfg.get("detokenize", False)
         cfg.rollout_backend = cfg.get("rollout_backend", "sglang")
@@ -323,36 +306,6 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         cfg.vllm = validate_vllm_cfg(cfg.vllm)
 
     return cfg
-
-
-def hf_rope_parameters(hf_config) -> dict:
-    """Read a HuggingFace config's rope settings across transformers 4 and 5.
-
-    transformers 5 replaced the flat ``rope_theta`` / ``rope_scaling`` pair with a
-    single ``rope_parameters`` dict, renamed its ``type`` key to ``rope_type``,
-    and fills it in even for models that use no scaling (``rope_type: "default"``)
-    where transformers 4 left ``rope_scaling`` as ``None``.
-
-    Args:
-        hf_config: A ``PretrainedConfig`` (or its ``text_config``).
-
-    Returns:
-        The rope settings, always keyed the transformers 5 way.
-    """
-    params = getattr(hf_config, "rope_parameters", None)
-    if isinstance(params, dict):
-        return dict(params)
-
-    params = {}
-    scaling = getattr(hf_config, "rope_scaling", None)
-    if isinstance(scaling, dict):
-        params.update(scaling)
-        if "type" in params and "rope_type" not in params:
-            params["rope_type"] = params["type"]
-    theta = getattr(hf_config, "rope_theta", None)
-    if theta is not None:
-        params["rope_theta"] = theta
-    return params
 
 
 def validate_model_cfg_by_hf_config(cfg, hf_model_path):
@@ -381,16 +334,16 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         qk_layernorm = getattr(cfg.model, "qk_layernorm", False)
 
     with open_dict(cfg):
-        rs = hf_rope_parameters(hf_config)
-        rtype = rs.get("rope_type", "")
-        if rtype in {"linear", "dynamic", "ntk", "yarn"}:
-            f = rs.get("factor")
-            if f is not None:
-                cfg.model.seq_len_interpolation_factor = float(f)
-        elif rtype and rtype != "default":
-            # mrope. "default" means no scaling at all, which transformers 4
-            # reported as rope_scaling=None and so left this untouched.
-            cfg.model.seq_len_interpolation_factor = None
+        rs = getattr(hf_config, "rope_scaling", None)
+        if isinstance(rs, dict):
+            rtype = rs.get("type", "")
+            if rtype in {"linear", "dynamic", "ntk", "yarn"}:
+                f = rs.get("factor")
+                if f is not None:
+                    cfg.model.seq_len_interpolation_factor = float(f)
+            else:
+                # mrope
+                cfg.model.seq_len_interpolation_factor = None
         model_type = getattr(cfg.model, "model_type", None)
         if model_type == "qwen3_vl" or model_type == "qwen3_vl_moe":
             # qwen3_vl and qwen3_vl_moe config.json set the model config in text_config
@@ -398,7 +351,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
 
         cfg.model.padded_vocab_size = hf_config.vocab_size
         cfg.model.max_position_embeddings = hf_config.max_position_embeddings
-        cfg.model.rotary_base = hf_rope_parameters(hf_config)["rope_theta"]
+        cfg.model.rotary_base = hf_config.rope_theta
         cfg.model.share_embeddings_and_output_weights = getattr(
             hf_config, "tie_word_embeddings", False
         )
@@ -427,35 +380,6 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             hf_config, "moe_intermediate_size", None
         )
         cfg.model.moe_router_topk = getattr(hf_config, "num_experts_per_tok", 2)
-
-        # DeepSeek-V3 text backbone: MLA + MoE with shared expert.
-        if model_type in ("deepseek_v3",):
-            cfg.model.num_moe_experts = getattr(
-                hf_config, "n_routed_experts", cfg.model.num_moe_experts
-            )
-            cfg.model.num_experts = cfg.model.num_moe_experts
-            cfg.model.multi_latent_attention = True
-            for _mla_field in (
-                "q_lora_rank",
-                "kv_lora_rank",
-                "qk_nope_head_dim",
-                "qk_rope_head_dim",
-                "v_head_dim",
-            ):
-                _mla_v = getattr(hf_config, _mla_field, None)
-                if _mla_v is not None:
-                    cfg.model[_mla_field] = _mla_v
-            _moe_inter = getattr(hf_config, "moe_intermediate_size", 0) or 0
-            _n_shared = getattr(hf_config, "n_shared_experts", 1) or 1
-            cfg.model.moe_shared_expert_intermediate_size = (
-                _moe_inter * _n_shared or None
-            )
-            cfg.model.first_k_dense_replace = getattr(
-                hf_config, "first_k_dense_replace", 0
-            )
-            cfg.model.moe_router_topk_scaling_factor = getattr(
-                hf_config, "routed_scaling_factor", None
-            )
 
     return cfg
 
@@ -1004,17 +928,6 @@ def validate_embodied_cfg(cfg):
             f"Current value: {add_value_head}"
         )
 
-    # MolmoAct2 caches an action queue per batch index inside the LeRobot policy.
-    # Pipeline stages hand the same indices to different environments on
-    # alternating calls, so one env would execute another env's queued actions.
-    if model_type == SupportedModel.MOLMOACT2:
-        assert cfg.rollout.pipeline_stage_num == 1, (
-            "model_type 'molmoact2' requires rollout.pipeline_stage_num to be 1, "
-            f"got {cfg.rollout.pipeline_stage_num}: the policy keys its "
-            "per-environment action queues by batch index, which pipeline stages "
-            "reuse across environments."
-        )
-
     # process num-envs
     component_placement = HybridComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num
@@ -1032,9 +945,9 @@ def validate_embodied_cfg(cfg):
         )
         reward_model_cfg = cfg.reward.get("model", {})
         if reward_worker_type == "api":
-            assert reward_model_cfg.get("model_type") == "buffered_vlm", (
+            assert reward_model_cfg.get("model_type") == "history_vlm", (
                 "reward.worker_type='api' currently requires "
-                "reward.model.model_type='buffered_vlm'."
+                "reward.model.model_type='history_vlm'."
             )
             api_cfg = cfg.reward.get("api", {})
             api_base = str(api_cfg.get("api_base") or "").strip()
@@ -1152,6 +1065,10 @@ def validate_embodied_cfg(cfg):
                     return "arm_pd_ee_delta_pose_align_interpolate_by_planner_gripper_pd_joint_target_delta_pos_interpolate_by_planner"
                 elif "widowx" in robot:
                     return "arm_pd_ee_target_delta_pose_align2_gripper_pd_joint_pos"
+                elif "so100" in robot or "so101" in robot:
+                    # SO100/SO101: absolute joint-position control (the 6-dim
+                    # PI0.5 output maps straight onto the arm joints + gripper).
+                    return "pd_joint_pos"
                 elif "panda" in robot:
                     return "pd_ee_body_target_delta_pose_real_root_frame"
                 else:
@@ -1372,9 +1289,7 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
             or cfg.algorithm.get("importance_sampling_fix", False)
         )
 
-        cfg.rollout = validate_rollout_cfg(
-            cfg.rollout, cfg.algorithm, cfg.get("actor", None)
-        )
+        cfg.rollout = validate_rollout_cfg(cfg.rollout, cfg.algorithm)
     return cfg
 
 
@@ -1383,9 +1298,7 @@ def validate_reasoning_eval_cfg(cfg: DictConfig) -> DictConfig:
         assert cfg.runner.seq_length > cfg.data.max_prompt_length, (
             f"runner.seq_length ({cfg.runner.seq_length}) must be greater than data.max_prompt_length ({cfg.data.max_prompt_length})"
         )
-        cfg.rollout = validate_rollout_cfg(
-            cfg.rollout, cfg.algorithm, cfg.get("actor", None)
-        )
+        cfg.rollout = validate_rollout_cfg(cfg.rollout, cfg.algorithm)
     return cfg
 
 
@@ -1441,9 +1354,7 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
             or cfg.algorithm.get("importance_sampling_fix", False)
         )
 
-        cfg.rollout = validate_rollout_cfg(
-            cfg.rollout, cfg.algorithm, cfg.get("actor", None)
-        )
+        cfg.rollout = validate_rollout_cfg(cfg.rollout, cfg.algorithm)
     return cfg
 
 
@@ -1467,21 +1378,6 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
                         "profiling",
                     )
                 )
-
-    # Tracing defaults. The tracer is a cluster manager, so its config lives under
-    # `cluster.tracer` and is launched by the Cluster below when enabled.
-    with open_dict(cfg):
-        if "tracer" not in cfg.cluster:
-            cfg.cluster.tracer = {}
-        cfg.cluster.tracer.enable = bool(cfg.cluster.tracer.get("enable", False))
-        if cfg.cluster.tracer.enable and not cfg.cluster.tracer.get(
-            "output_file", None
-        ):
-            cfg.cluster.tracer.output_file = os.path.join(
-                cfg.runner.logger.log_path,
-                cfg.runner.logger.experiment_name,
-                "trace/trace_events.jsonl",
-            )
 
     # Init cluster
     Cluster(
