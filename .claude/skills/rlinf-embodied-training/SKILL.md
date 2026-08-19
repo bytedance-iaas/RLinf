@@ -234,7 +234,11 @@ Two Phase-2 failures were ALREADY-documented Phase-1 lessons that were not consu
 - **Stop sequence**: graceful `ray stop --force` → kill verified leftovers → remove `/tmp/ray/session_*` → **verify clean as the LAST step immediately before launch** (0 live procs, GPU memory empty). Verifying mid-cleanup and then killing more re-dirties state.
 - **Launch detached** (`setsid bash launcher </dev/null >/dev/null 2>&1 &`) — plain background children die with the controlling session. No `sleep` in launch chains (harness blocks foreground sleep → silent abort).
 - **Startup deadline (mandatory)**: after every launch, background-check that a FULL first training step (metrics line, not a progress bar) appears within ~30 min; otherwise declare dead, extract the traceback, root-cause. Milestone monitors alone cannot distinguish a hang from silence — a 51-minute blind hang proved it.
-- **No root cause without a traceback or measurement.** "Cleanup fixed it" without a mechanism is luck + misattribution — the real bug (port-family mismatch, Appendix B) was blamed on "dirty state" three times.
+- **Two infrastructure failures that look like something else, and cost days each.** Both are properties of the environment class, not of one box:
+  - **A dual-stack or IPv6 cluster with IPv4-only port probing hangs silently.** The framework probes a port with `AF_INET`, finds it free, publishes it — and it was already taken on IPv6. One rank then waits forever on a rendezvous that never completes, with a `TCPStore` error naming neither the port nor the family. It presents as a flaky first-rollout hang, which is exactly what "dirty state" is blamed for. Probe dual-stack (`AF_INET6` with `V6ONLY=0`) and bracket IPv6 addresses in `tcp://` URLs.
+  - **A compute-only GPU driver ships no GL/Vulkan userspace**, so any simulator that renders fails at first frame with a driver-incompatibility error that reads like a broken install. The fix is to symlink the EXACT matching driver version's GL libraries into the venv and point a private Vulkan ICD at them — never install the distro's `libnvidia-gl`, which will be a different version. Verify the driver version against `nvidia-smi` before symlinking; a mismatched pair fails on missing symbols instead.
+
+- **No root cause without a traceback or measurement.** "Cleanup fixed it" without a mechanism is luck + misattribution — the real bug (the port-family mismatch above) was blamed on "dirty state" three times.
 - Monitors: filter only actionable signals (not per-epoch noise); fresh log file per attempt (stale tails reported old failures); cover failure signatures, not just success.
 - **Every pipeline STAGE needs its own `timeout` + one retry — especially evals.** Rendezvous port collisions (EADDRINUSE / TCPStore flakes) kill one rank and leave the rest silently hung; a pipeline whose only deadline is the session-side watcher's total timeout burns hours on a 40-second eval. Wrap each eval/train invocation in `timeout <2-3x expected>` and retry once on empty result (retries have cleared every rendezvous flake so far).
   > Evidence: a gate eval hung 2.4 h on EADDRINUSE port 29691 (eval itself takes ~3 min); the stage had no timeout, the watcher's 3h total expired uselessly.
@@ -557,13 +561,20 @@ The work existed in four places — repo, delivery directory, pushed branch, pub
 - Known limits carried into deployment: trained only on ring 1 (96 cm²; full board 14.8%); 2 cm spawn margin excludes ~11% of real cube starts; the sim wrist camera still points at the robot body, so the two domains carry asymmetric information; physics parameters beyond mass are declared defaults.
 - Standing user rules: EVERY parameter pre-approved with provenance; GPU launches confirmed (overnight grants explicit); failure loop = update skill → reload → walk §4b gate.
 
-## Appendix B — This machine (8×H200, IPv6)
+## Appendix B — The specific machine this project ran on
 
-- **IPv6 everywhere; two in-tree fixes, do not revert**: bracketed IPv6 in `collective_group.py` tcp:// URL; dual-stack AF_INET6 port probe in `cluster.py::find_free_port` (IPv4-only probing published ports already taken on IPv6 → flaky `TCPStore recvValue failed` → silent first-rollout hangs; worth upstreaming).
-- Rendering on compute-only driver: exact-version driver libs symlinked into `.venv/nvidia_gl/` + private ICD; env vars `VK_ICD_FILENAMES`, `LD_LIBRARY_PATH`, `XDG_RUNTIME_DIR=/tmp/xdg-runtime`, `MUJOCO_GL=egl`. apt's libnvidia-gl is version-mismatched — never install it.
-- `RAY_local_fs_capacity_threshold=0.99` (host /tmp ~96% full), `HF_HUB_OFFLINE=1` (everything local), proxy `http://[fdbd:dc61:d:297::16]:8888` (lowercase vars + `/root/.wgetrc`).
-- Validated scale: **128 envs + global_batch 2048** (320 envs hangs). PID 1 is `sleep infinity` → zombies accumulate, harmless.
-- Isaac Lab is effectively unavailable here (needs full RTX graphics stack; this box has a compute-only driver).
+> Also a SNAPSHOT. The transferable versions of the rendering and networking
+> lessons are in §6; what is left here is only true of one box, and the
+> reproducible setup commands live in the project's pipeline document rather
+> than being restated here (§9h: one source of truth).
+
+- 8×H200, IPv6-only networking. The two in-tree fixes this required — bracketed IPv6 in the collective `tcp://` URL, dual-stack port probing — are committed; **do not revert them**, and they are worth upstreaming.
+- Rendering works through driver libraries symlinked into `.venv/nvidia_gl/` with a private Vulkan ICD; the env vars that select it are `VK_ICD_FILENAMES`, `LD_LIBRARY_PATH`, `XDG_RUNTIME_DIR`, `MUJOCO_GL=egl`.
+- `RAY_local_fs_capacity_threshold=0.99` (host `/tmp` runs ~96% full), `HF_HUB_OFFLINE=1` (all weights and data local), and an IPv6 HTTP proxy for apt/wget (lowercase env vars plus `/root/.wgetrc`).
+- `/dev/shm` defaults to the container's 64 MB; remount to 16 G before any multi-worker run and sweep stale `cuda.shm.*` between runs.
+- Validated scale for this task at 640×480 dual-camera: **128 envs, global_batch 2048**; 320 envs hangs. Peak ~90 GB/card.
+- PID 1 is `sleep infinity`, so zombies accumulate and are harmless.
+- Isaac Lab is effectively unavailable: it needs a full RTX graphics stack and this box has a compute-only driver.
 
 ## Appendix C — Incident registry
 

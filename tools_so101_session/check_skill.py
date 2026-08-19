@@ -59,6 +59,12 @@ def sections(text):
     return out
 
 
+def subsection_ids(text):
+    """'### 9a. ...' subsections are referenceable too, and a linter that only
+    knows about '##' reports every reference to one as dangling."""
+    return {m.group(1) for m in re.finditer(r"^### ([0-9]+[a-z]?)[.\s]", text, re.M)}
+
+
 def sort_key(sid):
     m = re.match(r"([0-9]+)([a-z]?)", sid)
     return (int(m.group(1)), m.group(2))
@@ -100,8 +106,9 @@ def main():
         fails.append((0, "章节乱序", "", "追加式增长会让读者顺着读时跳过整段", ""))
 
     # 6: cross-references resolve
+    referenceable = set(ids) | subsection_ids(text)
     for ref in sorted(set(re.findall(r"§([0-9]+[a-z]?)(?![0-9a-z])", text))):
-        if ref not in ids:
+        if ref not in referenceable:
             fails.append((0, "悬空引用", f"§{ref}", "没有这个章节", ""))
 
     # 7: every rule section reachable from the entry section
