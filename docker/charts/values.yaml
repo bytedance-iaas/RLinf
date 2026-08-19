@@ -169,6 +169,11 @@ apig:
   #    *.volceapi.com domain with it — a new one comes back under a different name. Adopt an
   #    existing gateway for anything whose URL people have bookmarked.
   create: false
+  # create=true only: keep the provisioned gateway when the release is uninstalled, instead of
+  # deleting it along with its *.volceapi.com domain. Turn it on BEFORE you need it — Helm decides
+  # what to retain from the manifest recorded in the release, so annotating the live object after
+  # the fact has no effect and the gateway still goes.
+  retainOnDelete: false
   existingId: ""                  # create=false: REQUIRED, the gateway's instance id
   instanceName: ""                # create=true: gateway name (default: <release>-apig)
   subnetIds: []                   # create=true: REQUIRED
