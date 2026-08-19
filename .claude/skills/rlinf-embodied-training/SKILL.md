@@ -5,7 +5,7 @@ description: Engineering discipline for embodied SFT/RL in RLinf (VLA policies s
 
 # RLinf Embodied Training — Engineering Discipline
 
-General principles for training VLA policies (SFT + RL) in RLinf. Each rule is stated generally; **Evidence:** lines cite the incident that proved it (SO101+PI0.5 project, 2026-08). Appendices hold project/machine specifics.
+General principles for training VLA policies (SFT + RL) in RLinf. Each rule is stated generally; **Evidence:** lines cite the incident that proved it (all from one project: SO101 + PI0.5, real-arm pick-and-place via ManiSkill). Appendices hold project/machine specifics — those ARE snapshots and say so.
 
 ---
 ## 1. Recipe design: check preconditions before training anything
@@ -31,7 +31,7 @@ A pretrained VLA has narrow exploration (approx_kl ~0.01–0.04/step under flow-
 **The freeze test (cheap causal control):** run with `actor.optim.lr=1e-9` — if the behavior survives frozen (it did, 66 epochs) but dies under training, the destroyer IS the update step, not the env/reward/critic. Use this before theorizing.
 
 **Expert iteration (collect deterministic successes on fresh seeds → gentle SFT) is a zero-risk gain at any competence; the hand-rolled conservative bundle is NOT safe at high competence.** One distillation round gained +18 pts (63.3%→81.6%); the same-day hand-rolled-PPO attempt on that sharp start lost 53 pts in 30 epochs (measured on saved ckpts). But high-start PPO is NOT inherently doomed — the published πRL recipe amplifies pi0.5 from 77%→98% (see §1b for the structural differences: update_epoch 1, big fresh-sample iterations, separate fast value_lr, default noise). Order of preference at high competence: (1) distill again, (2) reference-aligned PPO per §1b, (3) never the hand-rolled bundle outside its validated regime (planner-BC starts ~45-50%).
-> Evidence: pp5 2026-08-09. Same-day hand-rolled PPO: −53 pts; same-day distillation: +18 pts; published reference: +21 pts from a 77% start.
+> Evidence: pp5. Same-day hand-rolled PPO: −53 pts; same-day distillation: +18 pts; published reference: +21 pts from a 77% start.
 
 **Before adopting ANY collapse diagnosis, check the refuted-diagnoses list (§6c) FIRST.** Cold-critic (huge value_loss/grad_norm at RL start) is a seductive and ALREADY-REFUTED primary explanation: v7's warmup held success and cut value_loss, yet v7b still collapsed — the destroyer was BC-brittleness. The cold-critic signature (value_loss 50–110, grad_norm 300–400 vs healthy ~23) is REAL but it is a co-symptom of a fresh value head on bimodal returns, not proof of causation. A diagnosis that was refuted once must clear a HIGHER bar (a controlled comparison, not just a matching fingerprint) before it justifies a new run.
 > Evidence: pp5 collapse was initially re-diagnosed as cold-critic and a warmup phase was launched — repeating the v6→v7→v7b arc that the skill itself documents as a misdiagnosis. The user caught it ("你这是又把方向搞错了?").
@@ -64,7 +64,7 @@ A pretrained VLA has narrow exploration (approx_kl ~0.01–0.04/step under flow-
 
 §1 says PPO needs the start policy to "already succeed sometimes in the target environment". That sentence hid an ambiguity that cost a full run: **which success — the deterministic eval, or the noisy rollouts PPO actually learns from?** They can differ by 50+ points.
 
-**Measured on 2026-08-13 (freeze test, lr=1e-9, real training path):** the same checkpoint scored `eval/success_once` **0.539** (deterministic) and `env/success_once` **0.010** (under the official flow-noise `[0.16,0.12,200]`). PPO saw ~1% success in 24,576 samples/iteration, had almost no success signal to amplify, optimised the dense reward instead, and by step 9 (~108 updates) had destroyed the policy — the deterministic eval fell to 0.0 too.
+**Measured (freeze test, lr=1e-9, real training path):** the same checkpoint scored `eval/success_once` **0.539** (deterministic) and `env/success_once` **0.010** (under the official flow-noise `[0.16,0.12,200]`). PPO saw ~1% success in 24,576 samples/iteration, had almost no success signal to amplify, optimised the dense reward instead, and by step 9 (~108 updates) had destroyed the policy — the deterministic eval fell to 0.0 too.
 
 **The threshold was already in this project's own logs**, unread until now (tensorboard `env/success_once`, first epochs):
 
@@ -148,7 +148,7 @@ rollout success still collapsed at 12 updates/epoch.
 - Wiring a new robot into RLinf usually needs NO new env type: drop the task into the sim's task dir (auto-registered), name cameras to match the wrapper's expectations, and add small branches for control mode and action formatting (see Appendix A file map).
 
 **DENSITY LAW: the BC floor is set by demonstration spacing relative to the task's positional tolerance — and it is a THRESHOLD, not a gradient.** Compute `spacing = sqrt(spawn_area / n_demos)` and compare it against the tolerance the task actually needs (for a 2.9 cm cube with a parallel gripper, ≈ ±0.7 cm). Above the tolerance the nearest demonstration is not close enough to imitate, so BC must genuinely generalise and collapses; below it, BC interpolates and works. Fix the floor by shrinking the spawn area or adding demonstrations — NOT by changing recipes.
-> Evidence (3 points, same env, same recipe, same warm start, 2026-08-12): spacing 1.01 cm → 12.5% (full board, 420 demos); 0.91 cm → 7.0% (curriculum band, 384 demos); **0.44 cm → 56.7% honest (small box, 247 demos)**. The 0.44 cm run also beat the historical pp-era floor (46.9%) under a STRICTER success criterion. Removing unreachable regions without changing density (the 0.91 cm run) did NOT help — achievability mass is a much weaker lever than spacing.
+> Evidence (3 points, same env, same recipe, same warm start): spacing 1.01 cm → 12.5% (full board, 420 demos); 0.91 cm → 7.0% (curriculum band, 384 demos); **0.44 cm → 56.7% honest (small box, 247 demos)**. The 0.44 cm run also beat the historical pp-era floor (46.9%) under a STRICTER success criterion. Removing unreachable regions without changing density (the 0.91 cm run) did NOT help — achievability mass is a much weaker lever than spacing.
 
 ## 4a. Task-spec facts: measured or user-confirmed, NEVER assumed
 
@@ -187,7 +187,7 @@ Two Phase-2 failures were ALREADY-documented Phase-1 lessons that were not consu
 - After conversion, sanity-check semantics numerically (e.g. gripper open/close values match the real dataset's q01/q99 meaning) before training on it.
 - norm_stats: compute per dataset; RLinf rollout workers ALSO look for norm_stats inside the checkpoint dir — copy it into every new warm-start checkpoint.
 - **norm_stats are FROZEN across a checkpoint LINEAGE — never recompute mid-lineage.** A policy's action decoder is calibrated to the stats it was trained under; recomputing stats on an enlarged dataset and continuing SFT from an existing ckpt trains under a shifted convention and degrades monotonically. Recompute ONLY when starting a fresh lineage (new base weights). The per-ckpt stats copy is the lineage's ground truth — restore from there if the assets file was overwritten.
-  > Evidence: v3→v3b (2026-08-10): dataset 209→472 eps triggered a stats recompute; continued SFT then DECAYED 22.7%→15%→1.6% across steps, and the stats swap ALONE cut the unchanged parent ckpt from 19.5% to 9.4% (controlled A/B, seed 777).
+  > Evidence: v3→v3b: dataset 209→472 eps triggered a stats recompute; continued SFT then DECAYED 22.7%→15%→1.6% across steps, and the stats swap ALONE cut the unchanged parent ckpt from 19.5% to 9.4% (controlled A/B, seed 777).
 - **Contact-force grasp flags can be TRUE for useless pinches.** `is_grasping` fires on any contact force — including edge/corner pinches that cannot lift the object (observed: grasped=True while the cube dragged along the table, never rising 1mm). After closing, run a MICRO-LIFT verification (+3cm; payload must rise >1.5cm) before transporting; on failure, regrasp with a jittered grasp point rather than proceeding.
 - **Transported-payload targeting: aim at the PAYLOAD, not the TCP.** A grasped object hangs offset from the TCP (direction set by the grasp yaw, 2–4cm for a small cube); planning the drop by TCP position misses containers whose acceptance window is comparable to the offset. Measure `payload_xy − tcp_xy` once after the grasp (rigid during transport) and subtract it from the target. Blind ±1cm retry variants cannot fix a systematic 2–4cm direction-specific offset.
   > Evidence: pick-and-place drop-miss rate: probe 3/8 with variants-roulette; all failures landed 2–4cm off in +y, exactly the measured hang offset.
@@ -212,7 +212,7 @@ Two Phase-2 failures were ALREADY-documented Phase-1 lessons that were not consu
   > Evidence: pp6b gate eval hung 2.4h on EADDRINUSE port 29691 (eval itself takes ~3 min); the stage had no timeout, the watcher's 3h total expired uselessly.
 - Report "running" only with evidence: GPU util > 0 AND advancing step counts.
 - **`ncclSystemError: ... Broadcast failed` is usually /dev/shm, NOT GPU memory.** NCCL allocates ~7MB shared-memory segments per communicator; containers default to a 64MB `/dev/shm`, and every crashed run leaves `cuda.shm.*` files behind — so each relaunch has LESS room than the last and the failure ratchets. Read the `Last error:` line (it names the shm path and size) before touching any memory knob. Fix: delete stale `cuda.shm.*`/`nccl-*`, `mount -o remount,size=16G /dev/shm`, and gate every launcher on free shm.
-  > Evidence: 2026-08-12, four v6 launches "OOM-diagnosed" and shrunk (micro_batch 128→32→16, envs 64→32→16, no_shard→full_shard, rollout offload on) all kept failing; a minimal-scale diagnostic failed at 53/143GB — disproving the memory theory — and the `Last error` line read `Error while creating shared memory segment /dev/shm/nccl-... (size 7340384)` with `/dev/shm` at 64MB/94% full and 2882 stale segments. A night was lost to the wrong diagnosis.
+  > Evidence: four v6 launches "OOM-diagnosed" and shrunk (micro_batch 128→32→16, envs 64→32→16, no_shard→full_shard, rollout offload on) all kept failing; a minimal-scale diagnostic failed at 53/143GB — disproving the memory theory — and the `Last error` line read `Error while creating shared memory segment /dev/shm/nccl-... (size 7340384)` with `/dev/shm` at 64MB/94% full and 2882 stale segments. A night was lost to the wrong diagnosis.
 - **Client-attached sessions FREEZE the agent's reactions when the client disconnects** — only already-detached (setsid) processes keep running; the agent's next tool call queues until the session resumes (observed: a corrective relaunch composed at 00:40 executed at 05:43). Overnight autonomy therefore lives ENTIRELY in the pipeline scripts: gates, timeouts, auto-stops, and pre-written fallback branches (e.g. "if gate < X, retry with start B") — anything left to the agent's live judgment will wait until morning.
 - Clone-and-edit configs: grep the clone for EVERY reference to the original's dataset/checkpoint paths — one missed field cost a failed launch.
 - **Never edit in-tree env/model code while a run that imports it is active.** Workers import the shared tree at PROCESS START — a pipeline that launches evals sequentially picks up mid-run edits in its later stages, silently mixing configurations within one result table. Either wait for the pipeline, stop it first, or have pipelines snapshot/pin the code they run.
@@ -242,7 +242,7 @@ Two Phase-2 failures were ALREADY-documented Phase-1 lessons that were not consu
 
 ## 6d. Pipeline handoff bugs waste GPU silently — three that actually happened
 
-Long overnight pipelines are chains of `stage A finishes -> stage B starts`. Every joint in that chain is a place where the GPUs can go idle for hours with nothing crashing and nothing logging an error. Real incidents (SO101, 2026-08-12/13), each costing 1.5-4.5 h of 8xH200 idle:
+Long overnight pipelines are chains of `stage A finishes -> stage B starts`. Every joint in that chain is a place where the GPUs can go idle for hours with nothing crashing and nothing logging an error. Real incidents, each costing 1.5-4.5 h of 8xH200 idle:
 
 - **Sentinel race.** A waiter written as `while ! grep -q DONE; do <producer alive?> || abort; sleep 60; done` aborts when the producer writes its marker and exits in the same instant — the liveness check sees a dead producer and calls it a failure. **Rule: after observing the producer is gone, re-check the completion marker before declaring failure.** Also never put the sentinel string inside your own log messages (`"died before S1 DONE"` makes every later `grep 'S1 DONE'` match your own error line).
 - **`pgrep -f` self-match.** A watchdog running `pgrep -f 'bash .*run.sh'` matches ITSELF (the pattern is in its own command line), so it never reports "the job exited" — it reports nothing, forever, which is indistinguishable from a healthy run. Match on a pid captured at launch (checking `/proc/<pid>/stat` state, since a setsid-orphaned bash exits into a **zombie** whose `/proc/<pid>` directory still exists), or `pgrep -f` a pattern that cannot appear in the watcher's own argv.
@@ -255,7 +255,7 @@ Long overnight pipelines are chains of `stage A finishes -> stage B starts`. Eve
 Round 2 of the collect-own-successes-and-distil loop is planned from a MEASURED competence frontier, not a guess. Evaluate the current policy on the region you intend to expand into, then invert the measurement to size the data: with in-region success `p_in` over area A and success `p_ring` over 2A, the outer annulus rate is `2*p_ring - p_in`, which tells you how many self-collected successes will land out there and therefore how many planner demos you must add to hold the density-law spacing in the new territory. Self-collection is biased toward the region already learned; the annulus is exactly where it under-delivers.
 > Evidence: v9 (76.6% honest, in-box) measured 51.6% over 2x area => outer half ~27% => ~136 self-collected successes out there = 0.59 cm spacing, short of the proven 0.44 cm, so ~112 targeted planner demos were generated in four boundary strips instead of uniformly over the ring.
 
-## 6f. Refuted: "coarse IK grid causes the placement error" (2026-08-13)
+## 6f. Refuted: "coarse IK grid causes the placement error"
 
 Symptom: a scripted planner's failures were 100% `drop-missed`, with a measured
 median release-to-target error of 3.9 cm and a 46% tail beyond 5 cm, growing
@@ -499,7 +499,9 @@ The work existed in four places — repo, delivery directory, pushed branch, pub
 
 **Enumerate the delivery surfaces once, then make the update mechanical.** Any surface whose update depends on remembering will eventually be stale.
 
-## Appendix A — SO101 + PI0.5 project specifics (current as of 2026-08-17)
+## Appendix A — SO101 + PI0.5 project specifics
+
+> **This appendix is a SNAPSHOT of mutable state** (which checkpoint is best, what exists on disk) — unlike §1–§9, which are rules. Verify before relying on it: `git log -1 -- .claude/skills/rlinf-embodied-training/SKILL.md` for when it was last true, and `tools_so101_session/check_doc_consistency.py` for whether the names still resolve. It has been stale before — it described a best checkpoint five stages old.
 
 **Status: the pipeline is finished through the offline sim2real gate and is waiting on a real-robot trial.** Stages A–G reproduce from `SO101_PIPELINE_ZH.md` (repo root); the delivery set is 64 files, listed in `henry-so101/repro_files.txt`.
 
