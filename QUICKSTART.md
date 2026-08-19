@@ -276,18 +276,100 @@ huggingface-cli download RLinf/RLinf-Pi05-LIBERO-SFT \
 
 该替换仅作用于使用标准 RMSNorm 的 prefix 侧，action expert（adaRMS）部分保持不变。
 
+rollout 的模型配置由 actor 深拷贝而来，因此该开关**默认同时作用于 actor 与 rollout**。
+如需让 rollout 单独关闭，追加 `+rollout.model.openpi.enable_fused_prefix=false`；与 4.3 的
+图编译同时使用时必须这样做，原因见 4.4。
+
 ### 4.3 Rollout 图编译
 
 | | |
 |---|---|
-| 配置项 | `+rollout.enable_torch_compile=true` |
-| 默认值 | `false` |
+| 配置项 | `+rollout.enable_torch_compile=true` `+rollout.torch_compile_mode=default` |
+| 默认值 | 关闭；`torch_compile_mode` 代码兜底为 `max-autotune-no-cudagraphs` |
 
-对 rollout 推理过程启用 torch.compile 图编译。需注意首次运行存在编译开销。
+对 rollout 推理过程启用 torch.compile 图编译。首次运行存在编译开销，实测首步增加约 53–59 s。
+
+> ⚠️ 只写 `+rollout.enable_torch_compile=true` 时，`torch_compile_mode` 会走代码兜底值
+> `max-autotune-no-cudagraphs`，编译开销明显更高。第 5 节的性能数据均在
+> `torch_compile_mode=default` 下测得，**建议显式指定该值**，否则拿到的不是这里给出的数字。
+
+### 4.4 fused 与 compile 同时使用时必须拆开作用域
+
+两项优化直接叠加（actor 与 rollout 都开 fused，再开 rollout 编译）会**互相抵消**：融合层包了
+一个自定义 autograd Function，torch.compile 无法追踪，rollout 侧的图被打断，编译收益几乎全部
+消失。三个实测场景中 rollout `predict` 的收益都从 −11.8%~−12.9% 掉到 −0.0%~−2.0%，且把 fused
+从 rollout 摘掉后收益立刻回到 −12.3%~−13.1%。
+
+正确的用法是让两项各管一侧：**actor 用 fused，rollout 用 compile**。
+
+```text
+actor.model.openpi.enable_fused_prefix=true \
++rollout.model.openpi.enable_fused_prefix=false \
++rollout.enable_torch_compile=true \
++rollout.torch_compile_mode=default
+```
+
+该组合在两个实测场景中都同时拿到了两侧的完整收益（actor −7.1%/−6.4%，rollout predict
+−12.3%/−13.1%），端到端则落在各场景最优解 1 个百分点以内。详见第 5 节。
+
+> torch.compile 的产物缓存在 `/tmp/torchinductor_root`，**跨进程持久**。同一台机器上重复
+> 跑图与 shape 相同的配置时，后续运行的首步开销会大幅低于真实冷启动值。比较冷启动成本时
+> 需先清空该目录，否则会低估。
 
 ## 5. 性能数据
 
-> **TODO**：补充最新一轮性能测试数据与结论链接。
+实测环境：单机 4×H20 97GB，async 模式，Pi0.5。四个场景 × 各优化组共 19 次 run，每组 1 次，
+LIBERO 取 12 步的后 8 步、ManiSkill 取 10 步的后 7 步为稳态窗口。完整数据与方法学说明见
+性能测试报告（2026-08-19）。
+
+### 5.1 该开哪个：按 placement 选
+
+**最优项随瓶颈侧翻转，没有通用最优。** 判断方法：比较 `time/actor_training` 与
+`time/rollout/generate_one_epoch`，谁大谁是瓶颈。
+
+| 场景 | 瓶颈侧 | 推荐 | 端到端收益 |
+|---|---|---|---|
+| LIBERO colocated（4 卡共用） | actor | **只开 fused** | −7.97% |
+| LIBERO disagg 2+2 | rollout | **只开 compile** | −4.76% |
+| ManiSkill disagg 2+2 | rollout | **只开 compile** | −6.99% |
+| 不确定 / 想一套通吃 | — | **split**（见 4.4） | 距当场最优 1 个百分点以内 |
+
+同样开 compile，在 LIBERO colocated 是 **+8.85%（更慢）**、在 LIBERO disagg 是 **−4.76%（更快）**
+—— 同模型同环境，只差 placement。**加速非瓶颈侧在 colocated 下会因破坏流水线平衡而变慢。**
+
+### 5.2 各优化项的稳态收益
+
+fused 的收益应按 **actor 侧**表述，四个场景高度一致：
+
+| 场景 | `time/actor_training` |
+|---|---|
+| LIBERO colocated | −6.93% |
+| ManiSkill disagg 2+2 | −5.75% |
+| LIBERO disagg 2+2 | −5.93% |
+| ManiSkill colocated | −6.82% |
+
+compile 的收益应按 **rollout 侧**表述（它对 actor 无影响，实测 −0.0%~−0.8%）：
+
+| 场景 | `time/rollout/predict` |
+|---|---|
+| LIBERO colocated | −12.58% |
+| ManiSkill disagg 2+2 | −12.93% |
+| LIBERO disagg 2+2 | −11.84% |
+
+`+actor.sync_weight_no_wait`（4.1）在单机各场景均无可测收益：同机权重同步本身只有 1–2 s，
+没有可隐藏的开销。该特性面向跨机场景，本轮硬件条件下未验证。
+
+### 5.3 测量注意事项
+
+- **`time/step` 在 colocated 下是双峰分布**：`wait_for_rollout_store_ready` 平时接近 0，
+  偶尔跳到 15–60 s。用中位数与停顿次数看，不要看均值。disaggregated 下无此问题。
+- **ManiSkill + colocated 不要用来做性能测量**：GPU simulator 与 actor/rollout 争抢同卡，
+  rollout epoch 的 step 间标准差达 ±15.6~±31.3 s（disagg 下仅 ±0.85 s），端到端排序无统计意义。
+- **不要用 `metrics.log` 取数**：它是 rich 渲染的表格，数值会被 `…` 截断。请读
+  `${LOG_DIR}/tensorboard/` 下的 event 文件。
+- **每步的 `num_trajectories` 会波动**，它是 env 侧完成的 episode 数，不是 actor 的训练 batch
+  —— actor 每步固定消费 `algorithm.rollout_store_size_per_rank`（默认 1）个 store 条目，
+  因此阶段计时是等工作量的，可直接横向比较。
 
 ## 6. 启动训练
 
@@ -467,6 +549,7 @@ runner.resume_dir="${RESUME_DIR}"
 | Hydra 报 `Key ... is not in struct` | 配置中未预定义的键需保留 `+` 前缀，如 `+actor.sync_weight_no_wait=true` |
 | 首个 step 耗时明显偏长 | 模型与环境初始化的固有开销；启用图编译时还包含首次编译时间，不应据此判断稳态性能 |
 | 训练异常退出后残留 Ray 进程 | 执行 `ray stop --force` 后重新启动训练 |
+| ManiSkill 场景报 `FileNotFoundError: .../maniskill/assets/carrot/more_carrot/model_db.json` | 该任务需要 `rlinf/envs/maniskill/assets/` 下的任务资产（carrot / partnet_mobility，约 80M），而 `requirements/embodied/download_assets.sh` 只负责 `~/.maniskill` 下的 bridge/widowx 资产，不含这批。需单独放置到该路径（可用 `MANISKILL_ASSET_DIR` 改指向）。报错发生在 env worker 初始化阶段，只有一行 FileNotFoundError |
 
 ## 面板运维
 
