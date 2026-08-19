@@ -5,11 +5,12 @@ type: application
 
 # Chart version. Bump on every packaging change. Independent of the RLinf release below: the
 # chart can change without the application changing, and vice versa.
+# 0.4.0 adds apig.retainOnDelete, which keeps a provisioned gateway on uninstall.
 # 0.3.0 requires dashboard.auth.existingSecret and dropped the inline
 # dashboard.auth.username / password values; the chart no longer creates a Secret.
 # 0.2.0 removed the Ray dashboard Service port and its Ingress, along with the rayDashboardPort,
 # apig.rayHost and apig.rayIngressName values — upgrading deletes that route.
-version: 0.3.0
+version: 0.4.0
 
 # RLinf release this chart targets. Not the image tag — the chart pins no image (image.tag is
 # required at install time), so this tracks the repository version instead.
