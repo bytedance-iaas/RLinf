@@ -44,10 +44,13 @@ The chart ships no default image tag, so catch it here: an empty tag would other
 {{- end }}
 
 {{/*
-Kubernetes Secret that supplies the dashboard's static HTTP Basic credentials.
+Name of the pre-existing Kubernetes Secret holding the dashboard's HTTP Basic
+credentials. The chart never creates it: credentials passed through values would
+be stored verbatim in Helm's release history, readable by anyone who can run
+`helm get values`.
 */}}
 {{- define "rlinf.dashboard.authSecretName" -}}
-{{- default (printf "%s-dashboard-auth" (include "rlinf.fullname" .)) .Values.dashboard.auth.existingSecret }}
+{{- .Values.dashboard.auth.existingSecret }}
 {{- end }}
 
 {{/*
@@ -57,6 +60,9 @@ Fail during rendering rather than starting an accidentally unauthenticated publi
 {{- if .Values.dashboard.auth.enabled }}
 {{- if not .Values.dashboard.enabled }}
 {{- fail "dashboard.auth.enabled requires dashboard.enabled=true." }}
+{{- end }}
+{{- if not .Values.dashboard.auth.existingSecret }}
+{{- fail "dashboard.auth.existingSecret is required when dashboard auth is enabled. Create the Secret first, in the release namespace:\n  kubectl create secret generic <name> -n <namespace> --from-literal=username=<user> --from-literal=password=<password>\nThe chart deliberately cannot create it from values, because Helm keeps values in the release history where the password would stay readable." }}
 {{- end }}
 {{- if not .Values.dashboard.auth.usernameKey }}
 {{- fail "dashboard.auth.usernameKey is required when dashboard auth is enabled." }}
@@ -73,23 +79,8 @@ Fail during rendering rather than starting an accidentally unauthenticated publi
 {{- if eq .Values.dashboard.auth.usernameKey .Values.dashboard.auth.passwordKey }}
 {{- fail "dashboard.auth.usernameKey and dashboard.auth.passwordKey must be different." }}
 {{- end }}
-{{- if .Values.dashboard.auth.existingSecret }}
-{{- if or .Values.dashboard.auth.username .Values.dashboard.auth.password }}
-{{- fail "Set dashboard.auth.existingSecret or inline username/password, not both." }}
-{{- end }}
-{{- else }}
-{{- if not (trim .Values.dashboard.auth.username) }}
-{{- fail "dashboard.auth.username is required when auth is enabled without existingSecret." }}
-{{- end }}
-{{- if contains ":" .Values.dashboard.auth.username }}
-{{- fail "dashboard.auth.username must not contain ':'." }}
-{{- end }}
-{{- if not (trim .Values.dashboard.auth.password) }}
-{{- fail "dashboard.auth.password is required when auth is enabled without existingSecret." }}
-{{- end }}
-{{- end }}
-{{- else if or .Values.dashboard.auth.existingSecret .Values.dashboard.auth.username .Values.dashboard.auth.password }}
-{{- fail "Set dashboard.auth.enabled=true when providing dashboard auth credentials." }}
+{{- else if .Values.dashboard.auth.existingSecret }}
+{{- fail "Set dashboard.auth.enabled=true when providing dashboard.auth.existingSecret." }}
 {{- end }}
 {{- end }}
 
