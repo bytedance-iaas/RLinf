@@ -12,309 +12,249 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fast forward and backward for the fused Gemma prefix layer.
+"""Autograd-capable training interface for the fused Gemma prefix layer.
 
-``prefix_train_forward`` runs Triton projection and epilogue kernels while
-saving the activations required by ``prefix_train_backward``:
+``PrefixTrainFn`` is the training entry point: a ``torch.autograd.Function``
+whose forward is the fused Triton layer from :mod:`kernel` (keeping the
+activations backward needs) and whose backward is a *direct* gradient
+computation -- flash-attention backward kernels plus fused Triton kernels for
+the RMSNorm, RoPE and gelu-mul stages.  The layer's forward is never recomputed
+and the PyTorch reference layer is never called.
 
-  * the 7 projection gradients are plain transposed GEMMs (dX = dY·W,
-    dW = dYᵀ·X) — cuBLAS runs these at roofline, so they stay in torch;
-  * RMSNorm, gated-MLP, and masked attention use direct gradients without
-    re-running the projection GEMMs;
-  * RoPE's gradient is the transpose rotation (dx = dO·cos − rotate_half(dO)·sin),
-    done in closed form.
+Nothing is recomputed: the forward keeps ``x``, both normalised activations and
+their reciprocal stds, the RoPE'd q/k/v, the attention output and its
+log-sum-exp, the residual, and the MLP's ``gate``/``up``/``act`` -- about 240 MB
+at the gemma_2b prefix shape, which buys a backward that is pure gradient
+arithmetic.
 
-The implementation supports the standard-RMSNorm prefix path with either an
-additive attention mask or FlashAttention for the unmasked case.
+``use_cache=True``
+------------------
+Returns ``(hidden_states, k, v)`` where ``k``/``v`` are this layer's RoPE'd keys
+and *pre-GQA-expansion* values in HuggingFace's contiguous ``[B, n_kv, S,
+head_dim]`` layout, ready to hand to a ``DynamicCache``.  They are the very
+tensors attention consumed, so ``hidden_states`` is bit-identical to the
+``use_cache=False`` call.  Incoming gradients on those outputs (``grad_k`` /
+``grad_v``) are folded into this layer's own ``dk``/``dv`` before the QKV
+projections' gradients are formed, so a suffix that trains through a cached
+prefix still moves the prefix's weights.
 """
+
+from __future__ import annotations
 
 import torch
 import triton
 import triton.language as tl
-from flash_attn.flash_attn_interface import (
-    _flash_attn_backward as _fa_bwd,
+
+from .attention import _attention_backward, _attention_forward
+from .kernel import (
+    _GELU_C0,
+    _GELU_C1,
+    _inv_freq,
+    _mm,
+    _next_pow2,
+    _rope_config,
+    _tanh,
+    _warps_for,
+    gated_add,
+    gelu_mul,
+    norm_forward,
+    rope_transpose,
 )
-from flash_attn.flash_attn_interface import (
-    _flash_attn_forward as _fa_fwd,
-)
 
-from .kernel import ROPE_THETA, _gelu_tanh, _matmul, _rmsnorm, _tanh, rope_kernel
+__all__ = ["PrefixTrainFn", "prefix_train_forward", "prefix_train_backward"]
 
 
-def _rotate_half(x: torch.Tensor) -> torch.Tensor:
-    """Rotate the final dimension by half for RoPE backward."""
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2 :]
-    return torch.cat((-x2, x1), dim=-1)
-
-
-# --------------------------------------------------------------------------- #
-# Fused MLP down-projection backward: dprod = dOut @ Wd, then in the epilogue
-# produce dgl = gelu_tanh'(gl) * (dprod * u)  and  du = dprod * g directly, so
-# the [M,I] dprod is never materialised and the gelu-grad / gated-mul passes are
-# folded into the GEMM. (Forward: out = prod @ Wdᵀ, prod = gelu(gl)*u.)
-# A = dOut[M,K=H], W = Wdᵀ[N=I,K=H] (pass wd.t()); outputs dgl,du [M,I].
-# --------------------------------------------------------------------------- #
-@triton.jit
-def _down_bwd_kernel(
-    a_ptr,
-    w_ptr,
-    gl_ptr,
-    u_ptr,
-    g_ptr,
-    dgl_ptr,
-    du_ptr,
-    M,
-    N,
-    K,
-    stride_am,
-    stride_ak,
-    stride_wn,
-    stride_wk,
-    BLOCK_M: tl.constexpr,
-    BLOCK_N: tl.constexpr,
-    BLOCK_K: tl.constexpr,
-    GROUP_M: tl.constexpr,
-):
-    pid = tl.program_id(0)
-    num_pid_m = tl.cdiv(M, BLOCK_M)
-    num_pid_n = tl.cdiv(N, BLOCK_N)
-    num_pid_in_group = GROUP_M * num_pid_n
-    group_id = pid // num_pid_in_group
-    first_pid_m = group_id * GROUP_M
-    group_size_m = min(num_pid_m - first_pid_m, GROUP_M)
-    pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
-    pid_n = (pid % num_pid_in_group) // group_size_m
-
-    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
-    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
-    offs_k = tl.arange(0, BLOCK_K)
-    offs_m_i64 = offs_m.to(tl.int64)
-    a_ptrs = a_ptr + offs_m_i64[:, None] * stride_am + offs_k[None, :] * stride_ak
-    w_ptrs = w_ptr + offs_n[:, None] * stride_wn + offs_k[None, :] * stride_wk
-
-    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
-    for k0 in range(0, tl.cdiv(K, BLOCK_K)):
-        k_rem = K - k0 * BLOCK_K
-        a = tl.load(
-            a_ptrs, mask=(offs_m[:, None] < M) & (offs_k[None, :] < k_rem), other=0.0
-        )
-        w = tl.load(
-            w_ptrs, mask=(offs_n[:, None] < N) & (offs_k[None, :] < k_rem), other=0.0
-        )
-        acc += tl.dot(a, tl.trans(w))
-        a_ptrs += BLOCK_K * stride_ak
-        w_ptrs += BLOCK_K * stride_wk
-
-    full = (offs_m[:, None] < M) & (offs_n[None, :] < N)
-    off = offs_m_i64[:, None] * N + offs_n[None, :]
-    gl = tl.load(gl_ptr + off, mask=full, other=0.0).to(tl.float32)
-    u = tl.load(u_ptr + off, mask=full, other=0.0).to(tl.float32)
-    g = tl.load(g_ptr + off, mask=full, other=0.0).to(tl.float32)
-    # gelu-tanh'(gl)
-    inner = 0.7978845608028654 * (gl + 0.044715 * gl * gl * gl)
-    t = _tanh(inner)
-    dgelu = 0.5 * (1.0 + t) + 0.5 * gl * (1.0 - t * t) * 0.7978845608028654 * (
-        1.0 + 3.0 * 0.044715 * gl * gl
-    )
-    dgl = dgelu * (acc * u)
-    du = acc * g
-    tl.store(dgl_ptr + off, dgl.to(dgl_ptr.dtype.element_ty), mask=full)
-    tl.store(du_ptr + off, du.to(du_ptr.dtype.element_ty), mask=full)
-
-
-# --------------------------------------------------------------------------- #
-# Forward gated-MLP fusion: two-output GEMM epilogues so the gelu / gated-mul
-# passes are folded into the projection GEMMs (and gl/u are still available for
-# backward). C = A @ W^T (nn.Linear weight W=[N,K]).
-#   gate: gl = hn@Wg^T, g = gelu_tanh(gl)         -> outputs (gl, g)
-#   up:   u  = hn@Wu^T, prod = u * g              -> outputs (u, prod)
-# --------------------------------------------------------------------------- #
-@triton.jit
-def _twoout_mm_kernel(
-    a_ptr,
-    w_ptr,
-    other_ptr,
-    o1_ptr,
-    o2_ptr,
-    M,
-    N,
-    K,
-    stride_am,
-    stride_ak,
-    stride_wn,
-    stride_wk,
-    MODE: tl.constexpr,
-    BLOCK_M: tl.constexpr,
-    BLOCK_N: tl.constexpr,
-    BLOCK_K: tl.constexpr,
-    GROUP_M: tl.constexpr,
-):
-    pid = tl.program_id(0)
-    num_pid_m = tl.cdiv(M, BLOCK_M)
-    num_pid_n = tl.cdiv(N, BLOCK_N)
-    num_pid_in_group = GROUP_M * num_pid_n
-    group_id = pid // num_pid_in_group
-    first_pid_m = group_id * GROUP_M
-    group_size_m = min(num_pid_m - first_pid_m, GROUP_M)
-    pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
-    pid_n = (pid % num_pid_in_group) // group_size_m
-    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
-    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
-    offs_k = tl.arange(0, BLOCK_K)
-    # A single-rank rollout batch can flatten to more than 2**31 MLP elements.
-    # Use 64-bit pointer offsets to avoid wraparound.
-    offs_m_i64 = offs_m.to(tl.int64)
-    a_ptrs = a_ptr + offs_m_i64[:, None] * stride_am + offs_k[None, :] * stride_ak
-    w_ptrs = w_ptr + offs_n[:, None] * stride_wn + offs_k[None, :] * stride_wk
-    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
-    for k0 in range(0, tl.cdiv(K, BLOCK_K)):
-        k_rem = K - k0 * BLOCK_K
-        a = tl.load(
-            a_ptrs, mask=(offs_m[:, None] < M) & (offs_k[None, :] < k_rem), other=0.0
-        )
-        w = tl.load(
-            w_ptrs, mask=(offs_n[:, None] < N) & (offs_k[None, :] < k_rem), other=0.0
-        )
-        acc += tl.dot(a, tl.trans(w))
-        a_ptrs += BLOCK_K * stride_ak
-        w_ptrs += BLOCK_K * stride_wk
-    full = (offs_m[:, None] < M) & (offs_n[None, :] < N)
-    off = offs_m_i64[:, None] * N + offs_n[None, :]
-    if MODE == 0:  # gate: o1=gl (linear), o2=g=gelu(gl)
-        o2 = _gelu_tanh(acc)
-    else:  # up: o1=u (linear), o2=prod=u*g
-        gg = tl.load(other_ptr + off, mask=full, other=0.0).to(tl.float32)
-        o2 = acc * gg
-    tl.store(o1_ptr + off, acc.to(o1_ptr.dtype.element_ty), mask=full)
-    tl.store(o2_ptr + off, o2.to(o2_ptr.dtype.element_ty), mask=full)
-
-
-def _twoout_mm(a, w, mode, other=None):
-    M, K = a.shape
-    N = w.shape[0]
-    o1 = torch.empty((M, N), device=a.device, dtype=a.dtype)
-    o2 = torch.empty((M, N), device=a.device, dtype=a.dtype)
-    other_ptr = other if other is not None else o1
-    BLOCK_M, BLOCK_N, BLOCK_K, GROUP_M = 64, 64, 64, 8
-    grid = (triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N),)
-    _twoout_mm_kernel[grid](
-        a,
-        w,
-        other_ptr,
-        o1,
-        o2,
-        M,
-        N,
-        K,
-        a.stride(0),
-        a.stride(1),
-        w.stride(0),
-        w.stride(1),
-        MODE=mode,
-        BLOCK_M=BLOCK_M,
-        BLOCK_N=BLOCK_N,
-        BLOCK_K=BLOCK_K,
-        GROUP_M=GROUP_M,
-    )
-    return o1, o2
-
-
-def _down_bwd_fused(dout, wd, gl, u, g):
-    """dgl = gelu'(gl)*(dOut@Wd * u), du = (dOut@Wd) * g.  dout:[M,H], wd:[H,I]."""
-    M, K = dout.shape
-    I = gl.shape[1]
-    wt = wd.t()  # [I, H] view
-    dgl = torch.empty((M, I), device=dout.device, dtype=dout.dtype)
-    du = torch.empty((M, I), device=dout.device, dtype=dout.dtype)
-    BLOCK_M, BLOCK_N, BLOCK_K, GROUP_M = 64, 64, 64, 8
-    grid = (triton.cdiv(M, BLOCK_M) * triton.cdiv(I, BLOCK_N),)
-    _down_bwd_kernel[grid](
-        dout,
-        wt,
-        gl,
-        u,
-        g,
-        dgl,
-        du,
-        M,
-        I,
-        K,
-        dout.stride(0),
-        dout.stride(1),
-        wt.stride(0),
-        wt.stride(1),
-        BLOCK_M=BLOCK_M,
-        BLOCK_N=BLOCK_N,
-        BLOCK_K=BLOCK_K,
-        GROUP_M=GROUP_M,
-    )
-    return dgl, du
-
-
+# ---------------------------------------------------------------------------
+# RMSNorm backward
+# ---------------------------------------------------------------------------
 @triton.jit
 def _rmsnorm_bwd_kernel(
-    x_ptr, dy_ptr, w_ptr, dx_ptr, dw_ptr, n_rows, D, eps, BLOCK: tl.constexpr
+    DY,
+    X,
+    W,
+    Rstd,
+    DX,
+    DXAcc,
+    DWpart,
+    rows,
+    N,
+    BLOCK: tl.constexpr,
+    HAS_DXACC: tl.constexpr,
 ):
-    """One program per row: dx in one fused fp32 pass; dw via atomic add."""
-    row = tl.program_id(0)
-    if row >= n_rows:
-        return
-    cols = tl.arange(0, BLOCK)
-    mask = cols < D
-    x = tl.load(x_ptr + row * D + cols, mask=mask, other=0.0).to(tl.float32)
-    dy = tl.load(dy_ptr + row * D + cols, mask=mask, other=0.0).to(tl.float32)
-    w = tl.load(w_ptr + cols, mask=mask, other=0.0).to(tl.float32)
-    var = tl.sum(x * x) / D
-    rstd = 1.0 / tl.sqrt(var + eps)
-    xn = x * rstd
-    gnorm = dy * (1.0 + w)
-    mgxn = tl.sum(gnorm * xn) / D
-    dx = rstd * (gnorm - xn * mgxn)
-    tl.store(dx_ptr + row * D + cols, dx.to(dx_ptr.dtype.element_ty), mask=mask)
-    tl.atomic_add(dw_ptr + cols, dy * xn, mask=mask)
+    """y = x * r * (1 + w),  r = rsqrt(mean(x^2) + eps)
+
+        dw_i = sum_rows dy_i * x_i * r
+        dx_i = r * (g_i*dy_i - (x_i*r) * sum_j(dy_j * x_j * r * g_j) / N)
+
+    Each program walks a strided slice of the rows so the ``dw`` partial stays
+    in registers; the [num_programs, N] partials are reduced on the host, which
+    keeps the result deterministic (no atomics)."""
+    pid = tl.program_id(0)
+    nprog = tl.num_programs(0)
+    offs = tl.arange(0, BLOCK)
+    msk = offs < N
+
+    g = 1.0 + tl.load(W + offs, mask=msk, other=0.0).to(tl.float32)
+    dw = tl.zeros([BLOCK], dtype=tl.float32)
+
+    for row in range(pid, rows, nprog):
+        dy = tl.load(DY + row * N + offs, mask=msk, other=0.0).to(tl.float32)
+        x = tl.load(X + row * N + offs, mask=msk, other=0.0).to(tl.float32)
+        r = tl.load(Rstd + row)
+        xr = x * r
+
+        dw += dy * xr
+        c = tl.sum(dy * xr * g, axis=0)
+        dx = r * (g * dy - xr * (c / N))
+        if HAS_DXACC:
+            dx += tl.load(DXAcc + row * N + offs, mask=msk, other=0.0).to(tl.float32)
+        tl.store(DX + row * N + offs, dx.to(DX.dtype.element_ty), mask=msk)
+
+    tl.store(DWpart + pid * N + offs, dw, mask=msk)
 
 
-def _rmsnorm_bwd(dy, x_in, weight, eps):
-    """Fused Triton Gemma RMSNorm backward. y = (x*rstd)*(1+weight).
-
-    ~5x faster than the closed-form torch version (single fp32 pass in
-    registers; dw accumulated with a per-column atomic add). x_in,dy:[M,D].
-    """
-    M, D = x_in.shape
-    dx = torch.empty_like(dy)
-    dw = torch.zeros(D, device=dy.device, dtype=torch.float32)
-    _rmsnorm_bwd_kernel[(M,)](
-        x_in, dy, weight, dx, dw, M, D, float(eps), BLOCK=triton.next_power_of_2(D)
+def rmsnorm_backward(dy, x, weight, rstd, dx_acc=None, cfg=None):
+    """Returns (dx, dw).  ``dx_acc`` is added into dx inside the kernel (the
+    residual branch's gradient), saving a separate elementwise pass."""
+    B, S, N = x.shape
+    rows = B * S
+    dx = torch.empty_like(x)
+    G, nw = cfg or (min(rows, 512), _warps_for(_next_pow2(N)))
+    dw_part = torch.empty((G, N), device=x.device, dtype=torch.float32)
+    BLOCK = _next_pow2(N)
+    _rmsnorm_bwd_kernel[(G,)](
+        dy,
+        x,
+        weight,
+        rstd,
+        dx,
+        dx_acc if dx_acc is not None else dx,
+        dw_part,
+        rows,
+        N,
+        BLOCK=BLOCK,
+        HAS_DXACC=dx_acc is not None,
+        num_warps=nw,
     )
-    return dx, dw.to(weight.dtype)
+    return dx, dw_part.sum(0).to(weight.dtype)
 
 
-def _rope_tables(S, D, device, dtype):
-    half = D // 2
-    inv = torch.exp(
-        -(torch.arange(0, half, device=device).float() * (2.0 / D))
-        * torch.log(torch.tensor(ROPE_THETA))
+# ---------------------------------------------------------------------------
+# RoPE backward (+ [B,H,S,D] -> [B,S,H*D])
+# ---------------------------------------------------------------------------
+@triton.jit
+def _rope_bwd_kernel(
+    DOut,
+    DX,
+    InvFreq,
+    Pos,
+    S,
+    sxs,
+    sob,
+    soh,
+    sos,
+    HALF: tl.constexpr,
+    BLOCK_S: tl.constexpr,
+    APPLY_ROPE: tl.constexpr,
+    HAS_POS: tl.constexpr,
+):
+    pid_s = tl.program_id(0)
+    h = tl.program_id(1)
+    b = tl.program_id(2)
+
+    offs_s = pid_s * BLOCK_S + tl.arange(0, BLOCK_S)
+    offs_h = tl.arange(0, HALF)
+    valid = offs_s < S
+
+    dp = DOut + b * sob + h * soh + offs_s[:, None] * sos + offs_h[None, :]
+    d1 = tl.load(dp, mask=valid[:, None], other=0.0).to(tl.float32)
+    d2 = tl.load(dp + HALF, mask=valid[:, None], other=0.0).to(tl.float32)
+
+    if APPLY_ROPE:
+        if HAS_POS:
+            pos = tl.load(Pos + b * S + offs_s, mask=valid, other=0).to(tl.float32)
+        else:
+            pos = offs_s.to(tl.float32)
+        inv = tl.load(InvFreq + offs_h)
+        ang = pos[:, None] * inv[None, :]
+        c = tl.cos(ang)
+        s = tl.sin(ang)
+        # forward: o1 = x1*c - x2*s ; o2 = x2*c + x1*s  (an orthogonal rotation)
+        x1 = d1 * c + d2 * s
+        x2 = d2 * c - d1 * s
+    else:
+        x1 = d1
+        x2 = d2
+
+    xp = DX + b * S * sxs + h * 2 * HALF + offs_s[:, None] * sxs + offs_h[None, :]
+    tl.store(xp, x1.to(DX.dtype.element_ty), mask=valid[:, None])
+    tl.store(xp + HALF, x2.to(DX.dtype.element_ty), mask=valid[:, None])
+
+
+def rope_transpose_backward(d_bhsd, position_ids, *, apply_rope=True):
+    """[B, H, S, D] grads -> [B, S, H*D] grads."""
+    B, n_heads, S, head_dim = d_bhsd.shape
+    out = torch.empty(
+        (B, S, n_heads * head_dim), device=d_bhsd.device, dtype=d_bhsd.dtype
     )
-    pos = torch.arange(S, device=device).float()
-    ang = torch.outer(pos, inv)  # [S, half]
-    emb = torch.cat((ang, ang), dim=-1)  # [S, D]
-    return emb.cos().to(dtype), emb.sin().to(dtype)
-
-
-def _rotary_pos(position_ids, D, dtype):
-    """cos/sin for explicit positions (padded prefix uses cumsum(pad)-1). [B,S,D]."""
-    half = D // 2
-    dev = position_ids.device
-    inv = torch.exp(
-        -(torch.arange(0, half, device=dev).float() * (2.0 / D))
-        * torch.log(torch.tensor(ROPE_THETA))
+    inv = _inv_freq(head_dim, str(d_bhsd.device)) if apply_rope else out
+    if position_ids is not None:
+        position_ids = position_ids.contiguous()
+    BLOCK_S, nw = _rope_config(S)
+    _rope_bwd_kernel[(triton.cdiv(S, BLOCK_S), n_heads, B)](
+        d_bhsd,
+        out,
+        inv,
+        position_ids if position_ids is not None else out,
+        S,
+        out.stride(1),
+        d_bhsd.stride(0),
+        d_bhsd.stride(1),
+        d_bhsd.stride(2),
+        HALF=head_dim // 2,
+        BLOCK_S=BLOCK_S,
+        APPLY_ROPE=apply_rope,
+        HAS_POS=position_ids is not None,
+        num_warps=nw,
     )
-    ang = position_ids.float()[:, :, None] * inv[None, None, :]  # [B,S,half]
-    emb = torch.cat((ang, ang), dim=-1)  # [B,S,D]
-    return emb.cos().to(dtype), emb.sin().to(dtype)
+    return out
 
 
+# ---------------------------------------------------------------------------
+# gelu_tanh(gate) * up  backward
+# ---------------------------------------------------------------------------
+@triton.jit
+def _gelu_mul_bwd_kernel(DY, G, U, DG, DU, n_elem, BLOCK: tl.constexpr):
+    offs = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+    msk = offs < n_elem
+    dy = tl.load(DY + offs, mask=msk, other=0.0).to(tl.float32)
+    g = tl.load(G + offs, mask=msk, other=0.0).to(tl.float32)
+    u = tl.load(U + offs, mask=msk, other=0.0).to(tl.float32)
+
+    t = _tanh(_GELU_C0 * (g + _GELU_C1 * g * g * g))
+    gelu = 0.5 * g * (1.0 + t)
+    dgelu = 0.5 * (1.0 + t) + 0.5 * g * (1.0 - t * t) * _GELU_C0 * (
+        1.0 + 3.0 * _GELU_C1 * g * g
+    )
+
+    tl.store(DG + offs, (dy * u * dgelu).to(DG.dtype.element_ty), mask=msk)
+    tl.store(DU + offs, (dy * gelu).to(DU.dtype.element_ty), mask=msk)
+
+
+def gelu_mul_backward(dy, g, u):
+    dg = torch.empty_like(g)
+    du = torch.empty_like(u)
+    n = g.numel()
+    BLOCK = 1024
+    _gelu_mul_bwd_kernel[(triton.cdiv(n, BLOCK),)](
+        dy, g, u, dg, du, n, BLOCK=BLOCK, num_warps=4
+    )
+    return dg, du
+
+
+# ---------------------------------------------------------------------------
+# forward / backward for the whole prefix layer
+# ---------------------------------------------------------------------------
 def prefix_train_forward(
     x,
     w_ln,
@@ -332,315 +272,146 @@ def prefix_train_forward(
     position_ids=None,
     use_cache=False,
 ):
-    """Fast forward that also returns the activations needed for backward.
+    """Fused forward that also hands back everything backward needs.
 
-    attention_mask: optional additive [B,1,S,S] bias (openpi's general mask,
-    modeling_gemma.eager_attention_forward L244-246). When given, attention runs
-    the Triton masked kernel (fwd) + a torch-manual masked backward — FlashAttn
-    can't take an arbitrary additive mask, and varlen (padding-only) is slower
-    once you count pack/unpack. When None, the fast FlashAttention path is used.
-    position_ids: optional [B,S] RoPE positions (padded prefix = cumsum(pad)-1);
-    defaults to arange.
-    use_cache: also surface this layer's rope'd K and pre-attention V as
-    `ctx["kv_cache"] = (k, v)`, each [B, n_kv, S, hd] — the HF `Cache.update`
-    layout — so a prefix-cache build can collect per-layer K/V. The tensors are
-    the ones attention already consumed, so this only costs the transpose/copy
-    into HF layout (n_kv is 1 here, so a few hundred KB).
+    Returns ``(out, saved)``; ``saved["kv_cache"]`` is ``(k, v)`` when
+    ``use_cache``.
     """
-    n_heads, n_kv, hd = meta
+    n_heads, n_kv, head_dim = meta
     B, S, H = x.shape
-    M = B * S
-    groups = n_heads // n_kv
-    scale = hd**-0.5
-    xr = x.reshape(M, H)
+    BS = B * S
+    q_dim = n_heads * head_dim
+    scale = head_dim**-0.5
+    eps = float(eps)
 
-    h = _rmsnorm(xr, w_ln, eps)  # triton [M,H]
-    q = _matmul(h, wq)
-    k = _matmul(h, wk)
-    v = _matmul(h, wv)
+    x = x if x.is_contiguous() else x.contiguous()
 
-    # RoPE (Triton), honouring explicit positions if given.
-    half = hd // 2
-    has_pos = position_ids is not None
-    pos_flat = position_ids.reshape(M).to(torch.int32) if has_pos else q
-    q_rope = torch.empty_like(q)
-    k_rope = torch.empty_like(k)
-    rope_kernel[(M * n_heads,)](
-        q,
-        q_rope,
-        pos_flat,
-        M * n_heads,
-        S,
-        n_heads,
-        hd,
-        ROPE_THETA,
-        HAS_POS=has_pos,
-        HALF=half,
+    # ---- input RMSNorm ----
+    h1, rstd1, _ = norm_forward(x, w_ln, eps)
+    h1_2d = h1.view(BS, H)
+
+    # ---- QKV + RoPE (+ layout) ----
+    q = rope_transpose(_mm(h1_2d, wq).view(B, S, -1), n_heads, head_dim, position_ids)
+    k = rope_transpose(_mm(h1_2d, wk).view(B, S, -1), n_kv, head_dim, position_ids)
+    v = rope_transpose(
+        _mm(h1_2d, wv).view(B, S, -1), n_kv, head_dim, position_ids, apply_rope=False
     )
-    rope_kernel[(M * n_kv,)](
-        k,
-        k_rope,
-        pos_flat,
-        M * n_kv,
-        S,
-        n_kv,
-        hd,
-        ROPE_THETA,
-        HAS_POS=has_pos,
-        HALF=half,
-    )
-    if has_pos:
-        cos, sin = _rotary_pos(position_ids, hd, x.dtype)  # [B,S,hd]
-    else:
-        cos, sin = _rope_tables(S, hd, x.device, x.dtype)  # [S,hd]
 
-    masked = attention_mask is not None
-    if masked:
-        # FlashAttn can't take an arbitrary additive mask; use a materialised
-        # torch attention (cuBLAS-batched, fp32 softmax) and SAVE p so the
-        # backward reuses it (no s/softmax recompute). [B,Hq,S,hd] layout.
-        qr = q_rope.view(B, S, n_heads, hd).transpose(1, 2)  # [B,Hq,S,hd]
-        kr = k_rope.view(B, S, n_kv, hd).transpose(1, 2)
-        vv = v.view(B, S, n_kv, hd).transpose(1, 2)
-        kx = kr.repeat_interleave(groups, 1) if groups > 1 else kr
-        vx = vv.repeat_interleave(groups, 1) if groups > 1 else vv
-        s = (
-            torch.matmul(qr, kx.transpose(-1, -2)).float() * scale
-            + attention_mask.float()
-        )
-        p = torch.softmax(s, dim=-1)  # fp32 [B,Hq,S,S]
-        ao = torch.matmul(p.to(x.dtype), vx).transpose(1, 2).reshape(M, n_heads * hd)
-        out_fa = lse = rng = None
-    else:
-        qr = q_rope.view(B, S, n_heads, hd)  # [B,S,Hq,hd] (FA layout)
-        kr = k_rope.view(B, S, n_kv, hd)
-        vv = v.view(B, S, n_kv, hd)
-        out_fa, lse, _, rng = _fa_fwd(
-            qr,
-            kr,
-            vv,
-            0.0,
-            scale,
-            causal=False,
-            window_size_left=-1,
-            window_size_right=-1,
-            softcap=0.0,
-            alibi_slopes=None,
-            return_softmax=False,
-        )
-        ao = out_fa.reshape(M, n_heads * hd)
-        p = None
+    # ---- flash attention ----
+    attn, lse, lsum = _attention_forward(q, k, v, attention_mask, scale)
+    attn_2d = attn.reshape(BS, q_dim)
+    o = _mm(attn_2d, wo).view(B, S, H)
 
-    # HF past_key_values wants [B, n_kv, S, hd]: the masked path already holds
-    # kr/vv that way, the FlashAttn path keeps them [B, S, n_kv, hd]. Export the
-    # *rope'd* k (kr) and the pre-GQA-expansion v (vv) — not kx/vx, whose heads
-    # are repeat_interleave'd up to n_heads and which a cache must not store.
-    if use_cache:
-        kc, vc = (kr, vv) if masked else (kr.transpose(1, 2), vv.transpose(1, 2))
-        kv_cache = (kc.contiguous(), vc.contiguous())
-    else:
-        kv_cache = None
+    # ---- residual + post-attention RMSNorm ----
+    h2, rstd2, res1 = norm_forward(o, w_pln, eps, residual=x)
+    h2_2d = h2.view(BS, H)
 
-    o = _matmul(ao, wo)  # triton [M,H]
-    h1 = xr + o
-    hn = _rmsnorm(h1, w_pln, eps)  # triton [M,H]
-    gl, g = _twoout_mm(hn, wg, mode=0)  # gl, g=gelu(gl)  (fused)
-    u, prod = _twoout_mm(hn, wu, mode=1, other=g)  # u, prod=u*g     (fused)
-    out = _matmul(prod, wd, res=h1)  # triton [M,H]  (fused residual)
+    # ---- MLP ----
+    gate = _mm(h2_2d, wg)
+    up = _mm(h2_2d, wu)
+    act = gelu_mul(gate, up)
+    m = _mm(act, wd).view(B, S, H)
+    out = gated_add(res1, m)
 
-    ctx = {
+    saved = {
         "x": x,
-        "h": h,
-        "ao": ao,
         "h1": h1,
-        "hn": hn,
-        "gl": gl,
-        "g": g,
-        "u": u,
-        "prod": prod,
-        "cos": cos,
-        "sin": sin,
-        "has_pos": has_pos,
-        "masked": masked,
-        "mask": attention_mask,
-        "qr": qr,
-        "kr": kr,
-        "vv": vv,
-        "p": p,
-        "out_fa": out_fa,
+        "rstd1": rstd1,
+        "q": q,
+        "k": k,
+        "v": v,
+        "attn": attn,
         "lse": lse,
-        "rng": rng,
-        "kv_cache": kv_cache,
-        "w_ln": w_ln,
-        "wq": wq,
-        "wk": wk,
-        "wv": wv,
-        "wo": wo,
-        "w_pln": w_pln,
-        "wg": wg,
-        "wu": wu,
-        "wd": wd,
-        "eps": eps,
+        "lsum": lsum,
+        "res1": res1,
+        "h2": h2,
+        "rstd2": rstd2,
+        "gate": gate,
+        "up": up,
+        "act": act,
+        "w": (w_ln, wq, wk, wv, wo, w_pln, wg, wu, wd),
+        "mask": attention_mask,
+        "pos": position_ids,
         "meta": meta,
+        "scale": scale,
+        "eps": eps,
         "shape": (B, S, H),
     }
-    return out.view(B, S, H), ctx
+    if use_cache:
+        saved["kv_cache"] = (k, v)
+    return out, saved
 
 
-def prefix_train_backward(ctx, dout, dk_cache=None, dv_cache=None):
-    """Grad-only backward. dk_cache/dv_cache are the incoming grads of the
-    `use_cache` K/V outputs ([B, n_kv, S, hd]); they fold into this layer's own
-    dk/dv, so a suffix that attends to the cached prefix K/V still trains the
-    prefix correctly. Both None (the plain training step) is the fast path.
-    """
-    n_heads, n_kv, hd = ctx["meta"]
-    B, S, H = ctx["shape"]
-    M = B * S
-    groups = n_heads // n_kv
-    scale = hd**-0.5
-    dtype = dout.dtype
-    (x, h, ao, h1, hn, gl, g, u, prod, cos, sin) = (
-        ctx["x"],
-        ctx["h"],
-        ctx["ao"],
-        ctx["h1"],
-        ctx["hn"],
-        ctx["gl"],
-        ctx["g"],
-        ctx["u"],
-        ctx["prod"],
-        ctx["cos"],
-        ctx["sin"],
+def prefix_train_backward(saved, grad_out, dk_cache=None, dv_cache=None):
+    """Direct gradients for (x, w_ln, wq, wk, wv, wo, w_pln, wg, wu, wd)."""
+    n_heads, n_kv, head_dim = saved["meta"]
+    B, S, H = saved["shape"]
+    BS = B * S
+    q_dim = n_heads * head_dim
+    w_ln, wq, wk, wv, wo, w_pln, wg, wu, wd = saved["w"]
+    x, pos, mask = saved["x"], saved["pos"], saved["mask"]
+
+    dout = grad_out if grad_out.is_contiguous() else grad_out.contiguous()
+    dout_2d = dout.view(BS, H)
+
+    # ---- MLP ----
+    dWd = torch.mm(dout_2d.t(), saved["act"])
+    dact = torch.mm(dout_2d, wd)
+    dgate, dup = gelu_mul_backward(dact, saved["gate"], saved["up"])
+
+    h2_2d = saved["h2"].view(BS, H)
+    dWg = torch.mm(dgate.t(), h2_2d)
+    dWu = torch.mm(dup.t(), h2_2d)
+    dh2 = torch.addmm(torch.mm(dgate, wg), dup, wu).view(B, S, H)
+
+    # ---- post-attention RMSNorm (its dx accumulates the residual branch) ----
+    dres1, dw_pln = rmsnorm_backward(
+        dh2, saved["res1"], w_pln, saved["rstd2"], dx_acc=dout
     )
-    masked, has_pos = ctx["masked"], ctx["has_pos"]
-    wq, wk, wv, wo = ctx["wq"], ctx["wk"], ctx["wv"], ctx["wo"]
-    wg, wu, wd, w_ln, w_pln, eps = (
-        ctx["wg"],
-        ctx["wu"],
-        ctx["wd"],
-        ctx["w_ln"],
-        ctx["w_pln"],
-        ctx["eps"],
+    dres1_2d = dres1.view(BS, H)
+
+    # ---- o_proj + attention ----
+    attn_2d = saved["attn"].reshape(BS, q_dim)
+    dWo = torch.mm(dres1_2d.t(), attn_2d)
+    dattn = torch.mm(dres1_2d, wo).view(B, S, n_heads, head_dim)
+
+    dq, dk, dv = _attention_backward(
+        dattn,
+        saved["q"],
+        saved["k"],
+        saved["v"],
+        mask,
+        saved["scale"],
+        saved["attn"],
+        saved["lse"],
+        saved["lsum"],
     )
+    # gradients arriving through the exported (cached) K/V
+    if dk_cache is not None:
+        dk = dk + dk_cache
+    if dv_cache is not None:
+        dv = dv + dv_cache
 
-    doutr = dout.reshape(M, H)
+    # ---- RoPE backward + QKV projections ----
+    dq_f = rope_transpose_backward(dq, pos).view(BS, q_dim)
+    dk_f = rope_transpose_backward(dk, pos).view(BS, n_kv * head_dim)
+    dv_f = rope_transpose_backward(dv, pos, apply_rope=False).view(BS, n_kv * head_dim)
 
-    # ---- down proj + gated-MLP epilogue (fused GEMM: dgl, du direct) ----
-    # dprod = dOut@Wd never materialised; gelu-grad + gated-mul folded in.
-    dgl, du = _down_bwd_fused(doutr, wd, gl, u, g)
-    dWd = doutr.t() @ prod  # [H,I]  (cuBLAS)
-    dh1 = doutr.clone()  # residual2 into h1
-    dWg = dgl.t() @ hn
-    dWu = du.t() @ hn
-    dhn = dgl @ wg + du @ wu  # [M,H]
+    h1_2d = saved["h1"].view(BS, H)
+    dWq = torch.mm(dq_f.t(), h1_2d)
+    dWk = torch.mm(dk_f.t(), h1_2d)
+    dWv = torch.mm(dv_f.t(), h1_2d)
+    dh1 = torch.addmm(torch.addmm(torch.mm(dq_f, wq), dk_f, wk), dv_f, wv).view(B, S, H)
 
-    # ---- post-attention RMSNorm (closed form) ----
-    dh1n, dw_pln = _rmsnorm_bwd(dhn, h1, w_pln, eps)
-    dh1 = dh1 + dh1n
+    # ---- input RMSNorm (its dx accumulates the residual branch) ----
+    dx, dw_ln = rmsnorm_backward(dh1, x, w_ln, saved["rstd1"], dx_acc=dres1)
 
-    # ---- o proj + residual1 ----
-    dao = dh1 @ wo  # [M, q_dim]
-    dWo = dh1.t() @ ao
-    dx = dh1.clone()  # residual1 into x
-
-    if masked:
-        # ---- masked attention backward (torch, reuses saved p) ----
-        # p was materialised in the forward, so the backward applies the softmax
-        # jacobian directly (no s/softmax recompute). [B,Hq,S,hd] layout.
-        qr, kr, vh, p = ctx["qr"], ctx["kr"], ctx["vv"], ctx["p"]
-        kx = kr.repeat_interleave(groups, 1) if groups > 1 else kr
-        vx = vh.repeat_interleave(groups, 1) if groups > 1 else vh
-        dao_r = dao.view(B, S, n_heads, hd).transpose(1, 2)  # [B,Hq,S,hd]
-        dvx = torch.matmul(p.to(dtype).transpose(-1, -2), dao_r)
-        dp = torch.matmul(dao_r, vx.transpose(-1, -2)).float()
-        ds = (p * (dp - (dp * p).sum(-1, keepdim=True))).to(dtype)
-        dqr = torch.matmul(ds, kx) * scale  # [B,Hq,S,hd]
-        dkx = torch.matmul(ds.transpose(-1, -2), qr) * scale
-        if groups > 1:
-            dkr = dkx.view(B, n_kv, groups, S, hd).sum(2)
-            dvh = dvx.view(B, n_kv, groups, S, hd).sum(2)
-        else:
-            dkr, dvh = dkx, dvx
-        # kr/vv were also exported as the K/V cache; fold their incoming grads in
-        # (already [B,n_kv,S,hd] on this path).
-        if dk_cache is not None:
-            dkr = dkr + dk_cache
-        if dv_cache is not None:
-            dvh = dvh + dv_cache
-        # RoPE backward, [B,H,S,hd] layout
-        cse = cos.view(B, 1, S, hd) if has_pos else cos.view(1, 1, S, hd)
-        sne = sin.view(B, 1, S, hd) if has_pos else sin.view(1, 1, S, hd)
-        dq = (
-            (dqr * cse - _rotate_half(dqr) * sne)
-            .transpose(1, 2)
-            .reshape(M, n_heads * hd)
-        )
-        dk = (dkr * cse - _rotate_half(dkr) * sne).transpose(1, 2).reshape(M, n_kv * hd)
-        dv = dvh.transpose(1, 2).reshape(M, n_kv * hd)
-    else:
-        # ---- FlashAttention backward ([B,S,H,hd] layout, GQA-summed) ----
-        qr, kr, vv = ctx["qr"], ctx["kr"], ctx["vv"]
-        out_fa, lse, rng = ctx["out_fa"], ctx["lse"], ctx["rng"]
-        dao_bshd = dao.reshape(B, S, n_heads, hd)
-        dqr = torch.empty_like(qr)
-        dkr = torch.empty_like(kr)
-        dvv = torch.empty_like(vv)
-        _fa_bwd(
-            dao_bshd,
-            qr,
-            kr,
-            vv,
-            out_fa,
-            lse,
-            dqr,
-            dkr,
-            dvv,
-            0.0,
-            scale,
-            False,
-            -1,
-            -1,
-            0.0,
-            None,
-            False,
-            rng_state=rng,
-        )
-        # Cache grads arrive [B,n_kv,S,hd]; this path works in [B,S,n_kv,hd].
-        if dk_cache is not None:
-            dkr = dkr + dk_cache.transpose(1, 2)
-        if dv_cache is not None:
-            dvv = dvv + dv_cache.transpose(1, 2)
-        # RoPE backward, [B,S,H,hd] layout
-        cse = cos.view(B, S, 1, hd) if has_pos else cos.view(1, S, 1, hd)
-        sne = sin.view(B, S, 1, hd) if has_pos else sin.view(1, S, 1, hd)
-        dq = (dqr * cse - _rotate_half(dqr) * sne).reshape(M, n_heads * hd)
-        dk = (dkr * cse - _rotate_half(dkr) * sne).reshape(M, n_kv * hd)
-        dv = dvv.reshape(M, n_kv * hd)
-
-    # ---- q/k/v proj ----
-    dWq = dq.t() @ h
-    dWk = dk.t() @ h
-    dWv = dv.t() @ h
-    dh = dq @ wq + dk @ wk + dv @ wv  # [M,H]
-
-    # ---- input RMSNorm (closed form) ----
-    dxn, dw_ln = _rmsnorm_bwd(dh, x.reshape(M, H), w_ln, eps)
-    dx = dx + dxn
-
-    return (dx.view(B, S, H), dw_ln, dWq, dWk, dWv, dWo, dw_pln, dWg, dWu, dWd)
+    return dx, dw_ln, dWq, dWk, dWv, dWo, dw_pln, dWg, dWu, dWd
 
 
 class PrefixTrainFn(torch.autograd.Function):
-    """Fast fwd + grad-only backward for the standard (prefix) Gemma layer.
-
-    With `use_cache=True` the call returns `(hidden_states, k, v)` instead of a
-    bare `hidden_states`; k/v are this layer's rope'd K and its V, each
-    [B, n_kv, S, hd] — the layout `Cache.update(k, v, layer_idx)` expects — so a
-    prefix-cache build can collect per-layer K/V and a suffix can attend to them
-    without recomputing the prefix. k/v are differentiable: their grads fold back
-    into this layer's dk/dv (see prefix_train_backward). Default `use_cache=False`
-    keeps the single-output signature the training step already uses.
-    """
+    """``apply(x, w_ln, wq, wk, wv, wo, w_pln, wg, wu, wd, eps, meta,
+    attention_mask=None, position_ids=None, use_cache=False)``."""
 
     @staticmethod
     def forward(
@@ -678,7 +449,7 @@ class PrefixTrainFn(torch.autograd.Function):
             position_ids=position_ids,
             use_cache=use_cache,
         )
-        ctx.saved = saved
+        ctx.train_ctx = saved
         if use_cache:
             k, v = saved["kv_cache"]
             return out, k, v
@@ -687,8 +458,7 @@ class PrefixTrainFn(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_out, grad_k=None, grad_v=None):
         g = prefix_train_backward(
-            ctx.saved, grad_out.contiguous(), dk_cache=grad_k, dv_cache=grad_v
+            ctx.train_ctx, grad_out, dk_cache=grad_k, dv_cache=grad_v
         )
-        # grads for (x, w_ln, wq..wd, eps, meta, attention_mask, position_ids,
-        #            use_cache)
+        # + eps, meta, attention_mask, position_ids, use_cache
         return (*g, None, None, None, None, None)
