@@ -163,6 +163,14 @@ jobs:
         working-directory: dashboard/frontend
         run: npm run check:identity
 
+      # `tsc` proves the two catalogues have the same keys. It cannot see a blank
+      # message, a placeholder that drifted between languages, a Chinese entry
+      # that is still English, or a key nothing renders any more -- each of which
+      # ships a visibly wrong page while every other gate stays green.
+      - name: Check the message catalogues agree
+        working-directory: dashboard/frontend
+        run: npm run check:i18n
+
       # The server mounts dist/ when it exists (api.py), so an index.html that
       # references assets the build did not emit is a blank page in production and
       # nothing else would catch it.
