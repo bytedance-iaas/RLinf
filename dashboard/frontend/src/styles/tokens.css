@@ -103,8 +103,8 @@
   --type-numeric-sm-leading: 1.35;
   --type-numeric-sm-feature: 'tnum' 1, 'zero' 1;
 
-  --font-inter: 'Inter', system-ui, -apple-system, Segoe UI, sans-serif;
-  --font-jetbrains-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-inter: 'Inter', system-ui, -apple-system, Segoe UI, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Source Han Sans SC', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', sans-serif;
+  --font-jetbrains-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Source Han Sans SC', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', monospace;
 
   /* Component tokens */
   --card-bg: var(--color-surface);

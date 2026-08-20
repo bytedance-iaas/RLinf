@@ -358,6 +358,14 @@ console runs on clusters that may have no egress, and a page whose numbers
 render in a fallback face while waiting on a font request is worse than one that
 never asked.
 
+Neither subset carries a single CJK glyph, and the UI has a Chinese mode, so both
+stacks name the platform CJK families (PingFang SC, Microsoft YaHei, Noto Sans
+CJK SC and friends) ahead of the generic family. Font fallback is per glyph, so
+Latin still comes from Inter or JetBrains Mono and only the Chinese is served by
+the host font. Bundling a CJK face instead would add several megabytes to a
+bundle that ships into air-gapped clusters, to replace a font every host running
+a browser already has.
+
 Ten roles share seven deliberately distinct sizes (`32 / 28 / 20 / 15 / 14 / 13
 / 12`). Weight does more work than adding near-duplicate sizes: `label-sm` at
 12px and weight 550 in `text-faint` is the standard structural label, and it
