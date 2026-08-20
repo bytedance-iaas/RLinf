@@ -8,6 +8,8 @@
  * user has to ask for it.
  */
 
+import { t } from "../lib/i18n";
+
 export const SMOOTHING_STOPS = [0, 3, 5, 9, 15, 25, 49] as const;
 
 export function SmoothingControl(props: { value: number; onChange: (value: number) => void }) {
@@ -15,7 +17,7 @@ export function SmoothingControl(props: { value: number; onChange: (value: numbe
 
   return (
     <label className="control">
-      <span>Smoothing</span>
+      <span>{t("chart.smoothing")}</span>
       <input
         type="range"
         min={0}
@@ -26,9 +28,11 @@ export function SmoothingControl(props: { value: number; onChange: (value: numbe
         // values are visually identical, so the extra precision only makes the
         // control harder to return to a known setting.
         onChange={(event) => props.onChange(SMOOTHING_STOPS[Number(event.target.value)] ?? 0)}
-        aria-label="Smoothing window in points"
+        aria-label={t("chart.smoothingAria")}
       />
-      <span className="control-value">{props.value === 0 ? "off" : `${props.value}pt`}</span>
+      <span className="control-value">
+        {props.value === 0 ? t("chart.smoothingOff") : t("chart.smoothingPoints", { n: props.value })}
+      </span>
     </label>
   );
 }

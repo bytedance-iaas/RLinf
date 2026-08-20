@@ -29,11 +29,13 @@ DESIGN.md              normative design system; the source of every colour and d
 src/styles/tokens.css  GENERATED from DESIGN.md front matter -- never hand-edit
 src/styles/app.css     everything else, consuming only tokens
 src/api/               types.ts (mirrors the server's Pydantic models), client.ts, useLive.ts (SSE)
-src/lib/               router, number/date formatting, series alignment, metric-side signals
+src/lib/               router, i18n, number/date formatting, series alignment, metric-side signals
+src/locales/           en.ts (source of truth) and zh.ts (typed against it)
 src/components/        Chart.tsx (uPlot wrapper), primitives.tsx, SmoothingControl.tsx
 src/views/             RunList, Overview, Metrics, Media, Events, Compare
 scripts/gen_tokens.py       DESIGN.md -> tokens.css
 scripts/lint_design_md.py   validate DESIGN.md against the design.md spec
+scripts/check_i18n.mjs      catalogue parity, placeholders, dead and missing keys
 scripts/make_demo_runs.py   write a fixture run tree with every state this UI must render
 ```
 
@@ -60,6 +62,49 @@ colours are consumed from `src/lib/series.ts`, three type levels only from
 ignored. It is a warning, not an error — but the intended response is to delete
 the token or give it a role, not to leave it sitting there.
 
+### Two languages, one catalogue
+
+The UI reads in English or Simplified Chinese. The switch is the globe button in
+the header, next to the theme toggle; both are stored the same way, for the same
+reason.
+
+```
+src/locales/en.ts   every string the UI writes itself -- the source of truth
+src/locales/zh.ts   Record<keyof typeof en, string>, so tsc rejects a missing key
+src/lib/i18n.ts     the store, t(), tNode() for messages with an element inside
+```
+
+To add a string: put it in `en.ts`, translate it in `zh.ts`, call
+`t("area.thing")`. Nothing else. There is one subscription — `App` — and
+everything under it re-renders, so views and even non-component helpers
+(`format.ts`, `signals.ts`) call the plain `t()` rather than a hook.
+
+Three rules the catalogues follow, all enforced by `npm run check:i18n`:
+
+- **Placeholders are named** (`{count}`, not `%s`) and must match across
+  languages, because word order does not survive the trip.
+- **A message with an element inside it stays one message.** `tNode("...", {code:
+  <Code>runner.run_id</Code>})` substitutes the node where the sentence wants it;
+  splitting into a prefix and a suffix key would pin the element to where English
+  puts it.
+- **Server-written text is never translated.** Metric keys, run ids, paths, event
+  payloads, template chart titles and the health verdict's `reason` all render
+  verbatim in both languages — a translated TensorBoard tag cannot be grepped
+  against the training side, and a paraphrased verdict cannot be matched against
+  the API response.
+
+The language lives on `<html lang>`, resolved by the inline script in
+`index.html` before React mounts, exactly like the theme: `lang` decides the
+browser's CJK font fallback, so mounting in one language and correcting to the
+other would reflow every line of text already painted. Neither shipped webfont
+has CJK glyphs, so both stacks name the platform CJK families after them — see
+DESIGN.md's Typography section.
+
+Two languages means both catalogues ship in one bundle (about +37 kB raw, +11 kB
+gzipped). A split chunk per language would save that on the first paint and cost
+a network round trip on the switch, which is the wrong trade for a console whose
+whole point is that it works in a cluster with no egress.
+
 ## Install and build
 
 ```bash
@@ -69,6 +114,7 @@ npm run typecheck     # tsc --noEmit
 npm run build         # tsc --noEmit && vite build  -> dist/
 npm run check:scales  # the one runtime assertion; see below
 npm run check:identity # cross-run payload isolation during route changes
+npm run check:i18n    # the two message catalogues describe the same UI
 ```
 
 ### Runtime scale checks
@@ -495,6 +541,56 @@ it again, and the stream comes back on its own.
   is extrapolated from little data. The Timing card must expose low confidence so
   the estimate is not mistaken for a measurement.
 
+### 10. The language switch
+
+The globe button in the header, next to the theme toggle. What to check, in the
+order it goes wrong:
+
+```
+http://localhost:5273/#/runs
+```
+
+- Clicking it turns the **whole shell** over at once — breadcrumb, tab strip,
+  table headers, state and health words, the `2 分钟前` ages, the run-needs-
+  attention card, and the browser tab's own title. Nothing is left in the other
+  language and nothing waits for the next SSE push.
+- The button's label is the language it switches **to**, in that language
+  (`中文` / `EN`). Someone who cannot read the current UI still has to be able to
+  find the way out of it. That is also why its label survives the narrow-width
+  media query that hides the theme toggle's: a sun and a moon explain themselves,
+  a globe does not.
+- Open a run and confirm what does **not** change: the health bar's reason
+  sentence, the template's chart titles and axis label, metric keys, event kinds
+  and payloads, paths. Compare against the API to be sure they are identical:
+
+  ```bash
+  curl -s http://127.0.0.1:8861/api/runs/<id> | python -c 'import json,sys; print(json.load(sys.stdin)["health"]["reason"])'
+  ```
+
+- The Chinese overview must read `每 RL 迭代` and `位于第 95 RL 迭代`, not
+  `每rl 迭代`. The English UI lowercases the step-semantics label mid-sentence;
+  Chinese must not, or the acronym becomes a typo. `semanticsInline()` in
+  `src/lib/format.ts` owns that rule.
+- Timestamps follow the UI language, not the browser: `08/19/2026, 15:10:48` in
+  English, `2026/08/19 15:10:48` in Chinese. Durations, byte counts and step
+  counts do not — those are numbers, and their column alignment is the point.
+- Reload. The choice survives, and it survives as `<html lang>` **before** React
+  mounts — check the DOM in the elements panel, or:
+
+  ```js
+  localStorage.setItem("rlinf-dashboard-lang", "zh-Hans-CN"); location.reload();
+  // -> document.documentElement.lang === "zh-CN"; a regional tag still resolves
+  localStorage.removeItem("rlinf-dashboard-lang"); location.reload();
+  // -> back to whatever navigator.languages asks for
+  ```
+
+- Two tabs stay in step: switching in one flips the other within a paint, over the
+  same `storage` event the theme uses.
+
+Then run `npm run check:i18n`, which is what actually keeps this from rotting:
+a key with no call site, a call site with no key, a placeholder that exists in one
+language only, or a Chinese line that is still English all fail it.
+
 ## Conventions worth knowing before editing
 
 - **The server's verdict is never recomputed.** `health` and `reason` are rendered
@@ -510,4 +606,8 @@ it again, and the stream comes back on its own.
   the run list's rows are click targets, so it sorts by start time — an immutable
   property — and expresses "needs attention" with a marker rather than by moving
   the row under the pointer.
+- **No user-visible string is written in a component.** It goes in
+  `src/locales/en.ts` with a Chinese line beside it in `zh.ts`, and the component
+  calls `t()`. `npm run check:i18n` fails on a key that nothing renders and on a
+  `t()` naming a key that does not exist.
 - Comments explain **why**, in English, Google style. The what is in the code.

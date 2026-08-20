@@ -9,14 +9,39 @@
     <meta name="color-scheme" content="dark light" />
     <script>
       (() => {
+        // The language is resolved here, not in React, for the same reason as the
+        // theme: `<html lang>` decides which font the browser picks for CJK, and a
+        // page that mounts in one language and corrects itself in another reflows
+        // every line of text it has already painted.
+        const asLang = (tag) => {
+          if (!tag) return null;
+          const value = String(tag).toLowerCase();
+          if (value.startsWith("zh")) return "zh";
+          if (value.startsWith("en")) return "en";
+          return null;
+        };
+        const preferred = () => {
+          const advertised = navigator.languages || [navigator.language];
+          for (const tag of advertised) {
+            const lang = asLang(tag);
+            if (lang) return lang;
+          }
+          return "en";
+        };
         try {
           const saved = window.localStorage.getItem("rlinf-dashboard-theme");
           const theme = saved === "light" ? "light" : "dark";
           document.documentElement.dataset.theme = theme;
           document.documentElement.style.colorScheme = theme;
+
+          const lang =
+            asLang(window.localStorage.getItem("rlinf-dashboard-lang")) || preferred();
+          document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
         } catch {
           // Hardened browser contexts can block storage. The dark HTML fallback
-          // remains complete and the in-page switch still works for this load.
+          // remains complete and the in-page switch still works for this load;
+          // the language falls back to whatever the browser advertises.
+          document.documentElement.lang = preferred() === "zh" ? "zh-CN" : "en";
         }
       })();
     </script>

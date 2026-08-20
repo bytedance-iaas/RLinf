@@ -6,7 +6,14 @@
  * stable too -- `1.2345` becoming `12.345` still shifts a right-aligned column,
  * so durations and byte counts pick a unit and a precision rather than printing
  * whatever the float happens to be.
+ *
+ * The functions that produce *words* -- ages, step semantics -- translate; the
+ * ones that produce numbers do not. A duration is `1:23` and a byte count is
+ * `4.2 GiB` in every language, and localising the digit grouping of a step count
+ * would break the column alignment the whole file exists to protect.
  */
+
+import { activeLang, localeTag, t } from "./i18n";
 
 /** Rendered in place of a number the server did not report. */
 export const EMPTY = "—";
@@ -38,11 +45,11 @@ export function duration(seconds: number | null | undefined): string {
 /** Compact age, for "as of" readouts where the exact second does not matter. */
 export function age(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return EMPTY;
-  if (seconds < 1) return "just now";
-  if (seconds < 60) return `${Math.round(seconds)}s ago`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
-  return `${Math.round(seconds / 86400)}d ago`;
+  if (seconds < 1) return t("format.justNow");
+  if (seconds < 60) return t("format.secondsAgo", { n: Math.round(seconds) });
+  if (seconds < 3600) return t("format.minutesAgo", { n: Math.round(seconds / 60) });
+  if (seconds < 86400) return t("format.hoursAgo", { n: Math.round(seconds / 3600) });
+  return t("format.daysAgo", { n: Math.round(seconds / 86400) });
 }
 
 /** Seconds between an ISO timestamp and now, or null if it was never recorded. */
@@ -101,7 +108,7 @@ export function timestamp(iso: string | null | undefined): string {
   if (!iso) return EMPTY;
   const parsed = new Date(iso);
   if (Number.isNaN(parsed.getTime())) return EMPTY;
-  return parsed.toLocaleString(undefined, {
+  return parsed.toLocaleString(localeTag(), {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -117,7 +124,7 @@ export function clockTime(iso: string | null | undefined): string {
   if (!iso) return EMPTY;
   const parsed = new Date(iso);
   if (Number.isNaN(parsed.getTime())) return EMPTY;
-  return parsed.toLocaleTimeString(undefined, {
+  return parsed.toLocaleTimeString(localeTag(), {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -133,20 +140,39 @@ export function clockTime(iso: string | null | undefined): string {
  * not silently assume an embodied "step 400" and a reasoning "step 400" are the
  * same thing.
  */
-const SEMANTICS_LABELS: Record<string, { long: string; short: string }> = {
-  rl_iteration: { long: "RL iteration", short: "iter" },
-  minibatch: { long: "Minibatch", short: "mb" },
-  optimizer_step: { long: "Optimizer step", short: "step" },
-};
+const SEMANTICS_VALUES = ["rl_iteration", "minibatch", "optimizer_step"] as const;
+
+function known(value: string | null | undefined): (typeof SEMANTICS_VALUES)[number] | null {
+  return SEMANTICS_VALUES.find((known) => known === value) ?? null;
+}
 
 export function semanticsLabel(value: string | null | undefined): string {
-  if (!value) return "Step";
-  return SEMANTICS_LABELS[value]?.long ?? value;
+  if (!value) return t("semantics.step");
+  const match = known(value);
+  // A semantics string this bundle has never heard of is shown raw. It came from
+  // a runner newer than the dashboard, and the raw name is at least accurate.
+  return match ? t(`semantics.${match}`) : value;
 }
 
 export function semanticsShort(value: string | null | undefined): string {
-  if (!value) return "step";
-  return SEMANTICS_LABELS[value]?.short ?? value;
+  if (!value) return t("semantics.short.step");
+  const match = known(value);
+  return match ? t(`semantics.short.${match}`) : value;
+}
+
+/**
+ * The same label as it reads *inside* a sentence -- "per rl iteration", "at rl
+ * iteration 95".
+ *
+ * English lowercases it, because a capitalised noun mid-sentence reads as a
+ * proper name. Chinese has no case at all, and lowercasing there does real
+ * damage: "RL 迭代" becomes "rl 迭代", which turns an acronym into a typo. So
+ * the rule branches on the language rather than on the message -- casing is a
+ * property of the script, and no catalogue entry can express it.
+ */
+export function semanticsInline(value: string | null | undefined): string {
+  const label = semanticsLabel(value);
+  return activeLang() === "en" ? label.toLowerCase() : label;
 }
 
 /** Trailing path component, for a checkpoint dir shown next to its full path. */

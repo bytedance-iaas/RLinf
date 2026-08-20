@@ -37,9 +37,11 @@ import {
   EMPTY,
   integer,
   metric as formatMetric,
+  semanticsInline,
   semanticsLabel,
   timestamp,
 } from "../lib/format";
+import { statusLabel, t } from "../lib/i18n";
 import { alignSeries, lastStep, lastValue, seriesColor } from "../lib/series";
 
 export interface OverviewProps {
@@ -54,12 +56,34 @@ export interface OverviewProps {
   onOpenMetrics: () => void;
 }
 
+/**
+ * The ETA confidence word.
+ *
+ * Shown raw when the server reports a level this bundle has no word for, which
+ * is the same rule the rest of the app follows for values it did not author.
+ */
+const CONFIDENCE_KEYS = {
+  low: "confidence.low",
+  medium: "confidence.medium",
+  high: "confidence.high",
+} as const;
+
+function confidenceLabel(value: string): string {
+  const key = CONFIDENCE_KEYS[value as keyof typeof CONFIDENCE_KEYS];
+  return key ? t(key) : value;
+}
+
 export function Overview(props: OverviewProps) {
   const { status, template, series, signals, watchedCount, now } = props;
   const snapshot = status.snapshot;
   const progress = snapshot?.progress;
   const timing = snapshot?.timing;
   const semantics = semanticsLabel(progress?.step_semantics ?? status.manifest?.step_semantics);
+  // The same label as it reads mid-sentence: "per rl iteration" in English,
+  // "每 RL 迭代" in Chinese, where lowercasing would break the acronym.
+  const semanticsUnit = semanticsInline(
+    progress?.step_semantics ?? status.manifest?.step_semantics,
+  );
 
   const northStarKey = template?.north_star?.resolved ? template.north_star.key : null;
   const northStar = northStarKey ? series[northStarKey] : undefined;
@@ -88,17 +112,16 @@ export function Overview(props: OverviewProps) {
   return (
     <>
       {initializing && (
-        <Note title="Starting up">
-          The run has registered but has not published its first snapshot yet.
-          Cluster boot, worker allocation and model load all happen in this
-          window
+        <Note title={t("overview.startingTitle")}>
           {status.startup_elapsed_s != null
-            ? `, and it has been ${duration(status.startup_elapsed_s)} so far.`
-            : "."}
+            ? t("overview.startingBodyElapsed", {
+                elapsed: duration(status.startup_elapsed_s),
+              })
+            : t("overview.startingBody")}
         </Note>
       )}
       {status.error && (
-        <Note tone="error" title="Snapshot unreadable">
+        <Note tone="error" title={t("overview.snapshotUnreadable")}>
           {status.error}
         </Note>
       )}
@@ -106,22 +129,24 @@ export function Overview(props: OverviewProps) {
       <div className="cards">
         {/* 1. State -- the lifecycle fact the training process recorded. */}
         <Card
-          label="State"
+          label={t("overview.state")}
           adornment={<Badge tone={snapshot?.state ?? (initializing ? "pending" : "unknown")} />}
         >
           <CardValue small empty={!snapshot?.state && !initializing}>
-            {snapshot?.state ?? (initializing ? "initializing" : "unknown")}
+            {statusLabel(snapshot?.state ?? (initializing ? "initializing" : "unknown"))}
           </CardValue>
           <CardHint>
             {snapshot?.exit
               ? snapshot.exit.reason
               : status.manifest?.experiment_name
                 ? `${status.manifest.experiment_name} · ${status.manifest.task_type}`
-                : (status.manifest?.task_type ?? "no manifest")}
+                : (status.manifest?.task_type ?? t("overview.noManifest"))}
           </CardHint>
           <div className="card-foot">
             <CardHint>
-              Started {timestamp(snapshot?.timing.started_at ?? status.manifest?.started_at)}
+              {t("overview.started", {
+                time: timestamp(snapshot?.timing.started_at ?? status.manifest?.started_at),
+              })}
             </CardHint>
           </div>
         </Card>
@@ -131,9 +156,11 @@ export function Overview(props: OverviewProps) {
              (they are started before the `while`, not inside it), so a single
              scalar phase is a semantic error for it. Both shapes render. */}
         <Card
-          label={components.length > 0 ? "Components" : "Phase"}
+          label={components.length > 0 ? t("overview.components") : t("overview.phase")}
           adornment={
-            components.length > 0 ? <span className="chip">async</span> : undefined
+            components.length > 0 ? (
+              <span className="chip">{t("overview.async")}</span>
+            ) : undefined
           }
         >
           {components.length > 0 ? (
@@ -142,17 +169,23 @@ export function Overview(props: OverviewProps) {
                 <div className="component" key={name} data-active={state.active ? "true" : "false"}>
                   <span className="component-dot" />
                   <span className="component-name">{name}</span>
-                  <span className="sr-only">{state.active ? "active" : "idle"}</span>
+                  <span className="sr-only">
+                    {state.active ? t("overview.active") : t("overview.idle")}
+                  </span>
                   {/* `since` is when the component entered its current state, so
                       the same number means "active for" or "idle for" depending
                       on which state that is. Printed bare it read as an update
                       time, which is a different fact entirely. */}
                   <span
                     className="component-since"
-                    title={`${state.active ? "Active" : "Idle"} since ${state.since ?? "unknown"}`}
+                    title={t(state.active ? "overview.activeSince" : "overview.idleSince", {
+                      time: state.since ?? t("status.unknown"),
+                    })}
                   >
                     {state.since
-                      ? `${state.active ? "active" : "idle"} for ${age(ageSince(state.since, now))}`
+                      ? t(state.active ? "overview.activeFor" : "overview.idleFor", {
+                          age: age(ageSince(state.since, now)),
+                        })
                       : EMPTY}
                   </span>
                 </div>
@@ -161,20 +194,28 @@ export function Overview(props: OverviewProps) {
           ) : (
             <>
               <CardValue small empty={!snapshot?.phase}>
-                {snapshot?.phase ?? (snapshot?.state === "running" ? "—" : "not running")}
+                {snapshot?.phase ??
+                  (snapshot?.state === "running" ? EMPTY : t("overview.notRunning"))}
               </CardValue>
               <CardHint>
                 {snapshot?.phase_since
-                  ? `in phase for ${duration(ageSince(snapshot.phase_since, now))}`
-                  : "no phase recorded"}
+                  ? t("overview.inPhaseFor", {
+                      age: duration(ageSince(snapshot.phase_since, now)),
+                    })
+                  : t("overview.noPhase")}
               </CardHint>
             </>
           )}
           <div className="card-foot">
             <CardHint>
               {status.manifest?.cluster?.num_nodes
-                ? `${status.manifest.cluster.num_nodes} node${status.manifest.cluster.num_nodes === 1 ? "" : "s"}`
-                : "placement unknown"}
+                ? t(
+                    status.manifest.cluster.num_nodes === 1
+                      ? "overview.nodes.one"
+                      : "overview.nodes.other",
+                    { count: status.manifest.cluster.num_nodes },
+                  )
+                : t("overview.placementUnknown")}
               {status.manifest?.algorithm?.loss_type
                 ? ` · ${status.manifest.algorithm.loss_type}`
                 : ""}
@@ -184,7 +225,7 @@ export function Overview(props: OverviewProps) {
 
         {/* 3. Progress -- with the step semantics beside it, always. The same
              "step 400" is an RL iteration here and a minibatch elsewhere. */}
-        <Card label="Progress">
+        <Card label={t("overview.progress")}>
           <CardValue>
             {integer(progress?.step ?? 0)}
             <span className="faint"> / {progress?.max_steps ? integer(progress.max_steps) : "?"}</span>
@@ -197,8 +238,8 @@ export function Overview(props: OverviewProps) {
           <div className="card-foot">
             <CardHint>
               {progress?.epoch !== null && progress?.epoch !== undefined
-                ? `epoch ${progress.epoch}`
-                : "no epoch reported"}
+                ? t("overview.epoch", { epoch: progress.epoch })
+                : t("overview.noEpoch")}
             </CardHint>
           </div>
         </Card>
@@ -209,17 +250,27 @@ export function Overview(props: OverviewProps) {
              A run that has stopped has no time remaining to estimate, so the row
              states the outcome instead: `ETA 0.0s (medium)` on a finished run is
              a forecast of the past. */}
-        <Card label="Timing">
+        <Card label={t("overview.timing")}>
           <CardValue>{duration(timing?.elapsed_s)}</CardValue>
           <div className="card-rows">
-            <Row label={terminal ? "finished" : "ETA"}>
+            <Row label={terminal ? t("overview.finished") : t("overview.eta")}>
               {terminal
-                ? `${snapshot?.state ?? "ended"} after ${duration(timing?.elapsed_s)}`
+                ? t("overview.endedAfter", {
+                    state: snapshot?.state ? statusLabel(snapshot.state) : t("overview.ended"),
+                    elapsed: duration(timing?.elapsed_s),
+                  })
                 : timing?.eta_s === null || timing?.eta_s === undefined
                   ? EMPTY
-                  : `${duration(timing.eta_s)}${timing.eta_confidence ? ` (${timing.eta_confidence})` : ""}`}
+                  : timing.eta_confidence
+                    ? t("overview.etaWithConfidence", {
+                        eta: duration(timing.eta_s),
+                        confidence: confidenceLabel(timing.eta_confidence),
+                      })
+                    : duration(timing.eta_s)}
             </Row>
-            <Row label={`per ${semantics.toLowerCase()}`}>{duration(timing?.step_time_p50)}</Row>
+            <Row label={t("overview.perStep", { unit: semanticsUnit })}>
+              {duration(timing?.step_time_p50)}
+            </Row>
           </div>
         </Card>
 
@@ -227,39 +278,41 @@ export function Overview(props: OverviewProps) {
              fields, not from a pre-baked string. A stored command goes stale the
              moment anything about the launch changes. */}
         <Card
-          label="Latest checkpoint"
-          adornment={checkpoint?.is_best ? <span className="chip">best</span> : undefined}
+          label={t("overview.checkpoint")}
+          adornment={
+            checkpoint?.is_best ? <span className="chip">{t("overview.best")}</span> : undefined
+          }
         >
           <CardValue small empty={!checkpoint}>
-            {checkpoint ? basename(checkpoint.path) : "none yet"}
+            {checkpoint ? basename(checkpoint.path) : t("overview.noCheckpoint")}
           </CardValue>
           {checkpoint ? (
             <div className="card-rows">
-              <Row label="saved">{clockTime(checkpoint.saved_at)}</Row>
-              <Row label="size">{bytes(checkpoint.size_bytes)}</Row>
-              <Row label="took">{duration(checkpoint.duration_s)}</Row>
+              <Row label={t("overview.saved")}>{clockTime(checkpoint.saved_at)}</Row>
+              <Row label={t("overview.size")}>{bytes(checkpoint.size_bytes)}</Row>
+              <Row label={t("overview.took")}>{duration(checkpoint.duration_s)}</Row>
             </div>
           ) : (
-            <CardHint title="The index is appended only after a save finishes, so a half-written checkpoint is never listed.">
-              No checkpoints saved yet.
+            <CardHint title={t("overview.noCheckpointTitle")}>
+              {t("overview.noCheckpointHint")}
             </CardHint>
           )}
         </Card>
 
         {/* 6. Health -- the server's verdict and its reason, verbatim. */}
-        <Card label="Health" adornment={<Badge tone={status.health.health} />}>
-          <CardValue small>{status.health.health}</CardValue>
+        <Card label={t("overview.health")} adornment={<Badge tone={status.health.health} />}>
+          <CardValue small>{statusLabel(status.health.health)}</CardValue>
           <CardHint>{status.health.reason}</CardHint>
           <div className="card-foot">
             <div className="card-rows">
               {status.health.heartbeat_age_s !== null && (
-                <Row label="heartbeat">{age(status.health.heartbeat_age_s)}</Row>
+                <Row label={t("overview.heartbeat")}>{age(status.health.heartbeat_age_s)}</Row>
               )}
               {status.health.progress_age_s !== null && (
-                <Row label="last step">{age(status.health.progress_age_s)}</Row>
+                <Row label={t("overview.lastStep")}>{age(status.health.progress_age_s)}</Row>
               )}
               {status.health.budget_s !== null && (
-                <Row label="budget">{duration(status.health.budget_s)}</Row>
+                <Row label={t("overview.budget")}>{duration(status.health.budget_s)}</Row>
               )}
             </div>
           </div>
@@ -269,11 +322,11 @@ export function Overview(props: OverviewProps) {
              move. `resolved: false` says the run does not log it, rather than
              showing an empty hero number that reads as a broken run. */}
         <Card
-          label={template?.north_star?.label ?? "North-star metric"}
+          label={template?.north_star?.label ?? t("overview.northStar")}
           adornment={
             northStarKey ? (
               <button className="chart-flag" onClick={props.onOpenMetrics} type="button">
-                open metric
+                {t("overview.openMetric")}
               </button>
             ) : undefined
           }
@@ -286,7 +339,13 @@ export function Overview(props: OverviewProps) {
               <CardHint>
                 <Code title={northStarKey}>{northStarKey}</Code>
                 {lastStep(northStar) !== null && (
-                  <span className="faint"> at {semantics.toLowerCase()} {lastStep(northStar)}</span>
+                  <span className="faint">
+                    {" "}
+                    {t("overview.atStep", {
+                      unit: semanticsUnit,
+                      step: lastStep(northStar) as number,
+                    })}
+                  </span>
                 )}
               </CardHint>
               <div className="card-foot">
@@ -313,12 +372,17 @@ export function Overview(props: OverviewProps) {
           ) : (
             <>
               <CardValue small empty>
-                not logged
+                {t("overview.notLogged")}
               </CardValue>
               <CardHint>
                 {template?.north_star?.key
-                  ? `This run logs no ${template.north_star.key}. The ${template?.name ?? "default"} template expects it.`
-                  : `The ${template?.name ?? "default"} template declares no north-star metric for this task type.`}
+                  ? t("overview.northStarMissing", {
+                      key: template.north_star.key,
+                      template: template?.name ?? t("overview.templateDefault"),
+                    })
+                  : t("overview.northStarUndeclared", {
+                      template: template?.name ?? t("overview.templateDefault"),
+                    })}
               </CardHint>
             </>
           )}
@@ -327,22 +391,19 @@ export function Overview(props: OverviewProps) {
         {/* Metric-side anomalies stay separate from the server health verdict;
             they require series data that snapshot-only health does not read. */}
         <Card
-          label="Anomalies"
+          label={t("overview.anomalies")}
           adornment={
-            <span className="chip" title="Computed in the browser from metric series">
-              derived from metrics
+            <span className="chip" title={t("overview.derivedTitle")}>
+              {t("overview.derivedFromMetrics")}
             </span>
           }
         >
           {signals.length === 0 ? (
             <>
               <CardValue small empty>
-                none
+                {t("overview.anomaliesNone")}
               </CardValue>
-              <CardHint>
-                No step-time regression, eval plateau or non-finite value in{" "}
-                {watchedCount} watched series.
-              </CardHint>
+              <CardHint>{t("overview.anomaliesNoneHint", { count: watchedCount })}</CardHint>
             </>
           ) : (
             <div className="card-rows">
@@ -352,7 +413,7 @@ export function Overview(props: OverviewProps) {
                   <span className="signal-body">
                     <span className="signal-title">{signal.title}</span>{" "}
                     <span className="sr-only">
-                      ({signal.level === "red" ? "critical" : "warning"})
+                      ({signal.level === "red" ? t("overview.critical") : t("overview.warning")})
                     </span>
                     {signal.detail}
                   </span>

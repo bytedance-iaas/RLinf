@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "check:scales": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/check_scales.mjs",
     "check:identity": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/check_identity.mjs",
+    "check:i18n": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/check_i18n.mjs",
     "tokens": "python scripts/gen_tokens.py",
     "tokens:check": "python scripts/gen_tokens.py --check"
   },
