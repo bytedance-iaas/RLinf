@@ -10,6 +10,7 @@
 import type { ReactNode } from "react";
 import type { Health, HealthVerdict, RunState } from "../api/types";
 import { age, EMPTY } from "../lib/format";
+import { statusLabel, t } from "../lib/i18n";
 
 /**
  * A status pill: a coloured word on a 14% wash of the same hue.
@@ -24,7 +25,7 @@ import { age, EMPTY } from "../lib/format";
 export function Badge(props: { tone: Health | RunState | "unknown"; children?: ReactNode }) {
   return (
     <span className="badge" data-tone={props.tone}>
-      {props.children ?? props.tone}
+      {props.children ?? statusLabel(props.tone)}
     </span>
   );
 }
@@ -53,11 +54,11 @@ export function HealthBar(props: { verdict: HealthVerdict | null }) {
         className="healthbar"
         data-health={health}
         role="status"
-        aria-label={`Run health: ${health}`}
+        aria-label={t("healthbar.aria", { health: statusLabel(health) })}
       />
       {showReason && (
         <div className="healthbar-reason" data-health={health}>
-          <span className="healthbar-reason-label">{health}</span>
+          <span className="healthbar-reason-label">{statusLabel(health)}</span>
           {/* Verbatim from the server. This string is the entire explanation of a
               non-green bar, and paraphrasing it would drop the numbers it carries. */}
           <span>{verdict.reason}</span>
@@ -138,7 +139,9 @@ export function Progress(props: { step: number; maxSteps: number | null; semanti
       </div>
       <div className="progress-legend">
         <span>{semantics}</span>
-        <span>{fraction === null ? "no horizon" : `${Math.round(fraction * 100)}%`}</span>
+        <span>
+          {fraction === null ? t("progress.noHorizon") : `${Math.round(fraction * 100)}%`}
+        </span>
       </div>
     </div>
   );

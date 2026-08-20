@@ -18,6 +18,7 @@ import { Chart, type ChartSeriesSpec } from "../components/Chart";
 import { Code, Note } from "../components/primitives";
 import { SmoothingControl } from "../components/SmoothingControl";
 import { duration, metric as formatMetric, semanticsLabel } from "../lib/format";
+import { statusLabel, t, tNode } from "../lib/i18n";
 import {
   alignSeries,
   lastValue,
@@ -155,14 +156,14 @@ export function Compare(props: CompareProps) {
     <div className="stack">
       <div className="controls">
         <label className="control">
-          <span>Metric</span>
+          <span>{t("compare.metric")}</span>
           <select
             value={metricKey ?? ""}
             onChange={(event) => props.onChange(selected, event.target.value || null)}
           >
-            <option value="">— pick a metric —</option>
+            <option value="">{t("compare.pickMetric")}</option>
             {sharedKeys.length > 0 && (
-              <optgroup label={`In all ${selected.length} runs`}>
+              <optgroup label={t("compare.inAllRuns", { count: selected.length })}>
                 {sharedKeys.map((key) => (
                   <option value={key} key={key}>
                     {key}
@@ -171,7 +172,7 @@ export function Compare(props: CompareProps) {
               </optgroup>
             )}
             {partialKeys.length > 0 && (
-              <optgroup label="In some runs only">
+              <optgroup label={t("compare.inSomeRuns")}>
                 {partialKeys.map((key) => (
                   <option value={key} key={key}>
                     {key}
@@ -183,7 +184,9 @@ export function Compare(props: CompareProps) {
         </label>
         <SmoothingControl value={smoothing} onChange={setSmoothing} />
         <span className="control-value faint">
-          {selected.length} run{selected.length === 1 ? "" : "s"}
+          {t(selected.length === 1 ? "compare.runs.one" : "compare.runs.other", {
+            count: selected.length,
+          })}
         </span>
       </div>
 
@@ -191,13 +194,15 @@ export function Compare(props: CompareProps) {
           saying so -- the comparison is meaningless and the chart will be believed
           anyway. Named here, and dashed on the plot. */}
       {mixed && (
-        <Note tone="warn" title="Mixed step semantics on one axis">
-          The selected runs do not agree on what a step is (
-          {[...semanticsCounts.entries()]
-            .map(([value, count]) => `${count}x ${semanticsLabel(value)}`)
-            .join(", ")}
-          ). The axis is labelled <Code>{semanticsLabel(dominant)}</Code>; runs using a different
-          unit are drawn dashed. Their x values are not comparable to the others.
+        <Note tone="warn" title={t("compare.mixedTitle")}>
+          {tNode("compare.mixedBody", {
+            counts: [...semanticsCounts.entries()]
+              .map(([value, count]) =>
+                t("compare.mixedCount", { count, label: semanticsLabel(value) }),
+              )
+              .join(t("compare.mixedSeparator")),
+            code: <Code>{semanticsLabel(dominant)}</Code>,
+          })}
         </Note>
       )}
 
@@ -227,16 +232,18 @@ export function Compare(props: CompareProps) {
       </div>
 
       {selected.length === 0 ? (
-        <Note title="Nothing selected">
-          Pick two or more runs on the run list, then choose <em>Compare</em>.
+        <Note title={t("compare.nothingTitle")}>
+          {tNode("compare.nothingBody", { compare: <em>{t("runlist.compare")}</em> })}
         </Note>
       ) : (
         <div className="chart-panel" data-tall="true">
           <div className="chart-head">
-            <span className="chart-title">{metricKey ?? "No metric selected"}</span>
+            <span className="chart-title">{metricKey ?? t("compare.noMetric")}</span>
             <span className="chart-flags">
               {percent && <span className="chart-flag">%</span>}
-              {smoothing > 0 && <span className="chart-flag">smoothed {smoothing}pt</span>}
+              {smoothing > 0 && (
+                <span className="chart-flag">{t("chart.smoothed", { n: smoothing })}</span>
+              )}
             </span>
           </div>
           <Chart
@@ -255,12 +262,14 @@ export function Compare(props: CompareProps) {
           <table className="table">
             <thead>
               <tr>
-                <th>Run</th>
-                <th>State</th>
-                <th className="col-num">Step</th>
-                <th className="col-num">Latest {metricKey ? "value" : ""}</th>
-                <th className="col-num">Elapsed</th>
-                <th>Step semantics</th>
+                <th>{t("compare.col.run")}</th>
+                <th>{t("compare.col.state")}</th>
+                <th className="col-num">{t("compare.col.step")}</th>
+                <th className="col-num">
+                  {t(metricKey ? "compare.col.latestValue" : "compare.col.latest")}
+                </th>
+                <th className="col-num">{t("compare.col.elapsed")}</th>
+                <th>{t("compare.col.semantics")}</th>
               </tr>
             </thead>
             <tbody>
@@ -269,7 +278,7 @@ export function Compare(props: CompareProps) {
                 return (
                   <tr key={runId}>
                     <td title={runId}>{run?.experiment_name ?? runId}</td>
-                    <td>{run?.state ?? "unknown"}</td>
+                    <td>{statusLabel(run?.state ?? "unknown")}</td>
                     <td className="col-num">{run?.step ?? "—"}</td>
                     <td className="col-num">
                       {formatMetric(lastValue(seriesQuery.data?.[runId]), { percent })}
