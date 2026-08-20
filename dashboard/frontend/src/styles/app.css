@@ -173,6 +173,15 @@ a:hover {
   color: var(--color-text);
 }
 
+/* The language switch is the theme toggle's twin: same size, same hover, sitting
+ * next to it. Only the label differs -- it holds a language name rather than a
+ * word, so it is given a fixed advance to stop the header shifting under the
+ * pointer when "中文" becomes "EN" on the very click that changes it. */
+.lang-toggle .theme-toggle-label {
+  min-width: 2.5em;
+  text-align: center;
+}
+
 .theme-toggle svg {
   width: 16px;
   height: 16px;
@@ -340,6 +349,13 @@ a:hover {
 
   .theme-toggle-label {
     display: none;
+  }
+
+  /* Except this one. A sun and a moon say what the theme button does; a globe
+   * on its own does not say which language it leads to, and the label is two
+   * characters wide -- narrow enough to keep at any width the header has. */
+  .lang-toggle .theme-toggle-label {
+    display: inline;
   }
 
   .header-live {

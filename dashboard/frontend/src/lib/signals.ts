@@ -21,6 +21,7 @@
  */
 
 import type { NorthStar, RunTemplate, Series, SeriesPoint } from "../api/types";
+import { t } from "./i18n";
 
 /** Signal severity. Only two levels: amber warns, red says something is wrong. */
 export type SignalLevel = "amber" | "red";
@@ -97,14 +98,21 @@ export function nonFiniteSignal(series: Record<string, Series>): MetricSignal | 
   const worst = hits[0] as { key: string; step: number; count: number };
   const others = hits.length - 1;
 
+  const counts = {
+    key: worst.key,
+    step: worst.step,
+    count: worst.count,
+    total: series[worst.key]?.points.length ?? 0,
+  };
+
   return {
     id: "non-finite",
     level: "red",
-    title: "Non-finite metric value",
+    title: t("signal.nonFiniteTitle"),
     detail:
-      `${worst.key} first went NaN or Inf at step ${worst.step} ` +
-      `(${worst.count} of ${series[worst.key]?.points.length ?? 0} points)` +
-      (others > 0 ? `, and in ${others} other ${others === 1 ? "series" : "series"}.` : "."),
+      others > 0
+        ? t("signal.nonFiniteDetailMore", { ...counts, others })
+        : t("signal.nonFiniteDetail", counts),
     keys: hits.map((hit) => hit.key),
   };
 }
@@ -141,11 +149,15 @@ export function stepTimeSignal(series: Series | null | undefined): MetricSignal 
   return {
     id: "step-time",
     level: "amber",
-    title: "Step time degraded",
-    detail:
-      `${series.key} is ${ratio.toFixed(1)}x its early baseline ` +
-      `(${recent.toFixed(1)}s now versus ${baseline.toFixed(1)}s over steps ` +
-      `${warmup}-${warmup + window - 1}).`,
+    title: t("signal.stepTimeTitle"),
+    detail: t("signal.stepTimeDetail", {
+      key: series.key,
+      ratio: ratio.toFixed(1),
+      recent: recent.toFixed(1),
+      baseline: baseline.toFixed(1),
+      from: warmup,
+      to: warmup + window - 1,
+    }),
     keys: [series.key],
   };
 }
@@ -186,10 +198,13 @@ export function evalPlateauSignal(
   return {
     id: "eval-plateau",
     level: "amber",
-    title: `No eval improvement in ${k} rounds`,
-    detail:
-      `${series.key} has not beaten ${best.toPrecision(3)} in its last ${k} ` +
-      `evaluations (best recent ${bestTail.toPrecision(3)}).`,
+    title: t("signal.plateauTitle", { k }),
+    detail: t("signal.plateauDetail", {
+      key: series.key,
+      best: best.toPrecision(3),
+      k,
+      recent: bestTail.toPrecision(3),
+    }),
     keys: [series.key],
   };
 }

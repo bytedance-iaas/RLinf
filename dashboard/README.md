@@ -227,6 +227,15 @@ The React console provides run list, overview, metrics, media, events, and
 cross-run comparison views. Metric layouts are selected by server-side YAML
 templates for embodied RL, reasoning/coding RL, and SFT runs.
 
+The interface reads in **English or Simplified Chinese**, switched by the globe
+button in the top-right corner beside the theme toggle. The first visit follows
+the browser's own language preference (`zh*` opens in Chinese, anything else in
+English); after that the choice is remembered per browser and shared across open
+tabs. Everything the *server* wrote stays in the language it was written in --
+metric keys, run ids, paths, event payloads, the template's chart titles, and the
+health verdict's reason sentence, which is rendered verbatim in both languages so
+it can be matched against the API response and the training logs.
+
 For local frontend development:
 
 ```bash
@@ -235,6 +244,7 @@ npm install
 npm run typecheck
 npm run check:scales
 npm run check:identity
+npm run check:i18n
 npm run dev
 ```
 

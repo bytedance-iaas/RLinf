@@ -14,6 +14,7 @@ import { useFetch } from "../api/useLive";
 import type { CheckpointEntry, EventKind, RunEvent, RunStatus } from "../api/types";
 import { Code, Note } from "../components/primitives";
 import { bytes, clockTime, duration, integer, semanticsShort, timestamp } from "../lib/format";
+import { t, tNode } from "../lib/i18n";
 
 export interface EventsProps {
   status: RunStatus;
@@ -90,7 +91,7 @@ export function Events(props: EventsProps) {
     <div className="stack">
       <div className="controls">
         <div className="control">
-          <span>Filter</span>
+          <span>{t("events.filter")}</span>
           <div className="control-group">
             <button
               className="btn"
@@ -98,7 +99,7 @@ export function Events(props: EventsProps) {
               data-active={!problemsOnly ? "true" : undefined}
               onClick={() => setProblemsOnly(false)}
             >
-              all
+              {t("events.all")}
             </button>
             <button
               className="btn"
@@ -106,31 +107,34 @@ export function Events(props: EventsProps) {
               data-active={problemsOnly ? "true" : undefined}
               onClick={() => setProblemsOnly(true)}
             >
-              warn + error
+              {t("events.warnError")}
             </button>
           </div>
         </div>
         <span className="control-value faint">
           {rows.length === 0
-            ? `0 of ${(eventsQuery.data ?? []).length}`
-            : `${start + 1}–${start + pageRows.length} of ${rows.length}`}
-          {problemsOnly && ` (filtered from ${(eventsQuery.data ?? []).length})`}
+            ? t("events.rangeEmpty", { total: (eventsQuery.data ?? []).length })
+            : t("events.range", {
+                from: start + 1,
+                to: start + pageRows.length,
+                total: rows.length,
+              })}
+          {problemsOnly &&
+            t("events.filteredFrom", { total: (eventsQuery.data ?? []).length })}
         </span>
         {problemCount > 0 && (
-          <span className="chip">
-            {problemCount} warn/error
-          </span>
+          <span className="chip">{t("events.problemCount", { count: problemCount })}</span>
         )}
         {pageCount > 1 && (
           <div className="control">
-            <span>Page</span>
+            <span>{t("events.page")}</span>
             <div className="control-group">
               <button
                 className="btn"
                 type="button"
                 onClick={() => setPage(0)}
                 disabled={current === 0}
-                aria-label="First page"
+                aria-label={t("events.firstPage")}
               >
                 ‹‹
               </button>
@@ -139,7 +143,7 @@ export function Events(props: EventsProps) {
                 type="button"
                 onClick={() => setPage(current - 1)}
                 disabled={current === 0}
-                aria-label="Previous page"
+                aria-label={t("events.prevPage")}
               >
                 ‹
               </button>
@@ -151,7 +155,7 @@ export function Events(props: EventsProps) {
                 type="button"
                 onClick={() => setPage(current + 1)}
                 disabled={current >= pageCount - 1}
-                aria-label="Next page"
+                aria-label={t("events.nextPage")}
               >
                 ›
               </button>
@@ -160,7 +164,7 @@ export function Events(props: EventsProps) {
                 type="button"
                 onClick={() => setPage(pageCount - 1)}
                 disabled={current >= pageCount - 1}
-                aria-label="Last page"
+                aria-label={t("events.lastPage")}
               >
                 ››
               </button>
@@ -173,23 +177,24 @@ export function Events(props: EventsProps) {
           the single most useful thing on the page for a failed run, so it sits above
           the log rather than being the last row of it. */}
       {exit && (
-        <Note tone={props.status.snapshot?.state === "failed" ? "error" : undefined} title="Exit">
+        <Note
+          tone={props.status.snapshot?.state === "failed" ? "error" : undefined}
+          title={t("events.exit")}
+        >
           <div>{exit.reason}</div>
           {exit.traceback_tail && <code className="code-block">{exit.traceback_tail}</code>}
         </Note>
       )}
 
       {eventsQuery.error && (
-        <Note tone="error" title="Event log unreadable">
+        <Note tone="error" title={t("events.logUnreadable")}>
           {eventsQuery.error}
         </Note>
       )}
 
       {!eventsQuery.loading && rows.length === 0 && (
-        <Note title={problemsOnly ? "No warnings or errors" : "No events"}>
-          {problemsOnly
-            ? "Nothing in this run's log is a warning or an error."
-            : "This run wrote no events.jsonl entries. The file is appended by the runner at phase boundaries, checkpoint saves and evals, so an empty log usually means the run has not reached one yet."}
+        <Note title={t(problemsOnly ? "events.noneWarnTitle" : "events.noneTitle")}>
+          {t(problemsOnly ? "events.noneWarnBody" : "events.noneBody")}
         </Note>
       )}
 
@@ -213,10 +218,11 @@ export function Events(props: EventsProps) {
           so what is missing is the oldest entries -- the launch and early phases,
           which is exactly what someone paging backwards is looking for. */}
       {truncated && current === pageCount - 1 && (
-        <Note title="Older events not shown">
-          This log is the most recent {FETCH_LIMIT} entries. The run wrote more
-          before them, including its start, and they are in{" "}
-          <Code>events.jsonl</Code> under the run root.
+        <Note title={t("events.truncatedTitle")}>
+          {tNode("events.truncatedBody", {
+            limit: FETCH_LIMIT,
+            code: <Code>events.jsonl</Code>,
+          })}
         </Note>
       )}
 
@@ -226,7 +232,7 @@ export function Events(props: EventsProps) {
       {checkpoints.length > 0 && (
         <section className="section">
           <div className="section-head">
-            <span className="section-title">Checkpoints</span>
+            <span className="section-title">{t("events.checkpoints")}</span>
             <span className="section-meta">{checkpoints.length}</span>
           </div>
           <div className="table-scroll">
@@ -234,10 +240,10 @@ export function Events(props: EventsProps) {
               <thead>
                 <tr>
                   <th className="col-num">{stepUnit}</th>
-                  <th>Saved</th>
-                  <th className="col-num">Size</th>
-                  <th className="col-num">Took</th>
-                  <th>Path</th>
+                  <th>{t("events.col.saved")}</th>
+                  <th className="col-num">{t("events.col.size")}</th>
+                  <th className="col-num">{t("events.col.took")}</th>
+                  <th>{t("events.col.path")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -245,7 +251,7 @@ export function Events(props: EventsProps) {
                   <tr key={`${entry.step}-${entry.path}`}>
                     <td className="col-num">
                       {integer(entry.step)}
-                      {entry.is_best && <span className="chip">best</span>}
+                      {entry.is_best && <span className="chip">{t("events.best")}</span>}
                     </td>
                     <td>{clockTime(entry.saved_at)}</td>
                     <td className="col-num">{bytes(entry.size_bytes)}</td>

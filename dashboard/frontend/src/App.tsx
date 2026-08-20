@@ -20,6 +20,7 @@ import type { Health, RunStatus, RunSummary, RunTemplate, Series, ServerHealth }
 import { AsOf, Badge, Code, HealthBar, Note } from "./components/primitives";
 import { href, routeRunId, useRoute, type Route } from "./lib/router";
 import { collectSignals, watchSetKeys } from "./lib/signals";
+import { setLang, statusLabel, t, useLang, useT } from "./lib/i18n";
 import { setTheme, useTheme } from "./lib/theme";
 import { Compare } from "./views/Compare";
 import { Events } from "./views/Events";
@@ -39,12 +40,9 @@ const TICK_MS = 1000;
  * item that never has content teaches people to distrust the rest of the nav. So
  * the tab is derived rather than fixed; see `mediaTabState`.
  */
-const BASE_TABS = [
-  { name: "overview", label: "Overview" },
-  { name: "metrics", label: "Metrics" },
-] as const;
+const BASE_TABS = [{ name: "overview" }, { name: "metrics" }] as const;
 
-const EVENTS_TAB = { name: "events", label: "Events" } as const;
+const EVENTS_TAB = { name: "events" } as const;
 
 /**
  * Whether to offer a Media tab.
@@ -73,6 +71,16 @@ export function App() {
   const [route, navigate] = useRoute();
   const runId = routeRunId(route);
   const theme = useTheme();
+  // The one language subscription in the app. Everything below re-renders with
+  // the shell, so views and helpers call the plain `t` -- see `lib/i18n.ts`.
+  const lang = useLang();
+  useT();
+
+  // The tab title is chrome too, and it is what the window list shows for a
+  // console left open for days.
+  useEffect(() => {
+    document.title = t("app.title");
+  }, [lang]);
 
   // One clock for the whole page.
   const [now, setNow] = useState(() => Date.now());
@@ -185,7 +193,7 @@ export function App() {
   const mediaTab = mediaTabState(template);
   const tabs = useMemo(
     () => (mediaTab === "show"
-      ? [...BASE_TABS, { name: "media", label: "Media" } as const, EVENTS_TAB]
+      ? [...BASE_TABS, { name: "media" } as const, EVENTS_TAB]
       : [...BASE_TABS, EVENTS_TAB]),
     [mediaTab],
   );
@@ -217,19 +225,19 @@ export function App() {
             className="header-brand"
             href={href({ name: "runs" })}
           >
-            <img className="header-brand-logo" src={rlinfLogo} alt="RLinf" />
+            <img className="header-brand-logo" src={rlinfLogo} alt={t("app.brandAlt")} />
           </a>
 
           <nav
             className="header-crumbs"
-            aria-label="Breadcrumb"
+            aria-label={t("app.breadcrumb")}
             data-run={runId ? "true" : undefined}
           >
-            <a href={href({ name: "runs" })}>Runs</a>
+            <a href={href({ name: "runs" })}>{t("runlist.runs")}</a>
             {route.name === "compare" && (
               <>
                 <span className="header-crumb-sep">/</span>
-                <span>Compare ({selectedRunIds.length})</span>
+                <span>{t("compare.title", { count: selectedRunIds.length })}</span>
               </>
             )}
             {runId && (
@@ -246,8 +254,8 @@ export function App() {
               className="theme-toggle"
               type="button"
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
-              title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+              aria-label={t(theme === "dark" ? "app.themeToLight" : "app.themeToDark")}
+              title={t(theme === "dark" ? "app.themeToLight" : "app.themeToDark")}
             >
               {theme === "dark" ? (
                 <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -260,20 +268,42 @@ export function App() {
                 </svg>
               )}
               <span className="theme-toggle-label">
-                {theme === "dark" ? "Light" : "Dark"}
+                {t(theme === "dark" ? "app.themeLight" : "app.themeDark")}
               </span>
+            </button>
+            {/* Two languages, so a button rather than a picker: a select for a
+                binary choice costs a click and a menu to say what a label
+                already says. The label is the language it switches *to*, written
+                in that language -- someone who cannot read the current UI has to
+                be able to find the way out of it. */}
+            <button
+              className="theme-toggle lang-toggle"
+              type="button"
+              onClick={() => setLang(lang === "zh" ? "en" : "zh")}
+              aria-label={t("app.langToggleTitle")}
+              title={t("app.langToggleTitle")}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
+              </svg>
+              <span className="theme-toggle-label">{t("app.langToggle")}</span>
             </button>
             {/* Refresh invalidates the fetched-once resources. The live document
                 does not need it -- SSE owns that -- so this is deliberately not a
                 "reload the page" button. */}
             {runId && (
               <button className="btn" type="button" onClick={() => setRefreshNonce((n) => n + 1)}>
-                Refresh
+                {t("app.refresh")}
               </button>
             )}
-            <span className="header-live" data-state={liveState} title={`SSE: ${liveState}`}>
+            <span
+              className="header-live"
+              data-state={liveState}
+              title={t("app.liveTitle", { state: liveState })}
+            >
               <span className="header-live-dot" />
-              {liveState}
+              {t(`live.${liveState}`)}
             </span>
             <AsOf updatedAt={updatedAt} now={now} />
           </div>
@@ -295,13 +325,13 @@ export function App() {
         {/* A transport error is shown without discarding the last good document: a
             dropped stream and a dead run are different facts. */}
         {(runId ? run.error : runs.error) && (
-          <Note tone="error" title="Live stream reported an error">
+          <Note tone="error" title={t("app.streamError")}>
             {runId ? run.error : runs.error}
           </Note>
         )}
 
         {runId && (
-          <nav className="tabs" aria-label="Run views">
+          <nav className="tabs" aria-label={t("app.runViews")}>
             {tabs.map((tab) => (
               <a
                 className="tab"
@@ -309,7 +339,7 @@ export function App() {
                 href={href({ name: tab.name, runId })}
                 data-active={route.name === tab.name ? "true" : undefined}
               >
-                {tab.label}
+                {t(`tab.${tab.name}`)}
               </a>
             ))}
           </nav>
@@ -340,20 +370,20 @@ export function App() {
           })}
 
           {route.name === "runs" && serverQuery.data && (
-            <Note title="Server">
+            <Note title={t("server.title")}>
               <div className="kv">
-                <dt>version</dt>
+                <dt>{t("server.version")}</dt>
                 <dd>
                   <Code>{serverQuery.data.version}</Code>
                 </dd>
-                <dt>runs</dt>
+                <dt>{t("server.runs")}</dt>
                 {/* Counted from the same live list the table renders, not from
                     the one-shot health fetch. That fetch happens once at page
                     load and never again, so its count froze at whatever was
                     there when the tab opened while the table went on updating --
                     two numbers on one screen disagreeing about the same fact. */}
                 <dd>{runRows.length}</dd>
-                <dt>scan root</dt>
+                <dt>{t("server.scanRoot")}</dt>
                 <dd>
                   <Code>{serverQuery.data.scan_root.path}</Code>{" "}
                   {/* A scan root that does not exist is the commonest reason for
@@ -361,13 +391,17 @@ export function App() {
                       next -- which "exists" alone cannot distinguish, since both
                       report true. The count is what separates them. */}
                   {!serverQuery.data.scan_root.exists ? (
-                    <Badge tone="unreachable">missing</Badge>
+                    <Badge tone="unreachable">{t("server.missing")}</Badge>
                   ) : serverQuery.data.scan_root.run_count === 0 ? (
-                    <Badge tone="unknown">no runs found</Badge>
+                    <Badge tone="unknown">{t("server.noRunsFound")}</Badge>
                   ) : (
                     <span className="faint">
-                      {serverQuery.data.scan_root.run_count} run
-                      {serverQuery.data.scan_root.run_count === 1 ? "" : "s"}
+                      {t(
+                        serverQuery.data.scan_root.run_count === 1
+                          ? "server.runCount.one"
+                          : "server.runCount.other",
+                        { count: serverQuery.data.scan_root.run_count },
+                      )}
                     </span>
                   )}
                 </dd>
@@ -436,7 +470,7 @@ function renderRoute(args: RenderArgs) {
   // the status document. Held as one branch so a slow first fetch shows one
   // placeholder rather than four half-empty panels.
   if (!status) {
-    return <Note>Loading run…</Note>;
+    return <Note>{t("app.loadingRun")}</Note>;
   }
 
   switch (route.name) {
@@ -506,8 +540,12 @@ function RollupBar(props: { runs: RunSummary[] }) {
       // `role="status"` here.
       aria-label={
         runs.length === 0
-          ? "No runs discovered yet"
-          : `Worst health across ${runs.length} runs: ${health}. ${notHealthy} not healthy.`
+          ? t("rollup.none")
+          : t("rollup.summary", {
+              total: runs.length,
+              health: statusLabel(health),
+              bad: notHealthy,
+            })
       }
     />
   );

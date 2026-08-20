@@ -13,6 +13,7 @@ import { useMemo, useState } from "react";
 import type { Health, RunState, RunSummary } from "../api/types";
 import { Badge, Code, Note } from "../components/primitives";
 import { age, ageSince, duration, integer, semanticsLabel } from "../lib/format";
+import { statusLabel, t, tNode } from "../lib/i18n";
 
 export interface RunListProps {
   runs: RunSummary[];
@@ -157,16 +158,16 @@ export function RunList(props: RunListProps) {
     <div className="stack">
       <div className="controls">
         <label className="control">
-          <span>Search</span>
+          <span>{t("runlist.search")}</span>
           <input
             type="search"
             value={query}
-            placeholder="run id, experiment, task type"
+            placeholder={t("runlist.searchPlaceholder")}
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
         <div className="control">
-          <span>State</span>
+          <span>{t("runlist.state")}</span>
           <div className="control-group">
             {(["all", "running", "finished", "failed", "stopped", "pending"] as const).map((value) => (
               <button
@@ -176,7 +177,7 @@ export function RunList(props: RunListProps) {
                 data-active={stateFilter === value ? "true" : undefined}
                 onClick={() => setStateFilter(value)}
               >
-                {value}
+                {statusLabel(value)}
               </button>
             ))}
           </div>
@@ -186,23 +187,25 @@ export function RunList(props: RunListProps) {
           type="button"
           disabled={selected.length < 2}
           onClick={props.onCompare}
-          title={selected.length < 2 ? "Select two or more runs to compare" : undefined}
+          title={selected.length < 2 ? t("runlist.compareHint") : undefined}
         >
-          Compare {selected.length > 0 ? `(${selected.length})` : ""}
+          {selected.length > 0
+            ? t("runlist.compareN", { count: selected.length })
+            : t("runlist.compare")}
         </button>
       </div>
 
       {collided.size > 0 && (
         <Note
           tone="error"
-          title={`${collided.size} run id${collided.size === 1 ? " is" : "s are"} shared by different runs`}
+          title={t(collided.size === 1 ? "runlist.collided.one" : "runlist.collided.other", {
+            count: collided.size,
+          })}
         >
           <div>
-            These runs have different names and different log paths but the same
-            run id, and every URL and API call in this dashboard addresses a run by
-            id. Opening any of them shows whichever the server finds first —{" "}
-            <strong>not necessarily the one you clicked</strong> — and the same
-            applies to comparing them.
+            {tNode("runlist.collidedBody", {
+              emphasis: <strong>{t("runlist.collidedEmphasis")}</strong>,
+            })}
           </div>
           {[...collided].map((id) => (
             <div key={id} className="faint" style={{ marginTop: "var(--space-xs)" }}>
@@ -214,10 +217,7 @@ export function RunList(props: RunListProps) {
             </div>
           ))}
           <div style={{ marginTop: "var(--space-xs)" }}>
-            The default id is a second-resolution timestamp plus the experiment
-            name, so this also happens when a copied config pins{" "}
-            <Code>runner.run_id</Code>. Give each run its own id to tell them
-            apart.
+            {tNode("runlist.collidedHint", { code: <Code>runner.run_id</Code> })}
           </div>
         </Note>
       )}
@@ -225,11 +225,10 @@ export function RunList(props: RunListProps) {
       {attention.length > 0 && (
         <Note
           tone="warn"
-          title={
-            attention.length === 1
-              ? "1 run needs attention"
-              : `${attention.length} runs need attention`
-          }
+          title={t(
+            attention.length === 1 ? "runlist.attention.one" : "runlist.attention.other",
+            { count: attention.length },
+          )}
         >
           {attention.map((run) => (
             <div key={rowKey(run)}>
@@ -243,16 +242,16 @@ export function RunList(props: RunListProps) {
         <table className="table">
           <thead>
             <tr>
-              <th style={{ width: 32 }} aria-label="Select for compare" />
-              <th>Run</th>
-              <th>State</th>
-              <th>Health</th>
-              <th>Phase</th>
-              <th className="col-num">Step</th>
-              <th className="col-num">Elapsed</th>
-              <th className="col-num">ETA</th>
-              <th className="col-num">Ckpt</th>
-              <th className="col-num">Heartbeat</th>
+              <th style={{ width: 32 }} aria-label={t("runlist.selectForCompare")} />
+              <th>{t("runlist.col.run")}</th>
+              <th>{t("runlist.col.state")}</th>
+              <th>{t("runlist.col.health")}</th>
+              <th>{t("runlist.col.phase")}</th>
+              <th className="col-num">{t("runlist.col.step")}</th>
+              <th className="col-num">{t("runlist.col.elapsed")}</th>
+              <th className="col-num">{t("runlist.col.eta")}</th>
+              <th className="col-num">{t("runlist.col.ckpt")}</th>
+              <th className="col-num">{t("runlist.col.heartbeat")}</th>
             </tr>
           </thead>
           <tbody>
@@ -267,7 +266,9 @@ export function RunList(props: RunListProps) {
                     type="checkbox"
                     checked={selected.includes(rowKey(run))}
                     onChange={() => props.onToggleSelect(rowKey(run))}
-                    aria-label={`Select ${run.experiment_name ?? run.run_id} for compare`}
+                    aria-label={t("runlist.selectRunForCompare", {
+                      name: run.experiment_name ?? run.run_id,
+                    })}
                   />
                 </td>
                 <td>
@@ -287,7 +288,7 @@ export function RunList(props: RunListProps) {
                   {run.state ? (
                     <Badge tone={run.state} />
                   ) : run.initializing ? (
-                    <Badge tone="pending">initializing</Badge>
+                    <Badge tone="pending">{t("status.initializing")}</Badge>
                   ) : (
                     <Badge tone="unknown" />
                   )}
@@ -314,23 +315,17 @@ export function RunList(props: RunListProps) {
 
       {rows.length === 0 &&
         (props.discovering ? (
-          <Note title="Discovering runs">
-            Scanning for runs. Nothing is claimed about what is there until this
-            finishes.
-          </Note>
+          <Note title={t("runlist.discoveringTitle")}>{t("runlist.discoveringBody")}</Note>
         ) : runs.length === 0 ? (
-          <Note title="No runs discovered">
+          <Note title={t("runlist.noneTitle")}>
             {root === undefined
-              ? "The server has not reported its scan root yet."
+              ? t("runlist.noneNoRoot")
               : !root.exists
-                ? `The scan root ${root.path} does not exist.`
-                : `Searched ${root.path}, which exists but holds no run yet. A run is a directory holding _rlinf/runs/<id>/manifest.json, up to six levels below the root.`}
+                ? t("runlist.noneMissingRoot", { path: root.path })
+                : t("runlist.noneEmptyRoot", { path: root.path })}
           </Note>
         ) : (
-          <Note title="No runs match">
-            Every discovered run is filtered out by the current search or state
-            filter.
-          </Note>
+          <Note title={t("runlist.noMatchTitle")}>{t("runlist.noMatchBody")}</Note>
         ))}
     </div>
   );
