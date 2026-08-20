@@ -5,7 +5,7 @@ LIBERO 的 async + colocated PPO 训练。
 
 RLinf 是面向具身智能的强化学习训练框架。本文覆盖两部分内容：**部署**（一次性完成）与
 **运行训练**（每次实验重复执行）。源码、模型、日志与 checkpoint 均保存在 `/workspace`
-持久卷中，Pod 重建后不会丢失。
+持久卷中，Pod 重建后不会丢失。第二部分第 9 节另给出 SO101 + ManiSkill 的变体跑法。
 
 ---
 
@@ -183,17 +183,8 @@ kubectl port-forward -n rlinf pod/rlinf-0 8420:8420
 
 随后在浏览器中打开 `http://localhost:8420`。
 
-面板包含以下页面：
-
-| 页面 | 内容 |
-|---|---|
-| Runs | run 状态、健康度、训练进度与心跳 |
-| Overview | 当前阶段、耗时、checkpoint、异常信号与关键指标 |
-| Metrics | TensorBoard 曲线，按 embodied 模板分组 |
-| Media | LIBERO 训练录像 |
-| Events | 生命周期、阶段切换与退出原因 |
-
 此时尚无训练任务，页面为空属正常现象。训练启动后面板每 5 秒自动发现一次，无需重启。
+页面结构与各项指标的含义见第二部分第 7 节。
 
 ---
 
@@ -231,7 +222,7 @@ huggingface-cli download RLinf/RLinf-Pi05-LIBERO-SFT \
 下载完成后，确认模型目录为 `/workspace/models/RLinf-Pi05-LIBERO-SFT`。训练命令会将 actor
 与 rollout 的 `model_path` 均指向该路径。
 
-## 3. 推荐配置
+## 3. 本文使用的训练配置
 
 基础配置文件为
 `examples/embodiment/config/libero_spatial_async_ppo_openpi_pi05.yaml`，并通过命令行覆盖
@@ -243,64 +234,67 @@ huggingface-cli download RLinf/RLinf-Pi05-LIBERO-SFT \
 - global batch 128、micro batch 32；
 - 每 40 step 保存一次 checkpoint，并在最后一步保存。
 
-## 4. RLinf 性能优化特性
+## 4. 性能优化特性
 
-以下三项为 RLinf 在标准训练流程之外提供的性能优化能力，默认均为关闭状态，可按需启用。
+RLinf 在标准训练流程之外提供三项自研性能优化，默认均为关闭状态。本节说明各自的作用，
+第 5 节给出按场景的推荐组合与实测收益。
+
+| 特性 | 配置项 | 作用侧 |
+|---|---|---|
+| 异步权重同步 | `+actor.sync_weight_no_wait=true` | actor |
+| Fused Prefix Kernel | `actor.model.openpi.enable_fused_prefix=true` | actor（默认同时作用于 rollout） |
+| Rollout 图编译 | `+rollout.enable_torch_compile=true` `+rollout.torch_compile_mode=default` | rollout |
 
 ### 4.1 异步权重同步
 
-| | |
-|---|---|
-| 配置项 | `+actor.sync_weight_no_wait=true` |
-| 默认值 | `false` |
-
-标准流程中，actor 完成更新后需等待权重同步至 rollout 才能继续，同步耗时期间 actor 处于
-空闲状态。启用该特性后，actor 发起同步即继续执行后续计算，将同步开销与下一步训练重叠。
-
-该优化适用于异步训练场景：rollout 使用落后一个版本的权重，本身即是 off-policy 训练的预期
-行为。框架保证同一时刻仅有一次同步在执行，新请求会被合并而非排队，因此传输较慢时不会
-形成积压；权重只会被丢弃，不会出现乱序。
-
-> 该配置项不在 YAML 中预定义，覆盖时**必须使用 `+` 前缀**，否则 Hydra 会报
-> `Key not in struct`。
+actor 完成参数更新后无需等待权重同步至 rollout，可立即继续下一步计算，把同步开销与训练
+重叠。框架保证同一时刻仅有一次同步在执行，权重不会乱序或积压。该行为适用于 async 训练：
+rollout 使用落后一个版本的权重，本身即是 off-policy 训练的预期行为。
 
 ### 4.2 Fused Prefix Kernel
 
-| | |
-|---|---|
-| 配置项 | `actor.model.openpi.enable_fused_prefix=true` |
-| 默认值 | `false` |
+将 Pi0.5 中 PaliGemma 视觉语言模型侧的 decoder layer 替换为算子融合实现（融合前向 + 手写
+反向），加速 actor 训练。action expert 部分不受影响。
 
-将 Pi0.5 中 PaliGemma 视觉语言模型侧的 decoder layer 替换为算子融合实现，包含融合的前向
-计算与手写的反向实现，支持任意 additive attention mask。
-
-该替换仅作用于使用标准 RMSNorm 的 prefix 侧，action expert（adaRMS）部分保持不变。
-
-rollout 的模型配置由 actor 深拷贝而来，因此该开关**默认同时作用于 actor 与 rollout**。
-如需让 rollout 单独关闭，追加 `+rollout.model.openpi.enable_fused_prefix=false`；与 4.3 的
-图编译同时使用时必须这样做，原因见 4.4。
+rollout 的模型配置由 actor 深拷贝而来，因此该开关**默认同时作用于 actor 与 rollout**；
+需要 rollout 单独关闭时追加 `+rollout.model.openpi.enable_fused_prefix=false`。
 
 ### 4.3 Rollout 图编译
 
-| | |
-|---|---|
-| 配置项 | `+rollout.enable_torch_compile=true` `+rollout.torch_compile_mode=default` |
-| 默认值 | 关闭；`torch_compile_mode` 代码兜底为 `max-autotune-no-cudagraphs` |
+对 rollout 推理启用 torch.compile，加速 Pi0.5 的动作预测。首步存在一次性编译开销，实测
+增加约 53–59 s，不应据此判断稳态性能。
 
-对 rollout 推理过程启用 torch.compile 图编译。首次运行存在编译开销，实测首步增加约 53–59 s。
+> ⚠️ 两处写法必须注意：
+>
+> - `sync_weight_no_wait` 与 `rollout.enable_torch_compile` 不在 YAML 中预定义，覆盖时
+>   **必须带 `+` 前缀**，否则 Hydra 会报 `Key not in struct`。
+> - `torch_compile_mode` 需**显式写成 `default`**。省略时会走代码兜底值
+>   `max-autotune-no-cudagraphs`，编译开销明显更高，得到的也不是第 5 节的数字。
 
-> ⚠️ 只写 `+rollout.enable_torch_compile=true` 时，`torch_compile_mode` 会走代码兜底值
-> `max-autotune-no-cudagraphs`，编译开销明显更高。第 5 节的性能数据均在
-> `torch_compile_mode=default` 下测得，**建议显式指定该值**，否则拿到的不是这里给出的数字。
+## 5. 优化组合推荐与实测收益
 
-### 4.4 fused 与 compile 同时使用时必须拆开作用域
+**最优组合取决于瓶颈侧，没有通用最优。** 判断方法：比较 `time/actor_training` 与
+`time/rollout/generate_one_epoch`，数值大者为瓶颈。加速非瓶颈侧换不到收益，在 colocated 下
+还会因破坏流水线平衡而变慢——同样开图编译，LIBERO colocated 是 **+8.85%（更慢）**，
+LIBERO disaggregated 是 **−4.76%（更快）**，两者只差 placement。
 
-两项优化直接叠加（actor 与 rollout 都开 fused，再开 rollout 编译）会**互相抵消**：融合层包了
-一个自定义 autograd Function，torch.compile 无法追踪，rollout 侧的图被打断，编译收益几乎全部
-消失。三个实测场景中 rollout `predict` 的收益都从 −11.8%~−12.9% 掉到 −0.0%~−2.0%，且把 fused
-从 rollout 摘掉后收益立刻回到 −12.3%~−13.1%。
+| 场景 | 瓶颈侧 | 推荐 | 端到端收益 |
+|---|---|---|---|
+| **LIBERO colocated（本文 4 卡配置）** | actor | **只开 fused** | **−7.97%** |
+| LIBERO disaggregated 2+2 | rollout | 只开 compile | −4.76% |
+| ManiSkill disaggregated 2+2 | rollout | 只开 compile | −6.99% |
+| 瓶颈侧不确定 | — | split（见下） | 距当场最优 1 个百分点以内 |
 
-正确的用法是让两项各管一侧：**actor 用 fused，rollout 用 compile**。
+各优化项的稳态收益（单机 4×H20，async 模式，四场景实测）：
+
+| 优化项 | 观察指标 | 相对 baseline |
+|---|---|---|
+| Fused Prefix Kernel | `time/actor_training` | −5.8% ~ −6.9% |
+| Rollout 图编译 | `time/rollout/predict` | −11.8% ~ −12.9% |
+| 异步权重同步 | — | 单机无可测收益（同机同步仅 1–2 s），面向跨机场景 |
+
+⚠️ **不要让 fused 与 compile 同时落在 rollout 上。** 两者直接叠加会互相抵消，rollout 推理
+收益从 −12% 掉到 −0%~−2%。正确用法是两项各管一侧（split）：
 
 ```text
 actor.model.openpi.enable_fused_prefix=true \
@@ -309,67 +303,8 @@ actor.model.openpi.enable_fused_prefix=true \
 +rollout.torch_compile_mode=default
 ```
 
-该组合在两个实测场景中都同时拿到了两侧的完整收益（actor −7.1%/−6.4%，rollout predict
-−12.3%/−13.1%），端到端则落在各场景最优解 1 个百分点以内。详见第 5 节。
-
-> torch.compile 的产物缓存在 `/tmp/torchinductor_root`，**跨进程持久**。同一台机器上重复
-> 跑图与 shape 相同的配置时，后续运行的首步开销会大幅低于真实冷启动值。比较冷启动成本时
-> 需先清空该目录，否则会低估。
-
-## 5. 性能数据
-
-实测环境：单机 4×H20 97GB，async 模式，Pi0.5。四个场景 × 各优化组共 19 次 run，每组 1 次，
-LIBERO 取 12 步的后 8 步、ManiSkill 取 10 步的后 7 步为稳态窗口。完整数据与方法学说明见
-性能测试报告（2026-08-19）。
-
-### 5.1 该开哪个：按 placement 选
-
-**最优项随瓶颈侧翻转，没有通用最优。** 判断方法：比较 `time/actor_training` 与
-`time/rollout/generate_one_epoch`，谁大谁是瓶颈。
-
-| 场景 | 瓶颈侧 | 推荐 | 端到端收益 |
-|---|---|---|---|
-| LIBERO colocated（4 卡共用） | actor | **只开 fused** | −7.97% |
-| LIBERO disagg 2+2 | rollout | **只开 compile** | −4.76% |
-| ManiSkill disagg 2+2 | rollout | **只开 compile** | −6.99% |
-| 不确定 / 想一套通吃 | — | **split**（见 4.4） | 距当场最优 1 个百分点以内 |
-
-同样开 compile，在 LIBERO colocated 是 **+8.85%（更慢）**、在 LIBERO disagg 是 **−4.76%（更快）**
-—— 同模型同环境，只差 placement。**加速非瓶颈侧在 colocated 下会因破坏流水线平衡而变慢。**
-
-### 5.2 各优化项的稳态收益
-
-fused 的收益应按 **actor 侧**表述，四个场景高度一致：
-
-| 场景 | `time/actor_training` |
-|---|---|
-| LIBERO colocated | −6.93% |
-| ManiSkill disagg 2+2 | −5.75% |
-| LIBERO disagg 2+2 | −5.93% |
-| ManiSkill colocated | −6.82% |
-
-compile 的收益应按 **rollout 侧**表述（它对 actor 无影响，实测 −0.0%~−0.8%）：
-
-| 场景 | `time/rollout/predict` |
-|---|---|
-| LIBERO colocated | −12.58% |
-| ManiSkill disagg 2+2 | −12.93% |
-| LIBERO disagg 2+2 | −11.84% |
-
-`+actor.sync_weight_no_wait`（4.1）在单机各场景均无可测收益：同机权重同步本身只有 1–2 s，
-没有可隐藏的开销。该特性面向跨机场景，本轮硬件条件下未验证。
-
-### 5.3 测量注意事项
-
-- **`time/step` 在 colocated 下是双峰分布**：`wait_for_rollout_store_ready` 平时接近 0，
-  偶尔跳到 15–60 s。用中位数与停顿次数看，不要看均值。disaggregated 下无此问题。
-- **ManiSkill + colocated 不要用来做性能测量**：GPU simulator 与 actor/rollout 争抢同卡，
-  rollout epoch 的 step 间标准差达 ±15.6~±31.3 s（disagg 下仅 ±0.85 s），端到端排序无统计意义。
-- **不要用 `metrics.log` 取数**：它是 rich 渲染的表格，数值会被 `…` 截断。请读
-  `${LOG_DIR}/tensorboard/` 下的 event 文件。
-- **每步的 `num_trajectories` 会波动**，它是 env 侧完成的 episode 数，不是 actor 的训练 batch
-  —— actor 每步固定消费 `algorithm.rollout_store_size_per_rank`（默认 1）个 store 条目，
-  因此阶段计时是等工作量的，可直接横向比较。
+> 完整的测试方法、四场景逐项数据与测量口径，见
+> [Pi0.5 强化学习性能报告](docs/performance/pi05_rl_performance.md)。
 
 ## 6. 启动训练
 
@@ -418,6 +353,15 @@ setsid python examples/embodiment/train_async.py \
 echo $! > "${LOG_DIR}/driver.pid"
 ```
 
+命令末尾两行是第 4 节的**自研优化参数**，按第 5 节的场景建议增删，其余参数为常规训练配置：
+
+- **`+actor.sync_weight_no_wait=true`** —— 异步权重同步（4.1）
+- **`actor.model.openpi.enable_fused_prefix=true`** —— Fused Prefix Kernel（4.2），本文的
+  LIBERO colocated 场景中它是端到端收益最高的一项（−7.97%）
+- 若改用 disaggregated placement，改为开启 **`+rollout.enable_torch_compile=true`**
+  **`+rollout.torch_compile_mode=default`** —— Rollout 图编译（4.3），并按 4.2 关闭 rollout
+  侧的 fused
+
 关于环境变量：`EMBODIED_PATH` 为配置文件解析所必需，缺失时 Hydra 在插值阶段即会失败；
 `MUJOCO_GL` 与 `PYOPENGL_PLATFORM` 用于 LIBERO 的离屏渲染；`ROBOT_PLATFORM` 决定动作维度
 与归一化方式。GPU 可见性由容器的资源申请决定，无需额外指定。
@@ -444,6 +388,27 @@ runner.max_epochs=2 runner.max_steps=2 runner.save_interval=-1
 
 ## 7. 查看训练进度
 
+有两种查看方式，看的是**同一批指标**：Dashboard 读取的是训练进程写出的 TensorBoard 曲线与
+run 元数据，与容器内 `metrics.log` 同源同名。面板适合看趋势与横向对比，命令行适合确认进程
+是否推进。
+
+### 7.1 Dashboard
+
+访问方式见部署第 6 节。训练启动后面板每 5 秒自动发现一次，无需重启。
+
+| 页面 | 内容 |
+|---|---|
+| 运行列表 | run 状态、健康度、训练进度与心跳；选中两个及以上可进入对比 |
+| 概览 | 当前阶段、耗时、checkpoint、异常信号与核心指标 |
+| 指标 | TensorBoard 曲线，按 embodied 模板分组（Task performance / Policy optimization / Off-policy lag / Value function / Rollout / Throughput / Evaluation） |
+| 视频 | 训练与评测录像（`video_cfg.save_video` 打开时才有） |
+| 事件 | 生命周期、阶段切换与退出原因 |
+| 对比 | 多个 run 的同一指标叠加对比 |
+
+面板右上角可切换中英文界面。核心指标（north star）为 `env/success_once`。
+
+### 7.2 命令行
+
 在新的 shell 中需重新指定本次运行的目录：
 
 ```bash
@@ -459,36 +424,43 @@ tail -f "${LOG_DIR}/metrics.log"
 ```
 
 `metrics.log` 在第一个训练 step 完成后生成。模型与 LIBERO 环境初始化期间，可先查看
-`run.log`。
-
-仅查看最新进度：
+`run.log`。仅查看最新进度：
 
 ```bash
 grep "Global Step:" "${LOG_DIR}/metrics.log" | tail -n 5
 ```
 
-主要观察指标：
-
-| 指标 | 含义 |
-|---|---|
-| `env/success_once` | 每批环境是否至少成功一次，训练效果的主要观察指标 |
-| `env/return` | 环境回报 |
-| `time/step` | 端到端每个 RL step 的耗时 |
-| `time/rollout/predict` | Pi0.5 rollout 推理耗时 |
-| `time/actor_training` | actor 训练耗时 |
-| `time/env/run_interact_once` | 完整 rollout/env 交互耗时 |
-| `time/actor/wait_for_rollout_store_ready` | actor 等待 rollout batch 的时间 |
-| `train/actor/policy_loss` | policy loss |
-| `train/critic/value_loss` | value loss |
-
-本次运行的 Hydra 最终配置保存于 `${LOG_DIR}/tensorboard/config.yaml`。
-
-查看 GPU 与 Ray 状态：
+本次运行的 Hydra 最终配置保存于 `${LOG_DIR}/tensorboard/config.yaml`。查看 GPU 与 Ray 状态：
 
 ```bash
 nvidia-smi
 ray status
 ```
+
+> `metrics.log` 是 rich 渲染的表格，较长的数值会被截断，**不可用于精确取数**。需要精确数值
+> 时请读 `${LOG_DIR}/tensorboard/` 下的 event 文件，或使用面板。
+
+### 7.3 主要指标
+
+面板与 `metrics.log` 使用同一套指标名：
+
+| 指标 | 含义 |
+|---|---|
+| `env/success_once` | 每批 episode 中至少成功一次的比例，训练效果的核心观察指标 |
+| `env/return` | 环境回报 |
+| `env/episode_len` | episode 长度。它逼近步数上限而 return 不涨，通常是策略学会了拖延而非完成任务 |
+| `num_trajectories` | 每步完成的 episode 数，会波动；它是 env 侧的产出，不是 actor 的训练 batch |
+| `time/step` | 端到端每个 RL step 的耗时 |
+| `time/actor_training` | actor 训练耗时 |
+| `time/rollout/predict` | Pi0.5 rollout 推理耗时 |
+| `time/rollout/generate_one_epoch` | rollout 生成一轮的耗时。与 `time/actor_training` 比较可判断瓶颈侧，见第 5 节 |
+| `time/env/run_interact_once` | 完整 rollout/env 交互耗时 |
+| `time/actor/wait_for_rollout_store_ready` | actor 等待可用轨迹的时间，用于区分「actor 慢」与「actor 被饿着」 |
+| `rollout/discarded_unused_trajs` | 因超出 `algorithm.staleness_threshold` 被丢弃的轨迹数。持续非零说明 rollout 快于训练 |
+| `train/actor/policy_loss` | policy loss |
+| `train/critic/value_loss` | value loss |
+| `train/critic/explained_variance` | critic 解释方差。≤ 0 表示价值头不如直接预测均值，此时 actor 侧曲线不可按表面读 |
+| `eval/success_once` | 确定性评测成功率，`runner.val_check_interval` 触发时才有 |
 
 ## 8. Checkpoint
 
@@ -520,6 +492,113 @@ runner.resume_dir="${RESUME_DIR}"
 
 `runner.resume_dir` 须指向 `global_step_<N>` 目录，而非其下的 `actor` 子目录。恢复后的训练
 可使用新的 `RUN_NAME` 与 `LOG_DIR`，`RESUME_DIR` 仍指向原有运行的绝对路径。
+
+## 9. 变体：在 SO101 上用 ManiSkill 做 RL 训练
+
+这是 LIBERO 之外的另一条路径：把真实 SO101（SO-ARM101）机械臂的抓取摆放工作台在 ManiSkill
+中重建，并在其上对 Pi0.5 做 PPO 微调（real2sim）。部署、容器操作、面板与 checkpoint 流程
+完全复用前文，本节只给出差异部分。
+
+| 项 | 内容 |
+|---|---|
+| 环境 | ManiSkill，任务 id `SO101GrabRedCube-v1` |
+| 机器人 | SO101，6 自由度，关节空间绝对位置控制（`pd_joint_pos`） |
+| 动作 | 6 维 `[shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper]`，LeRobot 归一化电机单位 |
+| 观测 | 前视 + 腕部两路 640×480 相机，外加 6 维关节位置 |
+| 成功判据 | 红色方块被放入托盘 **且** 机械臂回到初始位（5 个手臂关节平均偏差 < 0.08 rad） |
+| 配置 | `examples/embodiment/config/so101_ppo_openpi_pi05.yaml`，同步 PPO，单机 4–8 卡，actor/rollout/env 共卡 |
+
+工作台几何、相机内参、初始位姿与容差均由实测真实回合与录制的 LeRobot 数据集导出。任务原理
+与单位标定细节见
+[SO101 示例文档](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/so101.html)。
+
+### 9.1 准备
+
+镜像中已包含 ManiSkill 与 openpi 环境，容器内 `source switch_env openpi` 即可；自建环境用
+`bash requirements/install.sh embodied --model openpi --env maniskill_libero`。若运行时提示
+缺少 ManiSkill 资产，在容器内执行 `download_assets --assets maniskill`（默认写入
+`~/.maniskill`）。
+
+需要自行准备两样东西：SO101 的 Pi0.5 SFT 检查点，以及该检查点训练时所用的
+`norm_stats.json`。**强化学习的起点必须是在仿真中已具备非零成功率的策略**——PPO 放大成功，
+不会凭空发现成功。
+
+仿真侧冒烟检查（不需要检查点）：
+
+```bash
+python -m toolkits.so101_smoke
+```
+
+### 9.2 启动训练
+
+```bash
+cd /workspace/RLinf
+source switch_env openpi
+
+export EMBODIED_PATH=/workspace/RLinf/examples/embodiment
+export PYTHONPATH=/workspace/RLinf:${PYTHONPATH:-}
+export MUJOCO_GL=egl
+export PYOPENGL_PLATFORM=egl
+
+export SO101_CKPT=/workspace/models/so101_sft_openpi_pi05
+export SO101_NORM_STATS=/workspace/assets/so101/norm_stats.json
+
+export RUN_NAME="$(date +%Y%m%d-%H%M%S)-pi05-so101"
+export LOG_DIR="/workspace/RLinf/logs/${RUN_NAME}"
+mkdir -p "${LOG_DIR}"
+
+setsid python examples/embodiment/train_embodied_agent.py \
+  --config-path "${EMBODIED_PATH}/config" \
+  --config-name so101_ppo_openpi_pi05 \
+  runner.logger.log_path="${LOG_DIR}" \
+  runner.logger.experiment_name="${RUN_NAME}" \
+  +runner.run_id="${RUN_NAME}" \
+  actor.model.model_path="${SO101_CKPT}" \
+  rollout.model.model_path="${SO101_CKPT}" \
+  actor.model.openpi_data.norm_stats_path="${SO101_NORM_STATS}" \
+  > "${LOG_DIR}/run.log" 2>&1 < /dev/null &
+echo $! > "${LOG_DIR}/driver.pid"
+```
+
+该任务使用同步 PPO 入口 `train_embodied_agent.py`（LIBERO 一节用的是 async 入口
+`train_async.py`）。`LOG_DIR` 同样须位于面板扫描目录之下，面板会自动发现该 run。
+
+投入长训练之前，建议先用冻结策略在**带噪 rollout 分布**下探针一轮，要求
+`env/success_once` ≥ 5%：
+
+```bash
+python examples/embodiment/train_embodied_agent.py \
+  --config-path "${EMBODIED_PATH}/config" \
+  --config-name so101_ppo_openpi_pi05 \
+  runner.max_epochs=1 runner.val_check_interval=1 \
+  actor.optim.lr=1e-9 actor.optim.value_lr=1e-9 \
+  actor.model.model_path="${SO101_CKPT}" \
+  rollout.model.model_path="${SO101_CKPT}" \
+  actor.model.openpi_data.norm_stats_path="${SO101_NORM_STATS}"
+```
+
+评测使用同目录下的 `so101_eval_openpi_pi05`（`runner.only_eval: True`）。同样通过命令行覆盖
+路径，把 `model_path` 指向要评测的检查点：
+
+```bash
+python examples/embodiment/train_embodied_agent.py \
+  --config-path "${EMBODIED_PATH}/config" \
+  --config-name so101_eval_openpi_pi05 \
+  actor.model.model_path="${SO101_CKPT}" \
+  rollout.model.model_path="${SO101_CKPT}" \
+  actor.model.openpi_data.norm_stats_path="${SO101_NORM_STATS}"
+```
+
+`eval/success_once`（确定性）与 `env/success_once`（带噪 rollout）应分开报告，两者可以相差
+十几个百分点。
+
+> ⚠️ 配置中有三项刻意偏离 π-RL 默认配方，默认值在本任务上**已知会崩塌**，请勿"还原"：
+> `actor.model.num_action_chunks: 10`（须等于检查点的 action horizon）、
+> `actor.model.openpi.noise_logvar_range: [0.02, 0.04]`、
+> `actor.global_batch_size: 4096`（等于每轮样本数，即每轮恰好一次更新）。
+
+第 4 节的优化开关同样适用于该任务（同为 openpi Pi0.5），但第 5 节的数据是在 LIBERO 与
+ManiSkill 的 async 场景下测得的，SO101 上未做测量。
 
 ---
 
