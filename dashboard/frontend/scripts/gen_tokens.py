@@ -152,10 +152,24 @@ def render(front: dict) -> str:
     for slug, family in families.items():
         # A generic fallback keeps numbers monospaced even if the woff2 fails to
         # load, which matters more than matching the exact face.
+        #
+        # The CJK families sit in both stacks because neither shipped face has a
+        # single Chinese glyph: the browser falls through per glyph, so Latin
+        # still renders in Inter or JetBrains Mono while Chinese comes from
+        # whichever of these the host has. Naming them is what separates a
+        # readable Chinese UI from a row of tofu boxes on a bare Linux desktop --
+        # `system-ui` resolves to a CJK-capable font on macOS and Windows, and to
+        # nothing in particular in a container. They are ahead of the generic
+        # `sans-serif` / `monospace` for the same reason: the generic is the last
+        # resort, not the CJK answer.
+        cjk = (
+            "'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', "
+            "'Source Han Sans SC', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei'"
+        )
         fallback = (
-            "ui-monospace, SFMono-Regular, Menlo, monospace"
+            f"ui-monospace, SFMono-Regular, Menlo, {cjk}, monospace"
             if "mono" in slug
-            else "system-ui, -apple-system, Segoe UI, sans-serif"
+            else f"system-ui, -apple-system, Segoe UI, {cjk}, sans-serif"
         )
         lines.append(f"  --font-{slug}: '{family}', {fallback};")
 
