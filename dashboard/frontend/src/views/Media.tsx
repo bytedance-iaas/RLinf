@@ -30,10 +30,25 @@ import { api } from "../api/client";
 import { useFetch } from "../api/useLive";
 import type { MediaEntry, RunStatus } from "../api/types";
 import { Code, Note } from "../components/primitives";
-import { integer, semanticsLabel } from "../lib/format";
+import { EMPTY, integer, semanticsInline } from "../lib/format";
+import { t, tNode } from "../lib/i18n";
 
 export interface MediaProps {
   status: RunStatus;
+}
+
+/**
+ * A split as a word.
+ *
+ * `split` is a free string on the wire, and only the two the index actually
+ * writes have a translation. Anything else is shown as the server wrote it,
+ * rather than as a blank chip.
+ */
+const SPLIT_KEYS = { all: "split.all", train: "split.train", eval: "split.eval" } as const;
+
+function splitLabel(value: string): string {
+  const key = SPLIT_KEYS[value as keyof typeof SPLIT_KEYS];
+  return key ? t(key) : value;
 }
 
 /** Outcome of one clip, as a phrase plus the styling flags behind it. */
@@ -48,38 +63,38 @@ function outcome(entry: MediaEntry): {
   // sets `success` exactly then.
   if (entry.success !== null && entry.num_envs === 1) {
     return entry.success
-      ? { text: "succeeded", all: true, title: "Single-env clip: the episode reached the goal." }
+      ? { text: t("media.succeeded"), all: true, title: t("media.succeededTitle") }
       : {
-          text: "did not succeed",
+          text: t("media.notSucceeded"),
           none: true,
-          title: "Single-env clip: the episode did not reach the goal.",
+          title: t("media.notSucceededTitle"),
         };
   }
 
   if (entry.num_success === null || entry.num_envs === null) {
     return {
-      text: "outcome not recorded",
+      text: t("media.outcomeUnrecorded"),
       unrecorded: true,
       // Said explicitly, because the alternative reading -- that nothing succeeded
       // -- is the one a reader will otherwise reach for.
-      title:
-        "This clip has no recorded outcome. That is not a failure: the environment " +
-        "may track no success notion, or the clip predates the field.",
+      title: t("media.outcomeUnrecordedTitle"),
     };
   }
 
   const { num_success: success, num_envs: envs } = entry;
   return {
-    text: `${success}/${envs} succeeded`,
+    text: t("media.successCount", { success, envs }),
     all: envs > 0 && success === envs,
     none: success === 0,
-    title: `${success} of the ${envs} environments tiled in this clip reached the goal.`,
+    title: t("media.successCountTitle", { success, envs }),
   };
 }
 
 export function Media(props: MediaProps) {
   const runId = props.status.run_id;
-  const semantics = semanticsLabel(
+  // The media view only ever uses the label mid-phrase -- as a filter caption and
+  // beside a step number -- so it takes the inline form once, here.
+  const semantics = semanticsInline(
     props.status.snapshot?.progress.step_semantics ?? props.status.manifest?.step_semantics,
   );
 
@@ -131,7 +146,7 @@ export function Media(props: MediaProps) {
     <div className="stack">
       <div className="controls">
         <div className="control">
-          <span>Split</span>
+          <span>{t("media.split")}</span>
           <div className="control-group">
             {(["all", "train", "eval"] as const).map((value) => (
               <button
@@ -141,7 +156,7 @@ export function Media(props: MediaProps) {
                 data-active={split === value ? "true" : undefined}
                 onClick={() => setSplit(value)}
               >
-                {value}
+                {splitLabel(value)}
               </button>
             ))}
           </div>
@@ -152,7 +167,7 @@ export function Media(props: MediaProps) {
             value={step === "all" ? "" : String(step)}
             onChange={(event) => setStep(event.target.value === "" ? "all" : Number(event.target.value))}
           >
-            <option value="">all</option>
+            <option value="">{t("media.allSteps")}</option>
             {steps.map((value) => (
               <option value={String(value)} key={value}>
                 {value}
@@ -161,34 +176,33 @@ export function Media(props: MediaProps) {
           </select>
         </label>
         <span className="control-value faint">
-          {entries.length} clip{entries.length === 1 ? "" : "s"}
+          {t(entries.length === 1 ? "media.clips.one" : "media.clips.other", {
+            count: entries.length,
+          })}
         </span>
         {tally.envs > 0 && (
-          <span className="chip" title="Summed over the clips currently shown">
-            {tally.success}/{tally.envs} envs succeeded
+          <span className="chip" title={t("media.tallyTitle")}>
+            {t("media.tally", { success: tally.success, envs: tally.envs })}
           </span>
         )}
         {tally.unrecorded > 0 && (
-          <span
-            className="chip"
-            title="These clips have no recorded outcome. They are excluded from the tally rather than counted as failures."
-          >
-            {tally.unrecorded} not recorded
+          <span className="chip" title={t("media.unrecordedTitle")}>
+            {t("media.unrecorded", { count: tally.unrecorded })}
           </span>
         )}
       </div>
 
       {mediaQuery.error && (
-        <Note tone="error" title="Media request failed">
+        <Note tone="error" title={t("media.requestFailed")}>
           {mediaQuery.error}
         </Note>
       )}
 
       {!mediaQuery.loading && entries.length === 0 && (
-        <Note title="No video for this run">
-          Videos are written by env workers into a sharded index. A run with{" "}
-          <Code>env.&lt;split&gt;.video_cfg.save_video: false</Code>, or one whose recording step has not come round
-          yet, has none.
+        <Note title={t("media.emptyTitle")}>
+          {tNode("media.emptyBody", {
+            code: <Code>env.&lt;split&gt;.video_cfg.save_video: false</Code>,
+          })}
         </Note>
       )}
 
@@ -311,7 +325,10 @@ function Clip(props: { entry: MediaEntry; semantics: string }) {
               className="media-play"
               onClick={() => setPlaying(true)}
               disabled={!canPlay}
-              aria-label={`Play clip at ${props.semantics.toLowerCase()} ${entry.step ?? "unknown"}`}
+              aria-label={t("media.playAria", {
+                unit: props.semantics,
+                step: entry.step ?? t("status.unknown"),
+              })}
             >
               {showPoster && (
                 <img
@@ -333,18 +350,16 @@ function Clip(props: { entry: MediaEntry; semantics: string }) {
           )
         ) : (
           <div className="media-frame-error">
-            {url
-              ? "This clip could not be decoded by the browser."
-              : "The server returned no URL for this clip."}
+            {url ? t("media.decodeFailed") : t("media.noUrl")}
           </div>
         )}
       </div>
       <figcaption className="media-meta">
-        <span className="chip">{entry.split}</span>
+        <span className="chip">{splitLabel(entry.split)}</span>
         <span>
-          {props.semantics.toLowerCase()} {entry.step ?? "—"}
+          {props.semantics} {entry.step ?? EMPTY}
         </span>
-        {entry.seed !== null && <span>seed {entry.seed}</span>}
+        {entry.seed !== null && <span>{t("media.seed", { seed: entry.seed })}</span>}
         <span
           className="media-count"
           data-all={result.all ? "true" : undefined}
@@ -358,7 +373,7 @@ function Clip(props: { entry: MediaEntry; semantics: string }) {
       <div className="media-meta">
         {entry.num_frames !== null && <span>{integer(entry.num_frames)}f</span>}
         {entry.fps !== null && <span>{entry.fps}fps</span>}
-        <span className="faint">shard {entry.shard}</span>
+        <span className="faint">{t("media.shard", { shard: entry.shard })}</span>
       </div>
       {/* The path is diagnosis material, not caption material: it is the widest
           thing on the card and the least often needed, and forty of them made
@@ -366,7 +381,7 @@ function Clip(props: { entry: MediaEntry; semantics: string }) {
           away rather than removed -- when the question *is* "which file is
           this", nothing else answers it. */}
       <details className="media-path">
-        <summary>path</summary>
+        <summary>{t("media.path")}</summary>
         <div className="media-path-value">{entry.path}</div>
       </details>
     </figure>
