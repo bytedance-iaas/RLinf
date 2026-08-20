@@ -27,6 +27,7 @@ import type { RunStatus, RunTemplate, Series, TemplateChart, TemplateGroup } fro
 import { Chart, type ChartSeriesSpec } from "../components/Chart";
 import { Code, Note } from "../components/primitives";
 import { metric as formatMetric, semanticsLabel } from "../lib/format";
+import { t, tNode } from "../lib/i18n";
 import {
   alignSeries,
   anyDecimated,
@@ -128,13 +129,13 @@ export function Metrics(props: MetricsProps) {
 
   if (templateError) {
     return (
-      <Note tone="error" title="No template">
+      <Note tone="error" title={t("metrics.noTemplate")}>
         {templateError}
       </Note>
     );
   }
   if (!template) {
-    return <Note>Loading the run's chart layout…</Note>;
+    return <Note>{t("metrics.loadingLayout")}</Note>;
   }
 
   const northStarKey = template.north_star?.resolved ? template.north_star.key : null;
@@ -144,11 +145,11 @@ export function Metrics(props: MetricsProps) {
     <div className="stack">
       <div className="controls">
         <div className="control">
-          <span>Template</span>
+          <span>{t("metrics.template")}</span>
           <Code>{template.name}</Code>
         </div>
         <div className="control">
-          <span>{axisLabel} axis</span>
+          <span>{t("metrics.axis", { label: axisLabel })}</span>
           {/* The axis label is the run's own step semantics. It is shown as a
               control-bar fact rather than only on each axis, because the whole
               page shares one x meaning and a reader has to know it once. */}
@@ -164,19 +165,19 @@ export function Metrics(props: MetricsProps) {
               checked={expanded}
               onChange={(event) => setExpanded(event.target.checked)}
             />
-            <span>Expand to ranks</span>
+            <span>{t("metrics.expandRanks")}</span>
             <span className="control-value" title={workers.join("\n")}>
               {workers.length}
             </span>
           </label>
         )}
         {anyDecimated(Object.values(series)) && (
-          <span className="chip" title="The server strided-sampled these series to stay under its point cap">
-            sampled
+          <span className="chip" title={t("metrics.sampledTitle")}>
+            {t("metrics.sampled")}
           </span>
         )}
         <span className="control-value faint">
-          {resolvedKeys}/{allKeys.length} keys
+          {t("metrics.keyCount", { resolved: resolvedKeys, total: allKeys.length })}
         </span>
       </div>
 
@@ -187,7 +188,7 @@ export function Metrics(props: MetricsProps) {
       ))}
 
       {seriesQuery.error && (
-        <Note tone="error" title="Series request failed">
+        <Note tone="error" title={t("metrics.seriesFailed")}>
           {seriesQuery.error}
         </Note>
       )}
@@ -210,10 +211,11 @@ export function Metrics(props: MetricsProps) {
         />
       )}
       {template.north_star && template.north_star.resolved === false && template.north_star.key && (
-        <Note tone="warn" title="North-star metric not logged">
-          The <Code>{template.name}</Code> template expects{" "}
-          <Code>{template.north_star.key}</Code>, which this run does not log. Every other chart
-          below is unaffected.
+        <Note tone="warn" title={t("metrics.northStarMissingTitle")}>
+          {tNode("metrics.northStarMissingBody", {
+            template: <Code>{template.name}</Code>,
+            key: <Code>{template.north_star.key}</Code>,
+          })}
         </Note>
       )}
 
@@ -234,7 +236,7 @@ export function Metrics(props: MetricsProps) {
       {unmatched.length > 0 && (
         <Group
           group={{
-            title: "Other keys",
+            title: t("metrics.otherKeys"),
             charts: unmatched.map((key) => ({ keys: [key], title: key })),
           }}
           series={series}
@@ -272,7 +274,7 @@ function Group(props: {
     <section className="group">
       <button className="group-head" onClick={props.onToggle} type="button" aria-expanded={!folded}>
         <span className="group-caret">{folded ? "▸" : "▾"}</span>
-        <span className="group-title">{group.title ?? "Metrics"}</span>
+        <span className="group-title">{group.title ?? t("metrics.groupFallback")}</span>
         <span className="group-count">{group.charts.length}</span>
       </button>
       {/* Folded groups are unmounted, not hidden. A collapsed group holding twenty
@@ -431,20 +433,24 @@ export function ChartPanel(props: {
         <span className="chart-title">{chart.title ?? chart.keys[0]}</span>
         {unit && <span className="chart-unit">({unit})</span>}
         <span className="chart-flags">
-          {stacked && <span className="chart-flag" title="Series are stacked">stacked</span>}
+          {stacked && (
+            <span className="chart-flag" title={t("chart.stackedTitle")}>
+              {t("chart.stacked")}
+            </span>
+          )}
           {logScale && (
             <span
               className="chart-flag"
-              title={
-                logDropped
-                  ? "Template asks for a log scale, but this run has zero or negative values; linear is used instead"
-                  : "Log scale"
-              }
+              title={logDropped ? t("chart.logDroppedTitle") : t("chart.logTitle")}
             >
-              {logDropped ? "log n/a" : "log"}
+              {logDropped ? t("chart.logNa") : t("chart.log")}
             </span>
           )}
-          {percent && <span className="chart-flag" title="Displayed as a percentage">%</span>}
+          {percent && (
+            <span className="chart-flag" title={t("chart.percentTitle")}>
+              %
+            </span>
+          )}
           {/* Per panel, not just on the control at the top of the page. The
               control scrolls out of view, the setting survives navigating into a
               run and back, and a smoothed curve is a different shape from the
@@ -454,13 +460,9 @@ export function ChartPanel(props: {
           {smoothing > 0 && (
             <span
               className="chart-flag"
-              title={
-                `Exponential moving average over ${smoothing} points, applied for display ` +
-                `only — the underlying values are unchanged. Smoothing flattens and delays ` +
-                `spikes, so set it to off before reading this chart for anomalies.`
-              }
+              title={t("chart.smoothedTitle", { n: smoothing })}
             >
-              smoothed {smoothing}pt
+              {t("chart.smoothed", { n: smoothing })}
             </span>
           )}
         </span>
@@ -487,7 +489,7 @@ export function ChartPanel(props: {
                 {/* Named as the mean once ranks are beside it: the aggregate is an
                     arithmetic mean across ranks, so "which line is the whole run"
                     has to be answerable from the legend. */}
-                {rankLines.length > 0 && <span className="faint"> mean</span>}
+                {rankLines.length > 0 && <span className="faint"> {t("chart.mean")}</span>}
               </span>
               <span className="chart-legend-value">{formatMetric(value, { percent })}</span>
             </button>
@@ -544,23 +546,20 @@ export function ChartPanel(props: {
       {/* Said once per panel, because a stacked chart silently refusing to expand
           while its neighbours expanded would read as missing per-rank data. */}
       {stackBlockedRanks && (
-        <div className="chart-note">
-          stacked — shown as the aggregate; stacking N ranks of each band would sum
-          the same time N times
-        </div>
+        <div className="chart-note">{t("metrics.stackBlockedNote")}</div>
       )}
       {/* How many lines the legend is not naming, so a faint band is understood as
           the other ranks rather than as a rendering artefact. */}
       {bundled > 0 && (
         <div className="chart-note">
-          {bundled} more {bundled === 1 ? "rank" : "ranks"} drawn unlabelled
-          {rankLines.some((line) => line.legend)
-            ? " — named lines are the extremes and the median"
-            : ""}
+          {t(bundled === 1 ? "metrics.bundled.one" : "metrics.bundled.other", {
+            count: bundled,
+          })}
+          {rankLines.some((line) => line.legend) ? t("metrics.bundledNamed") : ""}
         </div>
       )}
       {!nonFinite && totalPoints(entries) === 1 && (
-        <div className="chart-note">single point — plotted as a marker</div>
+        <div className="chart-note">{t("metrics.singlePoint")}</div>
       )}
     </div>
   );

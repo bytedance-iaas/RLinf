@@ -24,6 +24,7 @@ import "uplot/dist/uPlot.min.css";
 import type { PlotData } from "../lib/series";
 import { resolveColor, xExtent, yGrowth } from "../lib/series";
 import { metric as formatMetric } from "../lib/format";
+import { t } from "../lib/i18n";
 import { useTheme } from "../lib/theme";
 
 /**
@@ -473,7 +474,7 @@ export function Chart(props: ChartProps) {
     >
       {/* The empty message is prose, and prose does not fit a 44px strip. The
           card's own hero value already reads "—" when there is nothing. */}
-      {pointCount === 0 && !spark && <div className="chart-empty">No data for this metric yet</div>}
+      {pointCount === 0 && !spark && <div className="chart-empty">{t("chart.empty")}</div>}
       {tooltip !== null && (
         <div className="chart-tooltip" style={tooltipStyle}>
           {tooltip}
@@ -486,7 +487,7 @@ export function Chart(props: ChartProps) {
           producing data, so that state says what it is and offers the way out. */}
       {zoomed && !spark && (
         <button className="chart-zoom-reset" type="button" onClick={resetZoom}>
-          Zoomed · reset
+          {t("chart.zoomReset")}
         </button>
       )}
     </div>
@@ -528,7 +529,7 @@ function buildTooltip(
       {total !== undefined && (
         <div className="chart-tooltip-row" data-role="total">
           <span className="chart-legend-swatch" data-role="total" />
-          <span>Total</span>
+          <span>{t("chart.total")}</span>
           <span className="chart-tooltip-row-value">
             {total === null ? "—" : formatMetric(total, { percent })}
           </span>
