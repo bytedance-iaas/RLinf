@@ -1,10 +1,10 @@
-# Pi0.5 强化学习性能报告
+# π₀.₅ 强化学习性能报告
 
-本报告给出 RLinf 三项自研性能优化在 Pi0.5 上的实测数据：**Fused Prefix Kernel**、
-**Rollout 图编译**与**异步权重同步**。测试日期 2026-08-19，硬件为单机 4×H20 97GB。
+本报告给出 RLinf 三项自研性能优化在 π₀.₅ 上的实测数据：Fused Prefix Kernel、Rollout 图
+编译与异步权重同步。测试日期 2026-08-19，硬件为单机 4×H20 97GB。
 
-面向使用者的配置建议见 [QUICKSTART](../../QUICKSTART.md) 第二部分第 5 节；本文给出完整
-测试方法与逐场景数据。
+面向使用者的配置建议见 [RLinf 快速上手](../../QUICKSTART.md) 第二部分第 5 节，本文给出
+完整的测试方法与逐场景数据。
 
 ---
 
@@ -52,7 +52,7 @@ actor.model.openpi.enable_fused_prefix=true \
 | 项 | 取值 |
 |---|---|
 | 硬件 | 单节点 4×H20 97GB |
-| 模型 | Pi0.5（openpi），LIBERO SFT / ManiSkill SFT 检查点 |
+| 模型 | π₀.₅（openpi），LIBERO SFT / ManiSkill SFT 检查点 |
 | 训练模式 | async PPO（`train_async.py`） |
 | 基线配置 | `examples/embodiment/config/` 下的对应 example config，仅修改 placement 与 `experiment_name` |
 | 图编译模式 | `torch_compile_mode=default`（代码兜底值 `max-autotune-no-cudagraphs` 编译开销显著更高，未采用） |
@@ -149,8 +149,8 @@ actor.model.openpi.enable_fused_prefix=true \
 
 原因是融合层由自定义 `autograd.Function` 包裹，torch.compile 无法追踪，被编译的
 `paligemma.model.language_model.forward` 图被打断。三个场景一致复现；把 fused 从 rollout
-摘掉（split）后收益立即恢复，而 actor 侧的 fused 收益在 both 与 split 中均完整保留——干扰
-只发生在 rollout 侧。
+摘掉（split）后收益立即恢复，而 actor 侧的 fused 收益在 both 与 split 中均完整保留，说明
+干扰只发生在 rollout 侧。
 
 佐证：`both` 组的首步编译开销约为 compile 单开的一半（+27.7~+30.4 s vs +53.1~+59.3 s），
 指向被编译的图确实变少。
