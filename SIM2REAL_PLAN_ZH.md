@@ -310,9 +310,9 @@ python -m lerobot.async_inference.robot_client \
 
 ### 4.10 路线 B：RLinf 直接起 websocket 服务 —— **当前推荐**
 
-**§4.3 的等价性验证没过，所以现在应该走这条。** 它绕开整个格式导出：服务端用 `get_model` 直接加载 RLinf 检查点，**与产出 0.70 的那条代码路径完全相同**，不存在等价性问题。它绕开格式转换（少一个可能出错的环节），代价是 Mac 侧要自己写控制回路、没有块聚合、对网络延迟敏感。
+**§4.3 的等价性验证没过，所以走这条。** 服务端用 `get_model` 直接加载 RLinf 检查点，**与产出 0.70 的那条代码路径完全相同**，不存在等价性问题。代价是 Mac 侧要跑我们自己的控制回路（`robot_client_websocket.py`），但**硬件仍然交给 lerobot**——`SOFollower` 驱动机械臂、`OpenCVCamera` 读图，这里不重写任何驱动。
 
-H200 侧：
+**① H200 侧起服务**
 
 ```bash
 cd /data08/henryg/pai/RLinf
@@ -326,28 +326,55 @@ export CUDA_VISIBLE_DEVICES=0
   --port 8000
 ```
 
-监听前会用全零观测自检一次，加载有问题就在这里失败，而不是等机械臂通电才发现。实测输出 `self-test OK: returns (10, 6) float32`。
+监听前先用全零观测自检一次，加载有问题就在这里失败，而不是等机械臂通电才发现。实测 `self-test OK: returns (10, 6) float32`。
 
-Mac 侧控制回路：
+Mac 侧建隧道：
 
-```python
-import time
-from openpi_client.websocket_client_policy import WebsocketClientPolicy
-
-policy = WebsocketClientPolicy(host="localhost", port=8000)
-
-while not done:
-    actions = policy.infer({
-        "observation/image":       cam_front.read(),   # (480, 640, 3) uint8
-        "observation/wrist_image": cam_wrist.read(),   # 必须送，见 §4.7
-        "observation/state":       robot.get_observation(),  # (6,)
-        "prompt":                  "Grab the red cube",
-    })["actions"]                                      # (10, 6)
-
-    for a in actions:            # 收到几个执行几个，不要截断也不要补齐
-        robot.send_action(a)
-        time.sleep(1 / 30)
+```bash
+ssh -N -L 8000:localhost:8000 "$H200_HOST"
 ```
+
+**② Mac 侧跑控制回路**
+
+```bash
+# 阶段 1：机械臂和相机全离线，只验回路与延迟
+python tools_so101_session/robot_client_websocket.py --dry-run --max-steps 60
+
+# 阶段 2 起：接上真机，限幅 2 个归一化单位
+python tools_so101_session/robot_client_websocket.py \
+  --port-name /dev/tty.usbmodemXXXX --robot-id my_so101 \
+  --front-cam 0 --wrist-cam 1 \
+  --max-rel 2 --episodes 5
+```
+
+| 参数 | 作用 |
+|---|---|
+| `--dry-run` | 不连机械臂/相机，发合成观测。**上机流程第 1 步就是它** |
+| `--max-rel 2` | 每步关节变化上限，**由 lerobot 驱动层强制**——脚本有 bug 也甩不出大动作。第 2 步要求 |
+| `--episodes N` | 每集之间等回车，方便重新摆放方块 |
+| 日志 | 每步的状态、动作块、往返延迟写进 `.jsonl`——**第 5 步的失败分类靠它，事后回忆分不出来** |
+
+**③ 单位不用换算**
+
+lerobot 的 follower 用 `<关节>.pos` 报位置，臂 `RANGE_M100_100`、爪 `RANGE_0_100`——**正是策略训练时的约定**。脚本只做一件事：按 `shoulder_pan → gripper` 的顺序排成 6 维向量。
+
+**④ 关于频率：必须重叠取块，否则跑不到 30 Hz**
+
+一次推理约 **197 ms**（实测，localhost 零网络），而一个 10 步动作块只覆盖 10/30 ≈ **333 ms**。串行执行的话：
+
+```
+197 ms 推理 + 333 ms 执行 = 530 ms / 10 步 = 19 Hz     ← 策略是在 30 Hz 上训练的
+```
+
+所以客户端**在执行当前块的同时后台预取下一块**（lerobot 异步客户端的最小版本），推理被执行窗口完全吸收。实测：
+
+| 步数 | 实测/推算 |
+|---|---|
+| 60 步 | **27.3 Hz**（实测；差的部分是首块预热，无法重叠） |
+| 320 步 | 29.5 Hz |
+| 640 步（一集） | **29.7 Hz** |
+
+**先看 `--dry-run` 报的 rtt**：只要均值 < 333 ms，稳态就是 30 Hz；超过 333 ms 就会出现动作断档，那时应该回头修路线 A 而不是硬上——**带着时间失配上机，拿到的失败数据没法解释**。
 
 ---
 
