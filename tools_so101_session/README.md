@@ -33,7 +33,7 @@ grep -l 'STATUS: REFUTED' tools_so101_session/*     # 列出所有被证伪的
 | `convert_narrow_box.py` | 阶段 C2，窄框示范 -> 数据集 |
 | `convert_rlinf_to_lerobot.py` | 部署：RLinf 检查点 -> LeRobot 格式 |
 | `robot_client_websocket.py` | Mac 侧控制回路：lerobot 驱动机械臂和相机 + websocket 拿动作。`--dry-run` 不接硬件验回路，`--max-rel` 走驱动层限幅，逐步写 jsonl 供失败分类。**执行当前块时后台预取下一块**，否则 197ms 推理会把 30 Hz 拖到 19 Hz |
-| `deploy_policy_server.py` | 部署备用路线：RLinf 直接起 websocket 服务 |
+| `deploy_policy_server.py` | **当前推荐的部署服务端**：直接加载 RLinf 检查点，与产出 0.70 的代码路径相同（LeRobot 格式导出的等价性验证未通过） |
 | `gen_demos_annulus.sh` | 阶段 E2，只在环形带补示范 |
 | `gen_planner_demos.py` | 阶段 B/C/E 的示范生成器 |
 | `night_cpu.sh` | 阶段 G 第二轮：CPU 轨，建留出集数据 |
