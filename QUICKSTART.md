@@ -273,10 +273,13 @@ LIBERO disaggregated 是 −4.76%（更快），两者只差一个 placement。
 
 | 场景 | 瓶颈侧 | 推荐 | 端到端收益 |
 |---|---|---|---|
-| LIBERO colocated（本文 4 卡配置） | actor | 只开 fused | **−7.97%** |
+| LIBERO colocated（本文 4 卡配置） | actor | 只开 fused | **−19.0%** |
 | LIBERO disaggregated 2+2 | rollout | 只开 compile | −4.76% |
 | ManiSkill disaggregated 2+2 | rollout | 只开 compile | −6.99% |
 | 瓶颈侧不确定 | — | split（见下） | 距当场最优 1 个百分点以内 |
+
+colocated 的端到端收益随流水线停顿次数波动很大，同配置的两批测试分别测到 −8.0% 与 −19.0%，
+不宜当成精确值；下面的阶段指标才是稳定的信号。
 
 各优化项的稳态收益（单机 4×H20，async 模式，四场景实测）：
 
@@ -350,7 +353,7 @@ echo $! > "${LOG_DIR}/driver.pid"
 
 - **`+actor.sync_weight_no_wait=true`**，异步权重同步（4.1）；
 - **`actor.model.openpi.enable_fused_prefix=true`**，Fused Prefix Kernel（4.2）。本文的
-  LIBERO colocated 场景中，它是端到端收益最高的一项，−7.97%；
+  LIBERO colocated 场景中，它是端到端收益最高的一项；
 - 改用 disaggregated placement 时，换成 **`+rollout.enable_torch_compile=true`**
   **`+rollout.torch_compile_mode=default`**，即 Rollout 图编译（4.3），并按 4.2 关闭
   rollout 侧的 fused。
