@@ -49,6 +49,7 @@ from .attention import _attention_backward, _attention_forward
 from .kernel import (
     _GELU_C0,
     _GELU_C1,
+    _check_position_ids,
     _inv_freq,
     _mm,
     _next_pow2,
@@ -199,6 +200,7 @@ def rope_transpose_backward(d_bhsd, position_ids, *, apply_rope=True):
     )
     inv = _inv_freq(head_dim, str(d_bhsd.device)) if apply_rope else out
     if position_ids is not None:
+        _check_position_ids(position_ids, B, S)
         position_ids = position_ids.contiguous()
     BLOCK_S, nw = _rope_config(S)
     _rope_bwd_kernel[(triton.cdiv(S, BLOCK_S), n_heads, B)](

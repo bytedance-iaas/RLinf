@@ -85,6 +85,17 @@ def _torch_attention(q, k, v, mask, scale):
 # ---------------------------------------------------------------------------
 # Launch configuration
 # ---------------------------------------------------------------------------
+def _check_mask(mask, n_heads, seq_q):
+    """Only the head axis broadcasts; the query axis is indexed by stride."""
+    if mask.shape[1] not in (1, n_heads):
+        raise ValueError(f"mask head axis must be 1 or {n_heads}, got {mask.shape[1]}")
+    if mask.shape[2] != seq_q:
+        raise ValueError(
+            f"mask query axis must be Sq={seq_q}, got {mask.shape[2]}. A "
+            "[B, 1, 1, Sk] padding mask is not broadcast here; expand it first."
+        )
+
+
 def _fwd_config(D, has_mask):
     # measured on H20 (sm90) at the gemma_2b prefix shape
     if D >= 256:
@@ -245,6 +256,7 @@ def _attention_forward(q, k, v, mask, scale, cfg=None):
 
     if mask is not None:
         mask = mask if mask.shape[-1] == Sk else mask[:, :, :, :Sk].contiguous()
+        _check_mask(mask, Hq, Sq)
         smb, smh, smm, smn = mask.stride()
         if mask.shape[1] == 1:
             smh = 0
@@ -588,6 +600,7 @@ def _attention_backward(do, q, k, v, mask, scale, out, lse, lsum, cfg=None, cfg2
 
     if mask is not None:
         mask = mask if mask.shape[-1] == Sk else mask[:, :, :, :Sk].contiguous()
+        _check_mask(mask, Hq, Sq)
         smb, smh, smm, smn = mask.stride()
         if mask.shape[1] == 1:
             smh = 0

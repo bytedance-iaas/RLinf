@@ -236,3 +236,48 @@ def test_fused_attention_normalises_a_fully_masked_row() -> None:
     assert _rel(out, ref) < TOL
     for label, t, want in zip(("q", "k", "v"), (q, k, v), ref_grads, strict=True):
         assert _rel(t.grad, want) < TOL, label
+
+
+def test_broadcast_position_ids_is_rejected() -> None:
+    """A [1, S] position_ids must raise, not read past the end of the buffer.
+
+    ``transformers`` synthesises exactly that shape when a caller omits
+    position_ids, and the RoPE kernel indexes the tensor per batch entry.
+    """
+    from rlinf.models.embodiment.openpi.fused_kernels.layer_train import PrefixTrainFn
+
+    device = torch.device("cuda")
+    torch.manual_seed(0)
+    batch, seq = 2, 96
+    weights = [w.detach() for w in _weights(device)]
+    x = torch.randn(batch, seq, HIDDEN, device=device, dtype=DTYPE) * 0.5
+    _, position_ids, mask = _openpi_mask([seq, seq], seq, device)
+
+    with torch.no_grad(), pytest.raises(ValueError, match=r"position_ids must be"):
+        PrefixTrainFn.apply(
+            x,
+            *weights,
+            EPS,
+            (N_HEADS, N_KV, HEAD_DIM),
+            mask,
+            position_ids[:1],  # the [1, S] transformers default
+            False,
+        )
+
+
+def test_query_broadcast_mask_is_rejected() -> None:
+    """[B, 1, 1, Sk] is a padding-only mask shape the kernels cannot broadcast."""
+    from rlinf.models.embodiment.openpi.fused_kernels.attention import fused_attention
+
+    device = torch.device("cuda")
+    torch.manual_seed(0)
+    batch, seq = 2, 96
+
+    def qkv(heads: int) -> torch.Tensor:
+        return torch.randn(batch, heads, seq, HEAD_DIM, device=device, dtype=DTYPE)
+
+    q, k, v = qkv(N_HEADS), qkv(N_KV), qkv(N_KV)
+    mask = torch.zeros(batch, 1, 1, seq, device=device, dtype=torch.float32)
+
+    with torch.no_grad(), pytest.raises(ValueError, match=r"mask query axis"):
+        fused_attention(q, k, v, mask, HEAD_DIM**-0.5)

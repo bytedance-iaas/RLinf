@@ -114,6 +114,16 @@ def _mm(a2d, w):
     return torch.mm(a2d, w.t())
 
 
+def _check_position_ids(position_ids, batch, seq):
+    """The RoPE kernels require a dense ``[B, S]`` buffer, not a broadcast one."""
+    if tuple(position_ids.shape) != (batch, seq):
+        raise ValueError(
+            f"position_ids must be [B, S] = [{batch}, {seq}], got "
+            f"{tuple(position_ids.shape)}. The RoPE kernel indexes it per batch "
+            "entry and cannot broadcast a [1, S] tensor."
+        )
+
+
 # ---------------------------------------------------------------------------
 # (gated residual +) RMSNorm / adaRMS
 # ---------------------------------------------------------------------------
@@ -270,6 +280,10 @@ def rope_transpose(
     )
     inv = _inv_freq(head_dim, str(x_flat.device)) if apply_rope else x_flat
     if position_ids is not None:
+        # the kernel indexes this as a dense [B, S] buffer and cannot broadcast;
+        # transformers hands decoder layers a [1, S] tensor when the caller omits
+        # position_ids, which would read past the end of it
+        _check_position_ids(position_ids, B, S)
         position_ids = position_ids.contiguous()
     BLOCK_S, nw = cfg or _rope_config(S)
     _rope_transpose_kernel[(triton.cdiv(S, BLOCK_S), n_heads, B)](
@@ -376,6 +390,7 @@ def kernel_function(
     adarms_cond=None,
     input_dense=None,
     post_dense=None,
+    head_dim=HEAD_DIM,
 ):
     """Fused Gemma decoder layer, forward only.
 
@@ -384,12 +399,21 @@ def kernel_function(
     arbitrary additive ``attention_mask`` ``[B, 1|Hq, S, S]``, explicit RoPE
     ``position_ids`` ``[B, S]`` (default: ``arange(S)``), and the action-expert
     adaRMS path (``adarms_cond`` + ``input_dense``/``post_dense`` ``(w, b)``).
+
+    The head counts are derived by dividing the projection shapes by
+    ``head_dim``, which no shape can disambiguate on its own, so a model whose
+    per-head width is not :data:`HEAD_DIM` must pass ``head_dim`` explicitly.
     """
     x = hidden_states
     B, S, H = x.shape
-    n_heads = q_proj_weight.shape[0] // HEAD_DIM
-    n_kv = k_proj_weight.shape[0] // HEAD_DIM
-    scale = HEAD_DIM**-0.5
+    if q_proj_weight.shape[0] % head_dim or k_proj_weight.shape[0] % head_dim:
+        raise ValueError(
+            f"q/k projection rows ({q_proj_weight.shape[0]}, "
+            f"{k_proj_weight.shape[0]}) are not multiples of head_dim={head_dim}"
+        )
+    n_heads = q_proj_weight.shape[0] // head_dim
+    n_kv = k_proj_weight.shape[0] // head_dim
+    scale = head_dim**-0.5
     eps = float(eps)
 
     x = x if x.is_contiguous() else x.contiguous()
@@ -410,21 +434,21 @@ def kernel_function(
 
     # ---- attention ----
     q = rope_transpose(
-        _mm(h2d, q_proj_weight).view(B, S, -1), n_heads, HEAD_DIM, position_ids
+        _mm(h2d, q_proj_weight).view(B, S, -1), n_heads, head_dim, position_ids
     )
     k = rope_transpose(
-        _mm(h2d, k_proj_weight).view(B, S, -1), n_kv, HEAD_DIM, position_ids
+        _mm(h2d, k_proj_weight).view(B, S, -1), n_kv, head_dim, position_ids
     )
     v = rope_transpose(
         _mm(h2d, v_proj_weight).view(B, S, -1),
         n_kv,
-        HEAD_DIM,
+        head_dim,
         position_ids,
         apply_rope=False,
     )
 
     attn_out, _, _ = _attention_forward(q, k, v, attention_mask, scale)
-    o = _mm(attn_out.reshape(B * S, n_heads * HEAD_DIM), o_proj_weight).view(B, S, H)
+    o = _mm(attn_out.reshape(B * S, n_heads * head_dim), o_proj_weight).view(B, S, H)
 
     # ---- post-attention norm (fused with the gated residual) ----
     h, _, res = norm_forward(
