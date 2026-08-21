@@ -104,6 +104,11 @@ def main():
                     help="actions per chunk. Must be the horizon the policy was "
                          "fine-tuned at -- asking a 10-step policy for 50 steps "
                          "returns 40 steps it never saw a target for")
+    ap.add_argument("--num-steps", type=int, default=4,
+                    help="flow-matching denoising steps at inference. MUST match "
+                         "what produced the numbers you are validating against "
+                         "(RLinf model config `num_steps`, 4 here); LeRobot's own "
+                         "default is 10 and yields a measurably different policy")
     ap.add_argument("--dtype", choices=["keep", "float32", "bfloat16"], default="keep",
                     help="'keep' preserves the exact dtypes the measured numbers "
                          "were produced with (mixed bf16/fp32)")
@@ -155,7 +160,15 @@ def main():
     cfg = json.loads((template / "config.json").read_text())
     before = (cfg.get("chunk_size"), cfg.get("n_action_steps"))
     cfg["chunk_size"] = cfg["n_action_steps"] = args.chunk_size
+    # Flow matching integrates an ODE at inference; the number of steps changes
+    # the action for identical weights and inputs. RLinf runs 4 (model config
+    # `num_steps`), LeRobot's PI05 defaults to 10. Leaving the template's value
+    # in place makes the export a DIFFERENT policy -- measured: every joint's
+    # error ~26% worse, gate 0.70 -> 0.88.
+    before_steps = cfg.get("num_inference_steps")
+    cfg["num_inference_steps"] = args.num_steps
     (out / "config.json").write_text(json.dumps(cfg, indent=2))
+    print(f"config: num_inference_steps {before_steps} -> {args.num_steps}")
     print(f"config: chunk_size/n_action_steps {before} -> {args.chunk_size}; "
           f"features {list(cfg.get('input_features', {}))}")
     if (template / "train_config.json").exists():
