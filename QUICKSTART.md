@@ -282,7 +282,7 @@ LIBERO disaggregated 是 −4.76%（更快），两者只差一个 placement。
 
 | 优化项 | 观察指标 | 相对 baseline |
 |---|---|---|
-| Fused Prefix Kernel | `time/actor_training` | −5.8% ~ −6.9% |
+| Fused Prefix Kernel | `time/actor_training` | −7.0% ~ −10.1% |
 | Rollout 图编译 | `time/rollout/predict` | −11.8% ~ −12.9% |
 | 异步权重同步 | — | 单机无可测收益（同机同步仅 1–2 s），面向跨机场景 |
 
