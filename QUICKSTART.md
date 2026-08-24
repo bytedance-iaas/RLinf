@@ -119,7 +119,7 @@ apig:
 一次安装即可，无需回填任何信息。网关开通需要几分钟，可通过以下命令观察：
 
 ```bash
-kubectl get apiginstance rlinf-apig -n rlinf
+kubectl get apiginstance rlinf-apig
 ```
 
 状态变为 `Running` 后，实例 ID 会写入该资源的 `status.id`，Ingress 通过 ingress class
@@ -534,8 +534,9 @@ runner.resume_dir="${RESUME_DIR}"
 | Pod 停留在 `1/2`，`dashboard` 容器反复重启 | 面板镜像版本过低，不支持注入的认证配置。请使用支持 `RLINF_DASHBOARD_AUTH_MODE` 的镜像版本。该拦截为预期行为，用于避免旧版本忽略凭据后对外提供无鉴权服务 |
 | 容器报 `CreateContainerConfigError` | `existingSecret` 指定的 Secret 不存在。Helm 不校验集群中是否存在该资源，安装会成功但容器无法启动 |
 | `helm upgrade` 执行成功，但 Pod 仍运行旧镜像 | Pod 处于非 Ready 状态时，StatefulSet 滚动更新不会推进。执行 `kubectl delete pod rlinf-0 -n rlinf` 使其按新模板重建 |
-| Ingress 长时间没有访问地址 | 查看网关是否已 `Running`：`kubectl get apiginstance rlinf-apig -n rlinf`。若为 `Pending` 或创建失败，见下一行 |
+| Ingress 长时间没有访问地址 | 查看网关是否已 `Running`：`kubectl get apiginstance rlinf-apig`。若为 `Pending` 或创建失败，见下一行 |
 | 网关状态为创建失败 | 常见原因是账号余额不足或子网可用 IP 不足。CR 与 controller 日志都不会给出原因，需到 API 网关控制台查看实例状态 |
+| `kubectl` 能拿到实例 ID、`PHASE` 也是 `Running`，但 API 网关控制台里找不到该实例 | 平台侧的网关已经不存在了，CR 里的 `status` 是过期残留：controller 遇到这种情况不会把 `phase` 退回去，Ingress 上几天前写入的 `ADDRESS` 也不会被清除，所以这两项都不能作为判据。确认方式是看 controller 日志，若持续每 5 秒刷 `create gateway error ... apig instance not found` 即可坐实：<br>`kubectl logs -n kube-system deploy/apig-controller \| grep rlinf-apig \| tail`<br>（`kubectl get events -A \| grep ReconcileAPIGFailed` 同样能看到）。处理方式是删掉这个孤儿 CR 让 Helm 重建：<br>`kubectl delete apiginstance rlinf-apig`<br>`helm upgrade rlinf <chart> -n rlinf --reuse-values`<br>该 CR 带 finalizer，平台对象已不存在时 controller 通常会自行摘除；若 delete 长时间不返回，需手动清空 `metadata.finalizers` |
 | `helm upgrade` 报 `spec.id: Forbidden: forbidden to update` | `apig.create=true` 时填了 `apig.existingId`。清空该值后重新 upgrade |
 | 无法获取公网访问域名 | 域名仅可在 API 网关控制台的服务列表中查询，`kubectl` 无法获取 |
 
