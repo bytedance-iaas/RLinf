@@ -9,23 +9,27 @@ Storage:    workspace-{{ include "rlinf.fullname" . }}-0 ({{ .Values.persistence
      kubectl rollout status statefulset/{{ include "rlinf.fullname" . }} -n {{ .Release.Namespace }}
      kubectl exec -it {{ include "rlinf.fullname" . }}-0 -n {{ .Release.Namespace }} -c rlinf -- bash
 
+   Heads-up: the training image is ~20GB, so the first pull onto a node that has never run RLinf
+   takes several minutes — a pod sitting in ContainerCreating that long is pulling, not stuck.
+   Later installs on the same node start in seconds. To watch the pull itself:
+
+     kubectl describe pod {{ include "rlinf.fullname" . }}-0 -n {{ .Release.Namespace }}
+
 {{- if and .Values.apig.enabled .Values.dashboard.enabled }}
-{{- if and .Values.apig.create (not .Values.apig.existingId) }}
 
-2. ⚠️ FINISH THE BOOTSTRAP. A new gateway was requested, but its id does not exist yet and the
-   Ingress cannot bind without it — right now the route has no address and APIG lists no domain.
-   Once the gateway reports Running (a few minutes):
-
-     kubectl get apiginstance {{ include "rlinf.fullname" . }}-apig -n {{ .Release.Namespace }} -o jsonpath='{.status.id}'
-
-   Put that value in apig.existingId (leave apig.create=true) and upgrade:
-
-     helm upgrade {{ .Release.Name }} <chart> -n {{ .Release.Namespace }} --reuse-values --set apig.existingId=<id>
-{{- else }}
-
-2. The dashboard is published on {{ if .Values.apig.create }}the gateway provisioned by this release{{ else }}adopted gateway {{ .Values.apig.existingId }}{{ end }} (class {{ include "rlinf.apig.ingressClassName" . }}):
+2. The dashboard is published on {{ if .Values.apig.create }}the gateway this release provisions{{ else }}adopted gateway {{ .Values.apig.existingId }}{{ end }} (class {{ include "rlinf.apig.ingressClassName" . }}):
 
      {{ include "rlinf.apig.host" . }}  ->  :{{ .Values.dashboard.port }}
+{{- if and .Values.apig.create (not .Values.apig.existingId) }}
+
+   A new gateway takes a few minutes to come up:
+
+     kubectl get apiginstance {{ include "rlinf.fullname" . }}-apig
+     kubectl get ingress -n {{ .Release.Namespace }} -o wide
+
+   Later upgrades take no extra flags — leave apig.existingId empty and the route stays bound:
+
+     helm upgrade {{ .Release.Name }} <chart> -n {{ .Release.Namespace }} --reuse-values
 {{- end }}
 
 3. Get the real URL. The host above is a routing key, not public DNS. It has an auto-assigned
@@ -37,6 +41,7 @@ Storage:    workspace-{{ include "rlinf.fullname" . }}-0 ({{ .Values.persistence
    010002 that way for every host, working ones included. Test the assigned domain instead.
 
 {{- if .Values.dashboard.auth.enabled }}
+
    The dashboard requires HTTP Basic credentials from Secret
    {{ include "rlinf.dashboard.authSecretName" . }}. The minimal /healthz probe stays public.
 {{- end }}
