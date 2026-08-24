@@ -129,7 +129,7 @@ One install is enough — there is nothing to feed back. Provisioning takes a fe
 with:
 
 ```bash
-kubectl get apiginstance rlinf-apig -n rlinf
+kubectl get apiginstance rlinf-apig
 ```
 
 Once it reports `Running`, its id appears in `status.id` and the Ingress picks the gateway up by
