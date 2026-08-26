@@ -1,8 +1,8 @@
-# RLinf (Volcano Engine Version) Release Note
+# Physical AI Kit -- RLinf Release Note
 
 本版本基于上游 `RLinf/RLinf` 的 `main` 分支提交
-[`7d07a421`](https://github.com/RLinf/RLinf/commit/7d07a4212ee6858cc333e1d4fab7a37256d1f839)
-（`chore: pin hf_hub<1.0 and reorganize env helpers`，#1489，2026-08-20）构建，完整继承该
+[`a3816b59`](https://github.com/RLinf/RLinf/commit/a3816b596478dcd8a5c69a6ec1468c9519f77b5b)
+（`docs(openpi): add RoboTwin adjust_bottle resources`，#1486，2026-08-22）构建，完整继承该
 提交为止的上游模型、环境、算法与系统能力，并针对火山引擎环境和 π₀.₅ 具身强化学习场景补充
 了部署、安装、数据下载和训练性能优化。
 
@@ -38,6 +38,11 @@
 数据集，在 ManiSkill 中重建真实抓取摆放工作台（`SO101GrabRedCube-v1`），并在其上对 π₀.₅ 做
 PPO 微调。任务工作在关节空间，策略输出的 6 维动作直接对应机械臂关节，观测包含前视与腕部
 两路相机。
+
+随附的配置有三项偏离 π-RL 默认配方，都在该任务上做过对照：动作块长度取 10（等于检查点的
+action horizon）、`noise_logvar_range` 取 `[0.02, 0.04]`（`flow_noise` 实际读取的字段）、
+每轮恰好一次更新。默认组合在该任务上会崩塌，确定性评测在第 9 步跌到 7%，因此这三项应视为
+任务要求而非调参旋钮。
 
 ## 功能增强
 
@@ -103,12 +108,19 @@ colocated 的端到端数字随流水线停顿次数波动很大，上表第一�
 120，`group_size=2`，`update_epoch=2`，global batch 128，micro batch 32。完整命令见快速上手
 文档。这是 H20 上的推荐起点，不应直接视为其他 GPU 型号或任务的通用最优配置。
 
-## 交付与稳定性改进
+## 问题修复与稳定性改进
 
-- 镜像使用 `tini` 作为 PID 1，负责转发信号并回收退出的 Ray worker，修复长期运行
-  容器中的僵尸进程残留问题。
-- 优化 GitHub、Hugging Face 和 ManiSkill 资产下载路径；依赖仓库默认使用 shallow
-  clone，降低大仓库在不稳定网络下的下载量和失败概率。
+### auto resume 可能加载到写了一半的 checkpoint
+
+`resume_dir: auto` 原先按目录名取最大的 `global_step_N`，而保存流程是先建目录、最后写
+`data/data.pt`。崩溃、抢占或 `kill -9` 中断的保存会留下一个只有目录名的半成品，并被优先
+选中。现在从新到旧遍历，选第一个真正完整的 checkpoint（以 dataloader 状态作为完成标记），
+被跳过的会给出告警。
+
+### 容器内的僵尸进程
+
+镜像使用 `tini` 作为 PID 1，负责转发信号并回收退出的 Ray worker，修复长期运行容器中的
+僵尸进程残留问题。
 
 ## 使用说明
 
