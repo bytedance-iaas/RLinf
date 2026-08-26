@@ -16,29 +16,32 @@
    即发生翻转：LIBERO colocated 下 compile 使端到端 **+8.85%（更慢）**，同一配置在
    disaggregated 下为 **−4.76%（更快）**。
 2. **fused 与 compile 不能同时作用于 rollout。** 二者直接叠加时 rollout 推理收益从
-   −11.8%~−12.9% 塌陷到 −0.0%~−2.0%；把 fused 从 rollout 摘除后收益立即恢复。正确用法是
+   −11.84%～−12.93% 塌陷到 −0.04%～−1.99%；把 fused 从 rollout 摘除后收益立即恢复。正确用法是
    **actor 用 fused、rollout 用 compile**。
 3. **fused 的 actor 侧收益稳定**：四个场景跨两种环境、两种 placement 一致为负，
-   落在 **−6.98%~−10.13%**，全部 95% 区间不跨零；三个 actor 侧波动较小的场景收敛在
-   −6.98%~−7.74%。
-4. **compile 的 rollout 侧收益稳定**：三个场景均为 **−11.84%~−12.93%**，对 actor 无影响
-   （−0.0%~−0.8%）。
-5. **异步权重同步在单机无可测收益**：同机权重同步本身仅 1–2 s，无可隐藏的开销。该特性
+   落在 **−6.98%～−10.13%**，全部 95% 区间不跨零。除 LIBERO colocated 外的三个场景更为
+   集中，收敛在 −6.98%～−7.74%；该场景偏大的原因见 4.1 节。
+4. **compile 的 rollout 侧收益稳定**：三个场景均为 **−11.84%～−12.93%**，对 actor 无影响
+   （−0.04%～−0.60%，均在噪声内）。
+5. **异步权重同步在单机无可测收益**：同机权重同步本身仅 1～2 s，无可隐藏的开销。该特性
    面向跨机场景，本轮硬件条件下未覆盖。
 
 ### 推荐配置
 
 | 场景 | 瓶颈侧 | 推荐 | 端到端收益 |
 |---|---|---|---|
-| LIBERO colocated | actor | 只开 fused | −19.0% |
+| LIBERO colocated | actor | 只开 fused | −8.0%～−19.0% |
 | LIBERO disaggregated 2+2 | rollout | 只开 compile | −4.76% |
 | ManiSkill disaggregated 2+2 | rollout | 只开 compile | −6.99% |
 | 瓶颈侧不确定 | — | split（actor fused + rollout compile） | 距当场最优 1 个百分点以内 |
 
 瓶颈侧判据：比较 `time/actor_training` 与 `time/rollout/generate_one_epoch`，数值大者为瓶颈。
 
-colocated 的端到端收益随停顿次数波动很大，上表 LIBERO colocated 一行同配置的两批测试分别
-测到 −8.0% 与 −19.0%，不宜当成精确值；4.1 节的阶段指标才是稳定的信号。
+colocated 的端到端收益随停顿次数波动很大，上表 LIBERO colocated 给出的是两批测试的实测
+区间（−8.0% 与 −19.0%），不宜取其中任一端当作精确值；4.1 节的阶段指标才是稳定的信号。
+
+表中 disaggregated 2+2 指 2 张卡运行 actor、2 张卡运行 rollout，colocated 指 actor、rollout
+与 env 共用全部 4 张卡；下文表格中简写为 disagg 2+2。
 
 split 的完整写法：
 
@@ -100,9 +103,9 @@ fused 组。
   报告 Welch 95% 区间。
 - 每次 run 结束后断言开关真实生效（融合层替换日志的出现与否须与该组预期一致），不满足即判失败。
 - 2026-08-21 那批有两个 run 判为离群并重跑，原始数据留档：ManiSkill disagg 的 fused 组
-  `time/actor_training` 前 4 步 134.0、第 5 步起阶跃到 190–203 并保持（三组每步收到的轨迹
+  `time/actor_training` 前 4 步 134.0、第 5 步起阶跃到 190～203 并保持（三组每步收到的轨迹
   张量同为 `[16, 80, 5, 7]`，工作量未变，日志无报错、无 OOM、无重编译），重跑后逐步
-  134.1–134.4 平坦；LIBERO colocated 的 baseline 为 75.22 ± 1.04、停顿 7/8 步，而
+  134.1～134.4 平坦；LIBERO colocated 的 baseline 为 75.22 ± 1.04、停顿 7/8 步，而
   2026-08-19 同配置的三个 fused-off run 为 73.39 / 73.82 / 73.84、run 间 spread 仅
   0.45 s、停顿 3/8 步，重跑后 73.26 ± 0.38、停顿 4/8 步。
 
@@ -133,14 +136,14 @@ fused 组。
 | 场景 | baseline | fused | Δ | Welch 95% 区间（秒） |
 |---|---|---|---|---|
 | LIBERO colocated | 73.26 ± 0.38 | 65.84 ± 2.22 | **−10.13%** | [−8.98, −5.86] |
-| ManiSkill disagg 2+2 | 144.36 ± 0.24 | 134.19 ± 0.10 | **−7.05%** | [−10.37, −9.98] |
 | LIBERO disagg 2+2 | 74.76 ± 0.49 | 69.54 ± 0.22 | **−6.98%** | [−5.59, −4.85] |
+| ManiSkill disagg 2+2 | 144.36 ± 0.24 | 134.19 ± 0.10 | **−7.05%** | [−10.37, −9.98] |
 | ManiSkill colocated | 113.22 ± 0.46 | 104.45 ± 0.41 | **−7.74%** | [−9.22, −8.31] |
 
-四个场景跨两种环境、两种 placement 一致为负，全部区间不跨零。三个场景收敛在
-−6.98%~−7.74%；LIBERO colocated 偏大，是因为该 placement 下 actor 与 rollout 共用同一批
-卡，停顿期间的争用会抬高 `time/actor_training`，其 run 内标准差（±2.22 s）也明显大于
-disaggregated（±0.10~±0.49 s），见第 5 节。
+四个场景跨两种环境、两种 placement 一致为负，全部区间不跨零。除 LIBERO colocated 外的
+三个场景收敛在 −6.98%～−7.74%；LIBERO colocated 偏大，是因为该 placement 下 actor 与
+rollout 共用同一批卡，停顿期间的争用会抬高 `time/actor_training`，其 run 内标准差
+（±2.22 s）也明显大于 disaggregated（±0.10～0.49 s），见第 5 节。
 
 `train_expert_only: true` 时 `freeze_vlm()` 会把整个 paligemma（SigLIP 视觉编码器与 Gemma）
 的 `requires_grad` 置为 False，融合层只执行前向，梯度不会进入。四个场景的 resolved config
@@ -153,8 +156,8 @@ disaggregated（±0.10~±0.49 s），见第 5 节。
 | 场景 | baseline | compile | Δ predict | Δ actor |
 |---|---|---|---|---|
 | LIBERO colocated | 35.73 ± 2.18 | 31.24 ± 1.09 | **−12.58%** | −0.60% |
-| ManiSkill disagg 2+2 | 116.29 ± 0.64 | 101.26 ± 0.77 | **−12.93%** | −0.54% |
 | LIBERO disagg 2+2 | 35.48 ± 0.01 | 31.29 ± 0.02 | **−11.84%** | −0.04% |
+| ManiSkill disagg 2+2 | 116.29 ± 0.64 | 101.26 ± 0.77 | **−12.93%** | −0.54% |
 
 编译只在 rollout worker 中接线，对 actor 训练无影响，符合设计。
 
@@ -165,15 +168,15 @@ disaggregated（±0.10~±0.49 s），见第 5 节。
 | 场景 | compile 单开 | both | split |
 |---|---|---|---|
 | LIBERO colocated | −12.58% | **−0.04%** | −12.33% |
-| ManiSkill disagg 2+2 | −12.93% | **−1.99%** | −13.09% |
 | LIBERO disagg 2+2 | −11.84% | **−1.55%** | 未测 |
+| ManiSkill disagg 2+2 | −12.93% | **−1.99%** | −13.09% |
 
 原因是融合层由自定义 `autograd.Function` 包裹，torch.compile 无法追踪，被编译的
 `paligemma.model.language_model.forward` 图被打断。三个场景一致复现；把 fused 从 rollout
 摘掉（split）后收益立即恢复，而 actor 侧的 fused 收益在 both 与 split 中均完整保留，说明
 干扰只发生在 rollout 侧。
 
-佐证：`both` 组的首步编译开销约为 compile 单开的一半（+27.7~+30.4 s vs +53.1~+59.3 s），
+佐证：`both` 组的首步编译开销约为 compile 单开的一半（+27.7～+30.4 s vs +53.1～+59.3 s），
 指向被编译的图确实变少。
 
 ### 4.4 端到端
@@ -209,16 +212,16 @@ split 在本场景距最优（fused）1.01 个百分点，同时保留了 rollou
 ### 4.5 异步权重同步
 
 关闭该特性的 `nomixin` 组，各项指标均落在 baseline 噪声内：`time/actor_training` −0.02%、
-`time/rollout/predict` +0.64%，区间均跨零。单机同卡间权重同步本身仅 1–2 s，无可隐藏的开销。
+`time/rollout/predict` +0.64%，区间均跨零。单机同卡间权重同步本身仅 1～2 s，无可隐藏的开销。
 该特性的目标场景是跨机权重传输，本轮硬件条件下未覆盖。
 
 ### 4.6 冷启动开销
 
 | 项 | 实测 |
 |---|---|
-| compile 首步额外开销 | +53.1~+59.3 s |
-| both 首步额外开销 | +27.7~+30.4 s |
-| disaggregated 场景回本步数 | 约 8–12 步 |
+| compile 首步额外开销 | +53.1～+59.3 s |
+| both 首步额外开销 | +27.7～+30.4 s |
+| disaggregated 场景回本步数 | 约 8～12 步 |
 
 torch.compile 产物缓存于 `/tmp/torchinductor_root` 且**跨进程持久**。同一机器上重复运行图与
 shape 相同的配置时，后续 run 的首步开销会被大幅低估。比较冷启动成本前需清空该目录。
@@ -233,16 +236,16 @@ prompt（2240 个 query 行中 63 行整行被 mask）：
 
 | 对比 | 逐层 K cache | 逐层 V cache | prefix 最终隐状态 |
 |---|---|---|---|
-| fused 开 vs 关 | 0.993221 ~ 0.998851 | 0.999059 ~ 1.000000 | 0.998933 |
+| fused 开 vs 关 | 0.993221～0.998851 | 0.999059～1.000000 | 0.998933 |
 
 数值为余弦相似度，仅统计非 padding 的真实 token。K 上的差异来自 RoPE：融合内核在 kernel
 内以 fp32 计算 cos/sin，未融合实现先转 bf16，后者精度更低。
 
 RL 侧，`env/success_once` 与 `env/return` 相对关闭 fused 的 Welch 区间在四个场景全部跨零。
 部分二阶指标（`train/actor/entropy_loss`、`train/critic/explained_variance`）区间不跨零，
-但 Welch 区间只反映 run 内方差、不含 run 间方差——`entropy_loss` 的 run 内标准差仅约
-1e-4——在每组一次 run 的设计下会标记任何 run 间差异，因此这类标记不构成证据，上表的逐层
-对比才是。
+但这不构成证据：Welch 区间只反映 run 内方差，不含 run 间方差，而 `entropy_loss` 的 run 内
+标准差仅约 1e-4，在每组一次 run 的设计下，任何 run 间差异都会被标记出来。判断数值一致性
+应以上表的逐层对比为准。
 
 ---
 
@@ -252,11 +255,11 @@ RL 侧，`env/success_once` 与 `env/return` 相对关闭 fused 的 Welch 区间
 
 | 类别 | 指标 | 等工作量依据 | step 间标准差 |
 |---|---|---|---|
-| **阶段指标** | `time/actor_training`、`time/rollout/predict` | actor 每步固定消费 1 个 store 条目；rollout 每 epoch 固定 env×horizon | ±0.01~0.9 s |
-| **端到端** | `time/step`（= wait + actor_training） | — | colocated ±11~22 s；disagg ±0.7~3.9 s |
+| **阶段指标** | `time/actor_training`、`time/rollout/predict` | actor 每步固定消费 1 个 store 条目；rollout 每 epoch 固定 env×horizon | ±0.01～0.9 s |
+| **端到端** | `time/step`（= wait + actor_training） | 不适用 | colocated ±11～22 s；disagg ±0.7～3.9 s |
 
 **ManiSkill + colocated 不可用于性能测量。** GPU simulator 与 actor/rollout 争抢同卡，
-`time/rollout/generate_one_epoch` 的 step 间标准差达 ±15.6~±31.3 s（同环境 disaggregated 下
-仅 ±0.85 s），所有 rollout 侧区间跨零。该场景端到端出现的 +17%~+55% 波动是噪声，不可读作
-优化使训练变慢。该场景中只有 `time/actor_training` 有效，它给出的 fused −7.74% 与另外三个
+`time/rollout/generate_one_epoch` 的 step 间标准差达 ±15.6～31.3 s（同环境 disaggregated 下
+仅 ±0.85 s），所有 rollout 侧区间跨零。该场景端到端出现的 +17%～+55% 波动是噪声，不可读作
+优化使训练变慢。其中只有 `time/actor_training` 仍然有效，它给出的 fused −7.74% 与另外三个
 场景一致，反过来说明噪声源确实在 rollout/env 侧的 GPU 争用。
