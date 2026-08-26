@@ -7,6 +7,9 @@ ManiSkill 的跑法。
 内容分为两部分：**部署**只做一次，**运行训练**每次实验重复。源码、模型、日志与
 checkpoint 都保存在 `/workspace` 持久卷中，Pod 重建后不会丢失。
 
+文中 `<...>` 形式的均为占位符，执行前需替换为实际值。命令默认作用于当前 KubeConfig 指向的
+集群，执行前可用 `kubectl config current-context` 核对。
+
 开始之前需要准备一个可用的 Kubernetes 命名空间和相应的 GPU 配额。后续命令统一用 `${NS}`
 指代该命名空间：
 
@@ -27,7 +30,29 @@ export NS=<你的命名空间>
 
 面板做成 Sidecar 是为了隔离故障域。面板进程异常时只重启该容器，训练进程不受影响。
 
-## 1. 准备面板访问凭据
+本文给出的 CPU、内存、GPU、存储与带宽取值都是已验证示例，不是统一的生产规格。上线前请按
+数据规模、并发量、模型与可用性目标完成容量评估与压测。
+
+## 1. 集群与节点要求
+
+镜像内置 PyTorch 2.11.0（CUDA 13.0 构建）以及配套的 CUDA、cuDNN 用户态库，因此 **GPU 节点
+的 NVIDIA 驱动必须支持 CUDA 13 容器**，当前验证环境使用 `580.105.08`。驱动版本过低时容器
+能够启动，但训练进程无法初始化 CUDA。
+
+按火山引擎「[创建实例时自动安装 Tesla 驱动](https://docs.volcengine.com/docs/6419/1606352?lang=zh)」
+文档的方式三预装驱动、CUDA 与 cuDNN 时，可采用下面这组已验证的节点初始化参数。容器内实际
+使用的 CUDA 与 cuDNN 版本仍以镜像为准：
+
+```text
+CUDA_VERSION=13.0.3
+GPU_DRIVER_VERSION=580.105.08
+CUDNN_VERSION=9.19.0.0
+```
+
+需要公网访问面板时，集群另有几项在创建后无法更改的前提条件，见第 4 节——如果集群尚未创建，
+建议先读完那一节。
+
+## 2. 准备面板访问凭据
 
 Dashboard 支持 HTTP Basic 认证。通过 API 网关对外发布时必须启用认证，否则 Chart 会在渲染
 阶段拒绝安装，以免把无鉴权页面挂到公网上。
@@ -35,12 +60,11 @@ Dashboard 支持 HTTP Basic 认证。通过 API 网关对外发布时必须启�
 Chart 只接受引用已有的 Kubernetes Secret，不支持在 values 里直接填写用户名密码。Helm 会把
 values 原样保存在 release 历史中，任何能执行 `helm get values` 的人都可以读到明文。
 
-凭据本身按集群统一的一份来管理，与具体某次 RLinf 部署无关，本文使用 `physical-ai-auth`
-这个名字。Kubernetes 不允许 Pod 引用其他命名空间下的 Secret，因此部署所在的命名空间里需要
-有一份同名同内容的 Secret：
+Secret 名称没有默认值，需在 `dashboard.auth.existingSecret` 中显式指定，本文使用
+`rlinf-dashboard-auth`：
 
 ```bash
-kubectl create secret generic physical-ai-auth -n "${NS}" \
+kubectl create secret generic rlinf-dashboard-auth -n "${NS}" \
   --from-literal=username=<用户名> \
   --from-literal=password='<密码>'
 ```
@@ -48,7 +72,16 @@ kubectl create secret generic physical-ai-auth -n "${NS}" \
 Chart 默认读取 `username` 与 `password` 两个 key。Secret 若使用其他 key 名，通过
 `dashboard.auth.usernameKey` 与 `dashboard.auth.passwordKey` 指定。
 
-## 2. 编写 values 文件
+Secret 有命名空间属性，不能跨命名空间引用。同一份凭据要给多个命名空间使用时，需要在每个
+命名空间各建一份，可以直接复制：
+
+```bash
+kubectl get secret rlinf-dashboard-auth -n <源命名空间> -o yaml \
+  | sed '/namespace:/d;/resourceVersion:/d;/uid:/d;/creationTimestamp:/d' \
+  | kubectl apply -n "${NS}" -f -
+```
+
+## 3. 编写 values 文件
 
 Chart 不预设镜像版本与存储类型，以下两项必填，缺失时安装会在渲染阶段失败：
 
@@ -58,7 +91,7 @@ image:
   tag: <镜像版本>
 
 persistence:
-  storageClass: <集群块存储 StorageClass>    # kubectl get storageclass
+  storageClass: <集群块存储 StorageClass>    # kubectl get storageclass，例如 ebs-essd
   size: 500Gi
 
 # 4 卡训练的实测取值。变更卡数时，按每卡约 4 core / 32Gi 申请量等比缩放。
@@ -72,25 +105,44 @@ dashboard:
     tag: ""            # 留空表示与 image.tag 保持一致
   auth:
     enabled: true
-    existingSecret: physical-ai-auth
+    existingSecret: rlinf-dashboard-auth
 ```
 
 其余可选配置：
 
 | 配置项 | 说明 |
 |---|---|
-| `nodeSelector` | 默认不锁定节点，由 GPU 申请量决定调度结果。需要指定机型或特定节点时填写 |
+| `nodeSelector` | 默认不锁定节点，由 GPU 申请量决定调度结果。需要固定到已验证的节点池时填写，例如 `node.kubernetes.io/instance-type: ecs.hpcpni3ln.45xlarge`（H20 × 8）。改用其他规格时同步调整 `resources` |
 | `dashboard.logsPath` | 面板扫描的日志目录，默认 `/workspace/RLinf/logs`。须与训练时的 `log_path` 一致，否则界面中不会出现对应的 run |
 | `dshmSize` | 共享内存大小，默认 `256Gi`。容器默认的 64Mi 会让多进程仿真报 Bus error |
 | `persistence.size` | 持久卷容量，默认 `500Gi`。创建后不可修改，扩容需直接调整 PVC |
 
-## 3. 配置公网入口（API 网关）
+## 4. 配置公网入口（API 网关）
 
 不需要公网访问时可跳过本节，保持 `apig.enabled=false`（默认值），用端口转发访问面板。
 
-需要公网 HTTPS 入口时，有两种方式。
+### 前提条件
+
+接入 API 网关前需确认四项，**前两项在集群创建后无法更改**：
+
+1. 集群网络模型为 VPC-CNI。在容器服务控制台打开集群「总览」页，「集群网络配置 > 网络模型」
+   应显示 VPC-CNI。
+2. 集群所在地域已上线 API 网关，参见
+   「[地域和可用区](https://www.volcengine.com/docs/6569/111925)」。
+3. 已开通 API 网关服务。未开通时登录 [API 网关控制台](https://console.volcengine.com/veapig)
+   按向导开通。
+4. 集群已安装 `apig-controller` 组件，参见
+   「[安装组件](https://www.volcengine.com/docs/6460/101014)」。
+
+集群「总览」页同时给出后面要用的两项信息：所属私有网络（VPC），以及该 VPC 下的子网。
+
+下面两种接入方式都只需一次 helm 安装。网关也可以先在 API 网关控制台手工创建，创建完成后按
+方式 A 接入；需要控制日志、监控、链路追踪这些 Chart 未暴露的网关配置时用这种做法，字段说明
+见「[创建实例](https://www.volcengine.com/docs/6569/85693)」。
 
 ### 方式 A：接入已有网关
+
+集群里已有网关，或访问地址需要长期固定、多个组件共用一个入口时，用这种方式。
 
 ```yaml
 apig:
@@ -101,19 +153,45 @@ apig:
   host: rlinf.apig.local            # 内部占位域名，同一网关下不可重复
 ```
 
-一次部署即可生效，`helm uninstall` 也不会影响网关本身，适合需要长期稳定访问地址的场景。
+**网关实例 ID**：登录 API 网关控制台，进入「实例管理」，实例列表「名称/ID」列中名称下方的
+那串即是。网关在控制台中显示的名称通常与 Kubernetes 中的对象名称不一致，匹配时以实例 ID
+为准。
 
-网关在控制台中显示的名称通常与 Kubernetes 中的对象名称不一致，匹配时以实例 ID 为准。
+**ingress class**：在控制台手工创建的网关，ingress class 就是实例名称本身。由方式 B 创建的
+网关，在集群中执行下面的命令，找到 ID 与上一步一致的那行，`CLASS` 列的值即是：
+
+```bash
+kubectl get apiginstance -A -o custom-columns=\
+NAME:.metadata.name,ID:.status.id,CLASS:.spec.ingress.ingressClasses
+```
+
+`helm uninstall` 不会影响以这种方式接入的网关本身。
 
 ### 方式 B：新建网关
+
+首次部署、集群里还没有任何网关时，让 Helm 顺带建一个，后续其他组件可以复用它。
 
 ```yaml
 apig:
   enabled: true
   create: true
   subnetIds:
-    - <集群 VPC 内的子网 ID>
+    - <可用区 A 的子网 ID>
+    - <可用区 B 的子网 ID>
   host: rlinf.apig.local
+  # existingId 必须留空
+  # retainOnDelete: true    # 卸载时保留网关，见下方说明
+```
+
+**子网必须属于集群所在的 VPC**，否则网关会一直停在 `Pending` 并报 `cannot be found from
+VPC`。网关最多部署在两个可用区，`subnetIds` 最少填一个、最多填两个；建议填两个不同可用区的
+子网以满足容灾，每个子网至少要有 2 个可用 IP。
+
+子网 ID 可在私有网络控制台的「子网」页按集群 VPC 筛选获得，也可以直接抄集群里任一正常工作
+的 LoadBalancer Service 所用的子网：
+
+```bash
+kubectl get svc -A -o jsonpath='{range .items[*]}{.metadata.annotations.service\.beta\.kubernetes\.io/volcengine-loadbalancer-subnet-id}{"\n"}{end}' | sort -u
 ```
 
 一次安装即可，无需回填任何信息。网关开通需要几分钟，用以下命令观察：
@@ -134,14 +212,32 @@ spec.id: Forbidden: forbidden to update, old: , new: <id>
 
 此后 release 会一直处于 `failed`，直到把该值清空。`existingId` 仅用于方式 A。
 
-网关规格（`instanceSpecCode`、`clbSpecCode` 等）都是可选的，留空时由平台选择默认值，实测
-默认即 1c2g / small_1 / 2 副本。显式指定时注意 `publicNetworkBandwidth` 与 `replicas` 在
-CRD 中是整数类型，写成带引号的字符串会被校验拒绝。
+方式 B 创建的网关默认随 `helm uninstall` 一并删除，其自动分配的 `*.volceapi.com` 域名同时
+回收，重新部署将得到一个新域名。需要长期保留该地址时，把 `apig.retainOnDelete` 设为 `true`，
+执行 `helm upgrade` 并确认 APIGInstance 已带上保留策略后再卸载。保留下来的网关可能继续
+计费，清理前还需确认没有其他组件正在共用。
 
-方式 B 创建的网关会随 `helm uninstall` 一并删除，其自动分配的 `*.volceapi.com` 域名同时
-失效，重新部署将得到一个新域名。
+### 网关规格
 
-## 4. 执行安装
+`instanceSpecCode`、`clbSpecCode`、`replicas`、`publicNetworkBillingType`、
+`publicNetworkBandwidth` 均为可选项，留空时由平台采用默认配置（实测为 1c2g / small_1 /
+2 副本 / 200 Mbps）。这组默认值仅可作为小规模验证环境的起点，不代表所有业务负载；生产环境
+请根据并发连接数、请求速率、响应大小、可用性目标与压测结果选择规格。数据集与训练数据通过
+TOS、EBS 等通道传输，不经过该网关。
+
+显式指定时注意 `publicNetworkBandwidth` 与 `replicas` 在 CRD 中是整数类型，写成带引号的
+字符串会被校验拒绝。
+
+### 关于 apig.host
+
+`host` 是内部占位域名，不对外访问，也不需要在 DNS 中注册。APIG 用它区分路由：每个不同的
+host 会获得一个独立的 `*.volceapi.com` 托管域名。两条约束：同一网关上的 host 不能重复；
+不要把平台分配的 `*.volceapi.com` 域名填到这里。
+
+RLinf 的默认值是 `<release 名>.apig.local`，本文 release 名为 `rlinf`，即 `rlinf.apig.local`。
+多个组件复用同一网关时，只要 release 名不同，默认值就不会冲突。
+
+## 5. 执行安装
 
 ```bash
 helm install rlinf oci://ai-containers-cn-beijing.cr.volces.com/physicalai/rlinf \
@@ -149,7 +245,13 @@ helm install rlinf oci://ai-containers-cn-beijing.cr.volces.com/physicalai/rlinf
   -n "${NS}" -f values.yaml
 ```
 
-## 5. 验证部署结果
+也可以在容器服务控制台的「应用中心 > Helm 应用 > 创建 Helm 应用」中完成，效果一致：Chart
+来源选「第三方」，协议选 `oci://`，鉴权方式选 `None`，在参数配置中粘贴 values 内容。
+
+命令中的 `rlinf` 是 release 名，它决定了一批资源的名称，其中包括持久卷。**定好之后不要再
+改**，改名会导致新 release 重新申请一块空盘，原有数据不会自动迁移。
+
+## 6. 验证部署结果
 
 ```bash
 kubectl rollout status statefulset/rlinf -n "${NS}" --timeout=10m
@@ -163,16 +265,36 @@ NAME      READY   STATUS    RESTARTS   AGE
 rlinf-0   2/2     Running   0          2m
 ```
 
+再确认持久卷已绑定，以及训练容器识别到了预期数量的 GPU：
+
+```bash
+kubectl get pvc -n "${NS}"
+kubectl exec rlinf-0 -n "${NS}" -c rlinf -- nvidia-smi -L
+```
+
+PVC 状态应为 `Bound`，`nvidia-smi -L` 列出的 GPU 数量应与 `resources` 中申请的一致。启用
+API 网关时，还应确认 Ingress 已获得地址、对应 APIGInstance 的 `PHASE` 为 `Running`：
+
+```bash
+kubectl get ingress,apiginstance -n "${NS}"
+```
+
 面板容器的日志可以单独查看：
 
 ```bash
 kubectl logs rlinf-0 -n "${NS}" -c dashboard
 ```
 
-## 6. 访问 Dashboard
+## 7. 访问 Dashboard
 
 **已启用 API 网关**：平台会为每个 host 分配独立的 `*.volceapi.com` 域名。该域名无法通过
-`kubectl` 查询，需要在 API 网关控制台的服务列表中获取。打开域名后用第 1 步的凭据登录。
+`kubectl` 查询，既不在 APIGInstance 的 `status` 里，也不在 Ingress 上，需要到 API 网关控制台
+获取：进入对应实例，打开「服务列表（域名）」，「域名」列中「公网」标签后面的即是。打开该
+域名后，用第 2 节创建的凭据登录。
+
+这个域名一旦生成就不再变化，可以直接对外公布，但它依附于网关——方式 B 创建的网关被
+`helm uninstall` 删除后域名一并回收，重建会得到新的。需要完全自主的地址时，可在控制台绑定
+自有域名并做 CNAME 解析。
 
 **未启用 API 网关**：使用端口转发访问。
 
@@ -273,21 +395,21 @@ LIBERO disaggregated 是 −4.76%（更快），两者只差一个 placement。
 
 | 场景 | 瓶颈侧 | 推荐 | 端到端收益 |
 |---|---|---|---|
-| LIBERO colocated（本文 4 卡配置） | actor | 只开 fused | **−19.0%** |
+| LIBERO colocated（本文 4 卡配置） | actor | 只开 fused | **−8.0%～−19.0%** |
 | LIBERO disaggregated 2+2 | rollout | 只开 compile | −4.76% |
 | ManiSkill disaggregated 2+2 | rollout | 只开 compile | −6.99% |
 | 瓶颈侧不确定 | — | split（见下） | 距当场最优 1 个百分点以内 |
 
-colocated 的端到端收益随流水线停顿次数波动很大，同配置的两批测试分别测到 −8.0% 与 −19.0%，
-不宜当成精确值；下面的阶段指标才是稳定的信号。
+colocated 的端到端收益随流水线停顿次数波动很大，上表给出的是两批测试的实测区间，不宜取
+其中任一端当作精确值；下面的阶段指标才是稳定的信号。
 
 各优化项的稳态收益（单机 4×H20，async 模式，四场景实测）：
 
 | 优化项 | 观察指标 | 相对 baseline |
 |---|---|---|
-| Fused Prefix Kernel | `time/actor_training` | −7.0% ~ −10.1% |
-| Rollout 图编译 | `time/rollout/predict` | −11.8% ~ −12.9% |
-| 异步权重同步 | — | 单机无可测收益（同机同步仅 1–2 s），面向跨机场景 |
+| Fused Prefix Kernel | `time/actor_training` | −7.0%～−10.1% |
+| Rollout 图编译 | `time/rollout/predict` | −11.8%～−12.9% |
+| 异步权重同步 | — | 单机无可测收益（同机同步仅 1～2 s），面向跨机场景 |
 
 fused 与 compile 不要同时落在 rollout 上。两者直接叠加会互相抵消，rollout 推理收益从 −12%
 掉到 −0% 至 −2%。正确用法是两项各管一侧，即 split：
@@ -390,7 +512,7 @@ runner.max_epochs=2 runner.max_steps=2 runner.save_interval=-1
 
 ### 7.1 Dashboard
 
-访问方式见部署第 6 节。训练启动后面板每 5 秒自动发现一次，无需重启。
+访问方式见部署第 7 节。训练启动后面板每 5 秒自动发现一次，无需重启。
 
 | 页面 | 内容 |
 |---|---|
@@ -604,7 +726,7 @@ ManiSkill 的 async 场景下测得的，SO101 上未做测量。
 | 现象 | 原因与处理方式 |
 |---|---|
 | 安装时提示缺少 `image.tag` 或 `persistence.storageClass` | Chart 不预设这两项，需在 values 中补充 |
-| 提示 `dashboard.auth.enabled=true is required` | 通过 API 网关发布面板时必须启用认证，参见部署第 1 节 |
+| 提示 `dashboard.auth.enabled=true is required` | 通过 API 网关发布面板时必须启用认证，参见部署第 2 节 |
 | Pod 停留在 `1/2`，`dashboard` 容器反复重启 | 面板镜像版本过低，不支持注入的认证配置。请使用支持 `RLINF_DASHBOARD_AUTH_MODE` 的镜像版本。该拦截是预期行为，用于避免旧版本忽略凭据后对外提供无鉴权服务 |
 | 容器报 `CreateContainerConfigError` | `existingSecret` 指定的 Secret 不存在。Helm 不校验集群中是否存在该资源，安装会成功但容器无法启动 |
 | `helm upgrade` 执行成功，但 Pod 仍运行旧镜像 | Pod 处于非 Ready 状态时，StatefulSet 滚动更新不会推进。执行 `kubectl delete pod rlinf-0 -n "${NS}"` 使其按新模板重建 |
