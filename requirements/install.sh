@@ -1284,7 +1284,12 @@ setup_mirror() {
         export UV_PYTHON_INSTALL_MIRROR=${GITHUB_PREFIX}https://github.com/astral-sh/python-build-standalone/releases/download
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
-        git config --global url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/"
+        # Only with a prefix to insert. An empty one means "reach GitHub directly", but the
+        # rewrite would still fire and turn https://github.com/x.git into github.com/x.git,
+        # which git reads as a local path: "does not appear to be a git repository".
+        if [ -n "$GITHUB_PREFIX" ]; then
+            git config --global url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/"
+        fi
         trap 'unset_mirror' EXIT INT TERM HUP
     fi
 }

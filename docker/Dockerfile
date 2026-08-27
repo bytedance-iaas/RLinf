@@ -185,13 +185,18 @@ COPY ./requirements $UV_PATH/requirements
 # which is also the way to route around a mirror that has gone bad.
 ARG GITHUB_PREFIX
 ENV GITHUB_PREFIX_FILE=/etc/rlinf/github-prefix
+# Resolve into a variable first, and with GITHUB_PREFIX_FILE cleared for that one call: the
+# redirection below creates and truncates the file before the script it feeds ever starts, so a
+# script that consults GITHUB_PREFIX_FILE would read the empty file it is about to write and
+# report "no prefix" without probing anything.
 RUN mkdir -p "$(dirname "$GITHUB_PREFIX_FILE")" && \
     if [ "$NO_MIRROR" = "1" ]; then \
-        : > "$GITHUB_PREFIX_FILE"; \
+        prefix=""; \
     else \
-        bash $UV_PATH/requirements/github_mirror.sh > "$GITHUB_PREFIX_FILE"; \
+        prefix="$(GITHUB_PREFIX_FILE= bash $UV_PATH/requirements/github_mirror.sh)"; \
     fi && \
-    echo "GitHub prefix for this build: '$(cat "$GITHUB_PREFIX_FILE")'"
+    printf '%s\n' "$prefix" > "$GITHUB_PREFIX_FILE" && \
+    echo "GitHub prefix for this build: '$prefix'"
 
 
 ##################################################################################################
