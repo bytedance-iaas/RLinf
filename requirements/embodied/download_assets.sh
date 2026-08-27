@@ -44,7 +44,23 @@ setup_mirror() {
 	if [ "$USE_MIRRORS" -eq 1 ]; then
 		export UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-https://mirrors.aliyun.com/pypi/simple}
 		export HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
-		export GITHUB_PREFIX=${GITHUB_PREFIX:-https://gh-proxy.org/}
+		if [ -z "${GITHUB_PREFIX:-}" ]; then
+			# Prefer a prefix already resolved for this build (the Dockerfile
+			# writes one), then the shared resolver next to this script, and only
+			# then the historical default. This script is also copied to
+			# /usr/local/bin in the image, where the sibling path does not exist.
+			_mirror_helper="$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")/github_mirror.sh"
+			if [ -n "${GITHUB_PREFIX_FILE:-}" ] && [ -f "$GITHUB_PREFIX_FILE" ]; then
+				GITHUB_PREFIX="$(tr -d '[:space:]' < "$GITHUB_PREFIX_FILE")"
+			elif [ -f "$_mirror_helper" ]; then
+				# shellcheck source=requirements/github_mirror.sh
+				source "$_mirror_helper"
+				GITHUB_PREFIX="$(resolve_github_prefix)"
+			else
+				GITHUB_PREFIX="https://gh-proxy.org/"
+			fi
+		fi
+		export GITHUB_PREFIX
 	fi
 }
 
