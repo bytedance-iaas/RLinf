@@ -1667,12 +1667,14 @@ setup_mirror() {
         export UV_PYTHON_INSTALL_MIRROR=${GITHUB_PREFIX}https://github.com/astral-sh/python-build-standalone/releases/download
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
-        # Scope the GitHub rewrite to this process and its children through git's
-        # environment config, so no global state is left behind on any exit path.
-        local idx="${GIT_CONFIG_COUNT:-0}"
-        export "GIT_CONFIG_KEY_${idx}=url.${GITHUB_PREFIX}github.com/.insteadOf"
-        export "GIT_CONFIG_VALUE_${idx}=https://github.com/"
-        export GIT_CONFIG_COUNT=$((idx + 1))
+        if [ -n "$GITHUB_PREFIX" ]; then
+            # Scope the GitHub rewrite to this process and its children through git's
+            # environment config, so no global state is left behind on any exit path.
+            local idx="${GIT_CONFIG_COUNT:-0}"
+            export "GIT_CONFIG_KEY_${idx}=url.${GITHUB_PREFIX}github.com/.insteadOf"
+            export "GIT_CONFIG_VALUE_${idx}=https://github.com/"
+            export GIT_CONFIG_COUNT=$((idx + 1))
+        fi
     fi
 }
 
