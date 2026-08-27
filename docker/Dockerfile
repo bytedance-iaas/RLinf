@@ -173,6 +173,28 @@ COPY ./requirements $UV_PATH/requirements
 
 
 ##################################################################################################
+# GitHub accelerator: measured once, shared by the whole build
+##################################################################################################
+# install.sh used to measure this per invocation, so a nine-venv image ran nine
+# probes that could land on different mirrors, and the source clone in the final
+# stage hardcoded a fourth one. Resolve it here and write it where install.sh,
+# download_assets and the clone below all read it from.
+#
+# The answer is baked into this layer, so a cached layer keeps yesterday's
+# mirror. Pass --build-arg GITHUB_PREFIX=https://ghfast.top/ to pin one instead,
+# which is also the way to route around a mirror that has gone bad.
+ARG GITHUB_PREFIX
+ENV GITHUB_PREFIX_FILE=/etc/rlinf/github-prefix
+RUN mkdir -p "$(dirname "$GITHUB_PREFIX_FILE")" && \
+    if [ "$NO_MIRROR" = "1" ]; then \
+        : > "$GITHUB_PREFIX_FILE"; \
+    else \
+        bash $UV_PATH/requirements/github_mirror.sh > "$GITHUB_PREFIX_FILE"; \
+    fi && \
+    echo "GitHub prefix for this build: '$(cat "$GITHUB_PREFIX_FILE")'"
+
+
+##################################################################################################
 # Utilities: switch_env
 ##################################################################################################
 RUN cat <<EOF > /usr/local/bin/switch_env
@@ -552,11 +574,12 @@ WORKDIR /workspace
 # Bake the RLinf source into the image at the exact commit CI is building.
 # SCM_COMMIT_ID is injected by the Volcengine CI; when it is empty (e.g. public
 # GitHub CI) the clone is skipped so those builds are unaffected. GitHub is not
-# directly reachable on the mirror network (NO_MIRROR != 1), so route the clone
-# through the same gh-proxy.org accelerator that install.sh uses.
+# directly reachable on the mirror network (NO_MIRROR != 1), so the clone goes
+# through the accelerator this build measured, which is the one install.sh used.
 ARG SCM_COMMIT_ID
 RUN if [ -n "$SCM_COMMIT_ID" ]; then \
-        GITHUB_PREFIX=$([ "$NO_MIRROR" != "1" ] && echo "https://gh-proxy.org/" || echo "") && \
+        GITHUB_PREFIX="$(cat "$GITHUB_PREFIX_FILE" 2>/dev/null || true)" && \
+        echo "Cloning through '${GITHUB_PREFIX:-github.com directly}'" && \
         git clone "${GITHUB_PREFIX}https://github.com/bytedance-iaas/RLinf.git" /root/RLinf && \
         git -C /root/RLinf checkout "$SCM_COMMIT_ID"; \
     fi
