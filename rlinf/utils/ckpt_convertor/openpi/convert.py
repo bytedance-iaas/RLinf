@@ -14,7 +14,7 @@
 
 """Unified OpenPI 0.5 checkpoint convertor.
 
-Dispatches to five modes over a shared core:
+Dispatches to six modes over a shared core:
 
     jax_to_openpi              JAX Pi0/Pi05 checkpoint -> OpenPI layout
     openpi_pytorch_to_openpi   OpenPI PyTorch layout -> OpenPI layout
@@ -22,6 +22,9 @@ Dispatches to five modes over a shared core:
                                    layout selected by ``--config-name`` and ``--dtype``
     openpi_to_openpi_pytorch   OpenPI layout -> OpenPI PyTorch layout
     sft2deploy                     RLinf SFT -> OpenPI PyTorch deploy full_weights.pt
+    lerobot_to_openpi_pytorch        LeRobot pi05 checkpoint -> OpenPI PyTorch layout,
+                                   also rebuilding norm_stats.json from LeRobot's
+                                   normalizer safetensors
 
 Usage::
 
@@ -40,6 +43,7 @@ import argparse
 
 from rlinf.utils.ckpt_convertor.openpi import (
     jax_to_openpi,
+    lerobot_to_openpi_pytorch,
     openpi_pytorch_to_openpi,
     openpi_to_openpi_pytorch,
     pt_to_safetensors,
@@ -55,6 +59,7 @@ _MODES = {
     "sft_to_openpi": pt_to_safetensors,
     "openpi_to_openpi_pytorch": openpi_to_openpi_pytorch,
     "sft2deploy": sft2deploy,
+    "lerobot_to_openpi_pytorch": lerobot_to_openpi_pytorch,
 }
 
 
