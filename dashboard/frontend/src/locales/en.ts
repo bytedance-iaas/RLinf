@@ -90,8 +90,6 @@ export const en = {
   "server.scanRoot": "scan root",
   "server.missing": "missing",
   "server.noRunsFound": "no runs found",
-  "server.runCount.one": "{count} run",
-  "server.runCount.other": "{count} runs",
 
   "rollup.none": "No runs discovered yet",
   "rollup.summary": "Worst health across {total} runs: {health}. {bad} not healthy.",

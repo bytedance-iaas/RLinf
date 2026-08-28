@@ -517,7 +517,9 @@ it again, and the stream comes back on its own.
   (`mkdir -p /tmp/rlinf-empty && python -m rlinf_dashboard /tmp/rlinf-empty --port 8872`).
   This must read differently from the case above: the root is fine, it is the
   level that is wrong, and "missing" would send the reader to fix the wrong thing.
-  The footer shows `no runs found` rather than a count.
+  The footer shows `no runs found` beside the path. A root that does hold runs
+  shows the path alone: the count is already the `runs` row directly above it,
+  and that row follows the live list while this one froze at page load.
 - Passing two paths must fail with a sentence, not scan one of them:
   `python -m rlinf_dashboard /tmp/a /tmp/b` exits 2 saying to use the common
   ancestor.
