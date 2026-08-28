@@ -640,6 +640,22 @@ runner.resume_dir="${RESUME_DIR}"
 还需要两样东西：SO101 的 π₀.₅ SFT 检查点，以及该检查点训练时所用的 `norm_stats.json`。强化
 学习的起点必须是在仿真中已具备非零成功率的策略，PPO 放大成功，但不会凭空发现成功。
 
+如果手上的检查点是用 LeRobot 微调的（HuggingFace 上公开的 π₀.₅ 检查点大多如此），需要先转换，
+否则会静默失败——键名带 `model.` 前缀，而加载走 `strict=False`，会在不报错的情况下丢弃全部
+权重，策略实际跑在随机初始化上：
+
+```bash
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode lerobot_to_openpi_pytorch \
+    --input-model      /path/to/lerobot_ckpt \
+    --input-norm-stats /path/to/lerobot_ckpt/policy_preprocessor_step_3_normalizer_processor.safetensors \
+    --output-model     /workspace/models/so101_sft_openpi_pi05 \
+    --asset-id         my-dataset
+```
+
+`--asset-id` 决定 `norm_stats.json` 的落点（`<output-model>/<asset-id>/norm_stats.json`），
+要与 9.2 节 `SO101_NORM_STATS` 指向的路径一致；输出目录同理对应 `SO101_CKPT`。其余模式与用法见
+[检查点转换器说明](rlinf/utils/ckpt_convertor/openpi/README.md)。
+
 仿真侧冒烟检查不需要检查点：
 
 ```bash

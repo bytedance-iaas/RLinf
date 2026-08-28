@@ -44,6 +44,26 @@ action horizon）、`noise_logvar_range` 取 `[0.02, 0.04]`（`flow_noise` 实�
 每轮恰好一次更新。默认组合在该任务上会崩塌，确定性评测在第 9 步跌到 7%，因此这三项应视为
 任务要求而非调参旋钮。
 
+### LeRobot 检查点转换
+
+LeRobot 与 RLinf 的 π₀.₅ 检查点布局不同，直接加载会失败，需要先转换。检查点转换器新增
+`lerobot_to_openpi_pytorch` 模式，把 LeRobot 的 `pi05` 检查点转成 RLinf 所加载的布局，权重
+键名与归一化统计量都会一并处理。连同既有模式，转换器现覆盖六种转换方向：
+
+```text
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode <mode> ...
+
+    jax_to_openpi_rlinf              JAX Pi0/Pi05 checkpoint -> OpenPI_RLinf layout
+    openpi_pytorch_to_openpi_rlinf   OpenPI PyTorch layout -> OpenPI_RLinf layout
+    sft_to_openpi_rlinf              RLinf SFT full_weights.pt -> OpenPI_RLinf layout
+    openpi_rlinf_to_openpi_pytorch   OpenPI_RLinf layout -> OpenPI PyTorch layout
+    sft2deploy                       RLinf SFT -> OpenPI PyTorch deploy full_weights.pt
+    lerobot_to_openpi_pytorch        LeRobot pi05 checkpoint -> OpenPI PyTorch layout
+```
+
+完整说明见 `--help` 与 `--mode <mode> --help`，用法与注意事项见
+[检查点转换器说明](rlinf/utils/ckpt_convertor/openpi/README.md)。
+
 ## 功能增强
 
 ### π₀.₅ Fused Prefix Kernel

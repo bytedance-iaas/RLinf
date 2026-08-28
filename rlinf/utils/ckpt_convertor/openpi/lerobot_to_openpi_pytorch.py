@@ -42,7 +42,7 @@ fp32 ones down loses precision the training run kept.
 
 Usage::
 
-    python -m rlinf.utils.ckpt_convertor.openpi.convert lerobot_to_openpi_pytorch \\
+    python -m rlinf.utils.ckpt_convertor.openpi.convert --mode lerobot_to_openpi_pytorch \\
         --input-model       /path/to/lerobot_ckpt \\
         --input-norm-stats  /path/to/policy_preprocessor_step_3_normalizer_processor.safetensors \\
         --output-model      /path/to/out_openpi_pytorch \\
