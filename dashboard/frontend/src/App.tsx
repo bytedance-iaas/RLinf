@@ -389,21 +389,16 @@ export function App() {
                   {/* A scan root that does not exist is the commonest reason for
                       an empty dashboard, and a root one level off the runs is the
                       next -- which "exists" alone cannot distinguish, since both
-                      report true. The count is what separates them. */}
+                      report true. Those two get a badge each.
+                      A root that exists and holds runs gets nothing: the count is
+                      already the row above, and printing it twice invited the
+                      reader to compare two numbers that are allowed to differ --
+                      this one froze at page load, that one follows the list. */}
                   {!serverQuery.data.scan_root.exists ? (
                     <Badge tone="unreachable">{t("server.missing")}</Badge>
                   ) : serverQuery.data.scan_root.run_count === 0 ? (
                     <Badge tone="unknown">{t("server.noRunsFound")}</Badge>
-                  ) : (
-                    <span className="faint">
-                      {t(
-                        serverQuery.data.scan_root.run_count === 1
-                          ? "server.runCount.one"
-                          : "server.runCount.other",
-                        { count: serverQuery.data.scan_root.run_count },
-                      )}
-                    </span>
-                  )}
+                  ) : null}
                 </dd>
               </div>
             </Note>

@@ -4,7 +4,8 @@
  * Typed against `en`, so `tsc` rejects a missing or invented key. Terminology is
  * fixed rather than translated afresh per string:
  *
- * * `run` -> 运行 (never 实验, which is `experiment_name` and appears beside it)
+ * * `run` -> 任务 (never 实验, which is `experiment_name` and appears beside it,
+ *   and never 运行, which is reserved for the *state* -- 运行中 / 未在运行)
  * * `step` -> 步, `RL iteration` -> RL 迭代, `minibatch` -> 小批次
  * * `health` -> 健康, `degraded` -> 异常, `unreachable` -> 失联
  * * `north-star metric` -> 核心指标, `checkpoint` -> 检查点, `rank` -> rank
@@ -21,9 +22,9 @@ export const zh: Record<keyof typeof en, string> = {
   "app.title": "RLinf 控制台",
   "app.brandAlt": "RLinf",
   "app.breadcrumb": "面包屑导航",
-  "app.runViews": "运行视图",
+  "app.runViews": "任务视图",
   "app.streamError": "实时数据流报错",
-  "app.loadingRun": "正在加载运行…",
+  "app.loadingRun": "正在加载任务…",
   "app.refresh": "刷新",
   "app.themeToLight": "切换到浅色主题",
   "app.themeToDark": "切换到深色主题",
@@ -75,48 +76,46 @@ export const zh: Record<keyof typeof en, string> = {
   "format.hoursAgo": "{n} 小时前",
   "format.daysAgo": "{n} 天前",
 
-  "healthbar.aria": "运行健康状态：{health}",
+  "healthbar.aria": "任务健康状态：{health}",
   "progress.noHorizon": "无总步数",
 
   // -- Server card (run list) ----------------------------------------------
   "server.title": "服务端",
   "server.version": "版本",
-  "server.runs": "运行数",
+  "server.runs": "任务数",
   "server.scanRoot": "扫描根目录",
   "server.missing": "不存在",
-  "server.noRunsFound": "未找到运行",
-  "server.runCount.one": "{count} 个运行",
-  "server.runCount.other": "{count} 个运行",
+  "server.noRunsFound": "未找到任务",
 
-  "rollup.none": "尚未发现任何运行",
-  "rollup.summary": "{total} 个运行中最差的健康状态：{health}。{bad} 个不健康。",
+  "rollup.none": "尚未发现任何任务",
+  "rollup.summary": "{total} 个任务中最差的健康状态：{health}。{bad} 个不健康。",
 
   // -- Run list ------------------------------------------------------------
-  "runlist.runs": "运行",
+  "runlist.runs": "任务",
   "runlist.search": "搜索",
   "runlist.searchPlaceholder": "run id、实验名、任务类型",
   "runlist.state": "状态",
   "runlist.compare": "对比",
   "runlist.compareN": "对比（{count}）",
-  "runlist.compareHint": "选中两个及以上的运行才能对比",
+  "runlist.compareHint": "选中两个及以上的任务才能对比",
   "runlist.selectForCompare": "选中以参与对比",
   "runlist.selectRunForCompare": "选中 {name} 以参与对比",
 
-  "runlist.collided.one": "{count} 个 run id 被不同的运行共用",
-  "runlist.collided.other": "{count} 个 run id 被不同的运行共用",
+  "runlist.collided.one": "{count} 个 run id 被不同的任务共用",
+  "runlist.collided.other": "{count} 个 run id 被不同的任务共用",
   "runlist.collidedBody":
-    "这些运行的名字不同、日志路径不同，run id 却相同，而本面板的每个 URL 和每次 API 调用" +
-    "都以 id 定位运行。打开其中任何一个，看到的都是服务端最先找到的那个——{emphasis}——" +
+    "这些任务的名字不同、日志路径不同，run id 却相同，而本面板的每个 URL 和每次 API 调用" +
+    "都以 id 定位任务。打开其中任何一个，看到的都是服务端最先找到的那个——{emphasis}——" +
     "对比时同理。",
   "runlist.collidedEmphasis": "未必是你点的那一个",
   "runlist.collidedHint":
-    "默认 id 是秒级时间戳加实验名，所以复制来的配置里写死 {code} 时也会这样。给每个运行" +
+    "默认 id 是秒级时间戳加实验名，所以复制来的配置里写死 {code} 时也会这样。给每个任务" +
     "各自的 id 才能区分开。",
 
-  "runlist.attention.one": "1 个运行需要关注",
-  "runlist.attention.other": "{count} 个运行需要关注",
+  "runlist.attention.one": "1 个任务需要关注",
+  "runlist.attention.other": "{count} 个任务需要关注",
 
-  "runlist.col.run": "运行",
+  "runlist.col.run": "任务",
   "runlist.col.state": "状态",
   "runlist.col.health": "健康",
   "runlist.col.phase": "阶段",
@@ -126,23 +125,23 @@ export const zh: Record<keyof typeof en, string> = {
   "runlist.col.ckpt": "检查点",
   "runlist.col.heartbeat": "心跳",
 
-  "runlist.discoveringTitle": "正在发现运行",
-  "runlist.discoveringBody": "正在扫描运行。扫描完成前，不对已有内容下任何结论。",
-  "runlist.noneTitle": "未发现任何运行",
+  "runlist.discoveringTitle": "正在发现任务",
+  "runlist.discoveringBody": "正在扫描任务。扫描完成前，不对已有内容下任何结论。",
+  "runlist.noneTitle": "未发现任何任务",
   "runlist.noneNoRoot": "服务端尚未报告它的扫描根目录。",
   "runlist.noneMissingRoot": "扫描根目录 {path} 不存在。",
   "runlist.noneEmptyRoot":
-    "已搜索 {path}，该目录存在但还没有任何运行。一个运行是指含有 " +
+    "已搜索 {path}，该目录存在但还没有任何任务。一个任务是指含有 " +
     "_rlinf/runs/<id>/manifest.json 的目录，最深可在根目录下六层。",
-  "runlist.noMatchTitle": "没有匹配的运行",
-  "runlist.noMatchBody": "当前的搜索词或状态过滤把所有已发现的运行都筛掉了。",
+  "runlist.noMatchTitle": "没有匹配的任务",
+  "runlist.noMatchBody": "当前的搜索词或状态过滤把所有已发现的任务都筛掉了。",
 
   // -- Overview ------------------------------------------------------------
   "overview.startingTitle": "正在启动",
   "overview.startingBody":
-    "运行已注册，但还没有发布第一份快照。集群启动、worker 分配和模型加载都发生在这段窗口里。",
+    "任务已注册，但还没有发布第一份快照。集群启动、worker 分配和模型加载都发生在这段窗口里。",
   "overview.startingBodyElapsed":
-    "运行已注册，但还没有发布第一份快照。集群启动、worker 分配和模型加载都发生在这段窗口里，" +
+    "任务已注册，但还没有发布第一份快照。集群启动、worker 分配和模型加载都发生在这段窗口里，" +
     "目前已经过去 {elapsed}。",
   "overview.snapshotUnreadable": "快照不可读",
 
@@ -196,7 +195,7 @@ export const zh: Record<keyof typeof en, string> = {
   "overview.openMetric": "查看图表",
   "overview.notLogged": "未记录",
   "overview.atStep": "位于第 {step} {unit}",
-  "overview.northStarMissing": "该运行没有记录 {key}。{template} 模板期望它存在。",
+  "overview.northStarMissing": "该任务没有记录 {key}。{template} 模板期望它存在。",
   "overview.northStarUndeclared": "{template} 模板没有为这类任务声明核心指标。",
   "overview.templateDefault": "默认",
 
@@ -221,7 +220,7 @@ export const zh: Record<keyof typeof en, string> = {
 
   // -- Metrics -------------------------------------------------------------
   "metrics.noTemplate": "没有模板",
-  "metrics.loadingLayout": "正在加载该运行的图表布局…",
+  "metrics.loadingLayout": "正在加载该任务的图表布局…",
   "metrics.template": "模板",
   "metrics.axis": "{label} 轴",
   "metrics.expandRanks": "展开到各 rank",
@@ -231,7 +230,7 @@ export const zh: Record<keyof typeof en, string> = {
   "metrics.seriesFailed": "指标序列请求失败",
   "metrics.northStarMissingTitle": "核心指标未被记录",
   "metrics.northStarMissingBody":
-    "{template} 模板期望 {key}，但该运行没有记录它。下面其余的图表不受影响。",
+    "{template} 模板期望 {key}，但该任务没有记录它。下面其余的图表不受影响。",
   "metrics.otherKeys": "其他指标",
   "metrics.groupFallback": "指标",
   "metrics.stackBlockedNote": "堆叠图——只显示聚合值；把每条带子按 N 个 rank 堆叠会把同一段时间累加 N 次",
@@ -250,7 +249,7 @@ export const zh: Record<keyof typeof en, string> = {
   "chart.log": "对数",
   "chart.logNa": "对数不适用",
   "chart.logTitle": "对数坐标",
-  "chart.logDroppedTitle": "模板要求对数坐标，但该运行存在零或负值，因此改用线性坐标",
+  "chart.logDroppedTitle": "模板要求对数坐标，但该任务存在零或负值，因此改用线性坐标",
   "chart.percentTitle": "以百分比显示",
   "chart.smoothed": "平滑 {n} 点",
   "chart.smoothedTitle":
@@ -273,9 +272,9 @@ export const zh: Record<keyof typeof en, string> = {
   "media.unrecorded": "{count} 段未记录结果",
   "media.unrecordedTitle": "这些视频没有记录结果。它们被排除在统计之外，而不是算作失败。",
   "media.requestFailed": "视频请求失败",
-  "media.emptyTitle": "该运行没有视频",
+  "media.emptyTitle": "该任务没有视频",
   "media.emptyBody":
-    "视频由 env worker 写入分片索引。配置了 {code} 的运行，或录制步数还没轮到的运行，都没有视频。",
+    "视频由 env worker 写入分片索引。配置了 {code} 的任务，或录制步数还没轮到的任务，都没有视频。",
   "media.succeeded": "成功",
   "media.succeededTitle": "单环境视频：该 episode 达成了目标。",
   "media.notSucceeded": "未成功",
@@ -308,14 +307,14 @@ export const zh: Record<keyof typeof en, string> = {
   "events.exit": "退出信息",
   "events.logUnreadable": "事件日志不可读",
   "events.noneWarnTitle": "没有警告或错误",
-  "events.noneWarnBody": "该运行的日志里没有警告，也没有错误。",
+  "events.noneWarnBody": "该任务的日志里没有警告，也没有错误。",
   "events.noneTitle": "没有事件",
   "events.noneBody":
-    "该运行没有写入任何 events.jsonl 记录。这个文件由 runner 在阶段切换、保存检查点和评测时追加，" +
-    "所以日志为空通常意味着运行还没走到这些点。",
+    "该任务没有写入任何 events.jsonl 记录。这个文件由 runner 在阶段切换、保存检查点和评测时追加，" +
+    "所以日志为空通常意味着任务还没走到这些点。",
   "events.truncatedTitle": "更早的事件未显示",
   "events.truncatedBody":
-    "这份日志是最近 {limit} 条。在它们之前该运行还写过更多，包括启动那一段，都在运行根目录下的 {code} 里。",
+    "这份日志是最近 {limit} 条。在它们之前该任务还写过更多，包括启动那一段，都在任务根目录下的 {code} 里。",
   "events.checkpoints": "检查点",
   "events.best": "最佳",
   "events.col.saved": "保存时间",
@@ -327,20 +326,20 @@ export const zh: Record<keyof typeof en, string> = {
   "compare.title": "对比（{count}）",
   "compare.metric": "指标",
   "compare.pickMetric": "— 选择一个指标 —",
-  "compare.inAllRuns": "{count} 个运行都有",
-  "compare.inSomeRuns": "仅部分运行有",
-  "compare.runs.one": "{count} 个运行",
-  "compare.runs.other": "{count} 个运行",
+  "compare.inAllRuns": "{count} 个任务都有",
+  "compare.inSomeRuns": "仅部分任务有",
+  "compare.runs.one": "{count} 个任务",
+  "compare.runs.other": "{count} 个任务",
   "compare.mixedTitle": "同一坐标轴上混了不同的步语义",
   "compare.mixedBody":
-    "选中的这些运行对「一步是什么」并不一致（{counts}）。坐标轴标的是 {code}；" +
-    "使用其他单位的运行以虚线绘制，它们的 x 值与其余运行不可比。",
+    "选中的这些任务对「一步是什么」并不一致（{counts}）。坐标轴标的是 {code}；" +
+    "使用其他单位的任务以虚线绘制，它们的 x 值与其余任务不可比。",
   "compare.mixedCount": "{count} 个 {label}",
   "compare.mixedSeparator": "、",
-  "compare.nothingTitle": "尚未选中任何运行",
-  "compare.nothingBody": "先在运行列表里选中两个及以上的运行，再点{compare}。",
+  "compare.nothingTitle": "尚未选中任何任务",
+  "compare.nothingBody": "先在任务列表里选中两个及以上的任务，再点{compare}。",
   "compare.noMetric": "未选择指标",
-  "compare.col.run": "运行",
+  "compare.col.run": "任务",
   "compare.col.state": "状态",
   "compare.col.step": "步数",
   "compare.col.latest": "最新",
