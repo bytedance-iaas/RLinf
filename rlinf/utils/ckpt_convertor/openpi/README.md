@@ -1,7 +1,7 @@
 # OpenPI checkpoint convertors
 
 Consolidated convertors for the self-contained OpenPI Pi0 and Pi0.5 checkpoints
-used by the `openpi_rlinf` model package. Five conversion modes share one core
+used by the `openpi_rlinf` model package. Six conversion modes share one core
 (`_core.py`) that owns the common plumbing: locating `model.safetensors` inside a
 checkpoint directory, safetensors load/save, `config.json` read/write, the
 wrapper/FSDP prefix strip, and the single `copy_norm_stats` helper.
@@ -9,7 +9,7 @@ wrapper/FSDP prefix strip, and the single `copy_norm_stats` helper.
 Unified entry point:
 
 ```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax_to_openpi_rlinf,openpi_pytorch_to_openpi_rlinf,sft_to_openpi_rlinf,openpi_rlinf_to_openpi_pytorch,sft2deploy} ...
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax_to_openpi_rlinf,openpi_pytorch_to_openpi_rlinf,sft_to_openpi_rlinf,openpi_rlinf_to_openpi_pytorch,sft2deploy,lerobot_to_openpi_pytorch} ...
 ```
 
 Two named checkpoint layouts are referenced throughout:
@@ -21,8 +21,10 @@ Two named checkpoint layouts are referenced throughout:
 - **OpenPI PyTorch** — the upstream PyTorch / BEHAVIOR-eval layout, with keys under
   `paligemma_with_expert.*` in `model.safetensors`.
 
-The norm-stats file is never modified: every mode copies the input
-`norm_stats.json` verbatim to the requested output path.
+Every mode except `lerobot_to_openpi_pytorch` copies the input
+`norm_stats.json` verbatim to the requested output path; that one mode builds the
+JSON from LeRobot's normalizer safetensors, because LeRobot has no
+`norm_stats.json` to copy.
 
 ---
 
@@ -198,4 +200,48 @@ python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2deploy \
     --output          /path/to/checkpoints/global_step_20000_openpi_deploy \
     --reference-model /path/to/pi05_base_pytorch \
     --dtype-reference /path/to/existing_deploy/actor/model_state_dict/full_weights.pt
+```
+
+---
+
+## `lerobot_to_openpi_pytorch`
+
+LeRobot `pi05` checkpoint -> OpenPI PyTorch layout, the format
+`rlinf/models/embodiment/openpi` loads.
+
+LeRobot fine-tuning is the usual way to get a pi0.5 policy for a new robot, and
+most published pi0.5 checkpoints are in its format. Two things stop RLinf from
+loading one directly, and **both fail silently**:
+
+- **Key prefix.** LeRobot saves the policy wrapper, so every tensor is
+  `model.<...>`. The loader uses `strict=False`, so the mismatch drops *every*
+  tensor without raising and the policy runs on its random initialization. The
+  symptom is a checkpoint that trains but never succeeds -- not a load error.
+- **Norm stats.** LeRobot stores per-feature tensors in a
+  `*_normalizer_processor.safetensors`; openpi wants `norm_stats.json`.
+
+- **Input**: `--input-model` is a LeRobot checkpoint directory or its
+  `model.safetensors`. `--input-norm-stats` is the LeRobot
+  `*_normalizer_processor.safetensors`.
+- **Output**: `<output-model>/model.safetensors` plus
+  `<output-model>/<asset-id>/norm_stats.json`. `--asset-id` must match the
+  `openpi_data.norm_stats_path` your training config points at.
+- **Dtype policy**: dtypes are **preserved**, unlike the other modes. A LeRobot
+  pi0.5 checkpoint is typically mixed (fp32 norm/layernorm parameters alongside
+  bf16 weights); casting the fp32 ones down would lose precision the training run
+  kept.
+- **Stat width**: stats keep their native width (6 for a 6-DoF arm). openpi's
+  `Normalize` slices `stats.mean[..., :x.shape[-1]]` *before* the pad to
+  `max_action_dim`, so narrow stats are correct; padding would bury the real
+  action width.
+- **Feature names**: `--feature-map` overrides the default
+  `{"observation.state": "state", "action": "actions"}` for datasets that name
+  their features differently.
+
+```bash
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode lerobot_to_openpi_pytorch \
+    --input-model      /path/to/lerobot_ckpt \
+    --input-norm-stats /path/to/lerobot_ckpt/policy_preprocessor_step_3_normalizer_processor.safetensors \
+    --output-model     /path/to/out_openpi_pytorch \
+    --asset-id         my-dataset
 ```
