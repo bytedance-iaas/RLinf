@@ -34,6 +34,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
 from . import __version__
 from .auth import BasicAuthMiddleware
@@ -229,6 +230,43 @@ def get_services(request: Request) -> Services:
 ServicesDep = Annotated[Services, Depends(get_services)]
 
 
+def _scan_root_state(services: Services, run_count: int) -> dict:
+    """The scan root as the browser needs to see it.
+
+    One shape, built once, returned by both ``/api/health`` and the endpoint
+    that changes it -- the page renders the answer to a change with the same
+    code that renders the state it polled, so the two can never disagree.
+
+    ``run_count`` is a parameter rather than read here because the two callers
+    differ on whether a cached count is acceptable.
+    """
+    discovery = services.discovery
+    root = discovery.root
+    return {
+        "path": root,
+        "exists": os.path.isdir(os.path.expanduser(root)),
+        "run_count": run_count,
+        # What the reset control returns to, and whether there is anything to
+        # reset. Sent as data so the page never has to guess which of the two
+        # it is looking at.
+        "default_path": discovery.default_root,
+        "is_default": discovery.is_default_root,
+        "editable": services.settings.scan_root_editable,
+    }
+
+
+class ScanRootUpdate(BaseModel):
+    """A directory to scan, or ``None`` to go back to the configured one."""
+
+    path: str | None = Field(
+        default=None,
+        description=(
+            "Directory on the server to scan for runs. Null or empty returns to "
+            "the root this server was started with."
+        ),
+    )
+
+
 def _require_run(services: Services, run_id: str) -> DiscoveredRun:
     run = services.discovery.find(run_id)
     if run is None:
@@ -250,16 +288,11 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - one function per rou
         dashboard showing zero runs is almost always a mistyped path or a root
         one level off, and those two facts separate the two cases at a glance.
         """
-        root = services.settings.scan_root
         run_count = len(services.discovery.list_runs())
         return {
             "status": "ok",
             "version": __version__,
-            "scan_root": {
-                "path": root,
-                "exists": os.path.isdir(os.path.expanduser(root)),
-                "run_count": run_count,
-            },
+            "scan_root": _scan_root_state(services, run_count),
             "run_count": run_count,
             # "Why is the media grid all placeholders" is otherwise a silent
             # condition with no way to tell a disabled feature from a missing
@@ -270,6 +303,42 @@ def _register_routes(app: FastAPI) -> None:  # noqa: C901 - one function per rou
                 "ffmpeg": services.poster.ffmpeg_path,
             },
         }
+
+    @app.put("/api/scan-root", summary="Scan a different directory")
+    def set_scan_root(update: ScanRootUpdate, services: ServicesDep) -> dict:
+        """Repoint discovery, or return it to the configured default.
+
+        Process-global and in memory: the change is what every viewer of this
+        server sees, and a restart forgets it. See
+        :meth:`RunDiscovery.set_root`.
+
+        A path that is not a directory is refused rather than accepted. The
+        alternative -- taking it and letting the run list go empty -- answers a
+        typo by discarding the root that was working, and the page cannot tell
+        the operator which of the two things happened.
+        """
+        if not services.settings.scan_root_editable:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "This server does not allow the scan root to be changed "
+                    "from the browser."
+                ),
+            )
+
+        wanted = (update.path or "").strip()
+        if wanted and not os.path.isdir(os.path.expanduser(wanted)):
+            raise HTTPException(
+                status_code=400,
+                detail=f"No such directory on the server: {wanted}",
+            )
+
+        services.discovery.set_root(wanted or None)
+        # Refreshed rather than cached: this response is the answer to "did it
+        # work", and a count carried over from the previous root is not one.
+        return _scan_root_state(
+            services, len(services.discovery.list_runs(refresh=True))
+        )
 
     @app.get("/api/runs", summary="List discovered runs")
     def list_runs(

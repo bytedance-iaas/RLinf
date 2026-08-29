@@ -48,6 +48,50 @@ def test_finds_a_run_under_a_scan_root(run_tree, settings_for):
     assert [run.run_id for run in runs] == ["20260803-100000-alpha"]
 
 
+def test_set_root_scans_somewhere_else(tmp_path, settings_for):
+    """An operator repointing the server sees the other root's runs."""
+    for name, run_id in (("logs", "run-default"), ("elsewhere", "run-other")):
+        root = tmp_path / name / "_rlinf" / "runs" / run_id
+        root.mkdir(parents=True)
+        (root / "manifest.json").write_text(json.dumps(_manifest(run_id)))
+
+    discovery = RunDiscovery(settings_for())
+    assert discovery.is_default_root is True
+    assert [run.run_id for run in discovery.list_runs()] == ["run-default"]
+
+    discovery.set_root(str(tmp_path / "elsewhere"))
+    assert discovery.root == str(tmp_path / "elsewhere")
+    assert discovery.is_default_root is False
+    assert [run.run_id for run in discovery.list_runs()] == ["run-other"]
+
+    # The configured value is untouched, which is what makes reset possible.
+    assert discovery.default_root == str(tmp_path / "logs")
+    discovery.set_root(None)
+    assert discovery.is_default_root is True
+    assert [run.run_id for run in discovery.list_runs()] == ["run-default"]
+
+
+def test_set_root_drops_the_cache(tmp_path, settings_for):
+    """Without this, the new root serves the old root's runs for a whole TTL.
+
+    Every caller today happens to refresh right after repointing, so this is
+    asserted here rather than through the API: the guarantee belongs to the
+    method, and a future caller that does not refresh must not read stale runs
+    under the new root's name.
+    """
+    for name, run_id in (("logs", "run-default"), ("elsewhere", "run-other")):
+        root = tmp_path / name / "_rlinf" / "runs" / run_id
+        root.mkdir(parents=True)
+        (root / "manifest.json").write_text(json.dumps(_manifest(run_id)))
+
+    discovery = RunDiscovery(settings_for(discovery_cache_ttl_s=3600.0))
+    assert [run.run_id for run in discovery.list_runs()] == ["run-default"]
+
+    discovery.set_root(str(tmp_path / "elsewhere"))
+    # No `refresh=True`: the cache must already be gone.
+    assert [run.run_id for run in discovery.list_runs()] == ["run-other"]
+
+
 def test_finds_runs_nested_below_the_scan_root(tmp_path, settings_for):
     """The normal case: one root over many experiments.
 
