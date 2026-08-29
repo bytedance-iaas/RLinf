@@ -79,6 +79,48 @@ class RunDiscovery:
         self._settings = settings
         self._cache: list[DiscoveredRun] = []
         self._cache_at: float = 0.0
+        #: Set when an operator has pointed this server somewhere else. Held
+        #: here rather than written back onto ``settings`` so the configured
+        #: value survives as the thing "reset" returns to -- a deployment's
+        #: ``RLINF_DASHBOARD_SCAN_ROOT`` should still be recoverable from the
+        #: page that overrode it.
+        self._override: str | None = None
+
+    @property
+    def default_root(self) -> str:
+        """The root this server was started with."""
+        return self._settings.scan_root
+
+    @property
+    def root(self) -> str:
+        """The root being scanned right now, override included."""
+        return self._settings.scan_root if self._override is None else self._override
+
+    @property
+    def is_default_root(self) -> bool:
+        """Whether the root in use is still the configured one."""
+        return self._override is None
+
+    def set_root(self, path: str | None) -> None:
+        """Scan a different directory from now on.
+
+        Process-global and in memory only: every viewer of this server sees the
+        change, and a restart returns to the configured default. That is the
+        intended shape -- the deployment's configuration stays the source of
+        truth, so a container that comes back does not quietly disagree with the
+        YAML that launched it.
+
+        Args:
+            path: Directory to scan, or ``None`` to return to the configured
+                default. Not validated here; the caller reports a bad path to
+                whoever typed it.
+        """
+        self._override = path
+        # The cache describes the previous root. Keeping it would serve that
+        # root's runs for up to the TTL under the new root's name, which reads
+        # as "the change did not take" and invites a second change on top.
+        self._cache = []
+        self._cache_at = 0.0
 
     def list_runs(self, *, refresh: bool = False) -> list[DiscoveredRun]:
         """Return discovered runs, newest first.
@@ -100,7 +142,7 @@ class RunDiscovery:
             return self._cache
 
         runs: dict[str, DiscoveredRun] = {}
-        for run in self._scan_root(os.path.expanduser(self._settings.scan_root)):
+        for run in self._scan_root(os.path.expanduser(self.root)):
             # Keyed on the resolved path so a run reachable twice within the root
             # -- through a symlink, or a tree copied beside itself -- is listed
             # once rather than duplicated.

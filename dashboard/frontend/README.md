@@ -593,6 +593,38 @@ Then run `npm run check:i18n`, which is what actually keeps this from rotting:
 a key with no call site, a call site with no key, a placeholder that exists in one
 language only, or a Chinese line that is still English all fail it.
 
+### 11. The scan root, changed from the page
+
+The `scan root` row in the Server card carries the control. Point the server at
+the fixture tree, then:
+
+- The row reads the path with a `change` button beside it, and no count — the
+  count is the `runs` row above.
+- `change` swaps the path for an input, prefilled and focused. **Escape leaves
+  it**, and so does `cancel`; a field you can only leave by submitting is how a
+  wrong path gets submitted.
+- Type a path that does not exist and save. The request is refused, the server's
+  own sentence appears under the field (`No such directory on the server: …`,
+  not an `HTTP 400:` prefix), **the run table keeps its rows**, and the form
+  stays open with what you typed. A typo must not cost the root that was
+  working:
+
+  ```bash
+  curl -s -X PUT -H 'Content-Type: application/json' \
+    -d '{"path":"/tmp/nope"}' http://127.0.0.1:8861/api/scan-root
+  # {"detail":"No such directory on the server: /tmp/nope"}
+  ```
+
+- Type a real directory holding a different run tree and save. The row shows the
+  new path, a `reset` appears beside `change`, and within one SSE push the table
+  and the `runs` count are the other root's. `reset` returns to the configured
+  default and the `reset` button disappears with it.
+- The change is **global and unpersisted**: a second browser sees it on its next
+  push, and restarting the server returns to `RLINF_DASHBOARD_SCAN_ROOT`.
+- With `RLINF_DASHBOARD_SCAN_ROOT_EDITABLE=false` the row renders the path and
+  **no buttons at all** — absent, not disabled, for the same reason the metrics
+  view hides the rank drill-down on a run that has no per-worker data.
+
 ## Conventions worth knowing before editing
 
 - **The server's verdict is never recomputed.** `health` and `reason` are rendered

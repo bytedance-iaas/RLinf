@@ -16,8 +16,17 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import rlinfLogo from "./assets/rlinf-logo.svg";
 import { api } from "./api/client";
 import { useFetch, useRun, useRuns, type LiveState } from "./api/useLive";
-import type { Health, RunStatus, RunSummary, RunTemplate, Series, ServerHealth } from "./api/types";
+import type {
+  Health,
+  RunStatus,
+  RunSummary,
+  RunTemplate,
+  ScanRoot,
+  Series,
+  ServerHealth,
+} from "./api/types";
 import { AsOf, Badge, Code, HealthBar, Note } from "./components/primitives";
+import { ScanRootField } from "./components/ScanRootField";
 import { href, routeRunId, useRoute, type Route } from "./lib/router";
 import { collectSignals, watchSetKeys } from "./lib/signals";
 import { setLang, statusLabel, t, useLang, useT } from "./lib/i18n";
@@ -190,6 +199,24 @@ export function App() {
     [],
   );
 
+  /**
+   * The scan root as of the last change made from this page.
+   *
+   * The health document is fetched once, so a repointed root would otherwise go
+   * on displaying the old path until a reload. Held as an override rather than
+   * by refetching health: the PUT already returned the new state, and asking
+   * again would only add a request that can disagree with the answer in hand.
+   */
+  const [scanRootOverride, setScanRootOverride] = useState<ScanRoot | null>(null);
+  const scanRoot = scanRootOverride ?? serverQuery.data?.scan_root;
+
+  const onScanRootChanged = useCallback((next: ScanRoot) => {
+    setScanRootOverride(next);
+    // The run list follows on its own -- it is the SSE document -- but the
+    // fetched-once resources are about runs that may no longer exist.
+    setRefreshNonce((nonce) => nonce + 1);
+  }, []);
+
   const mediaTab = mediaTabState(template);
   const tabs = useMemo(
     () => (mediaTab === "show"
@@ -353,7 +380,7 @@ export function App() {
             // first fetch has not landed". Passed through rather than inferred
             // from an empty array, which cannot tell "none" from "not yet".
             discovering: runs.data === null && runs.error === null,
-            scanRoot: serverQuery.data?.scan_root,
+            scanRoot,
             status,
             template,
             templateError: templateQuery.error,
@@ -385,20 +412,16 @@ export function App() {
                 <dd>{runRows.length}</dd>
                 <dt>{t("server.scanRoot")}</dt>
                 <dd>
-                  <Code>{serverQuery.data.scan_root.path}</Code>{" "}
-                  {/* A scan root that does not exist is the commonest reason for
-                      an empty dashboard, and a root one level off the runs is the
-                      next -- which "exists" alone cannot distinguish, since both
-                      report true. Those two get a badge each.
-                      A root that exists and holds runs gets nothing: the count is
-                      already the row above, and printing it twice invited the
-                      reader to compare two numbers that are allowed to differ --
-                      this one froze at page load, that one follows the list. */}
-                  {!serverQuery.data.scan_root.exists ? (
-                    <Badge tone="unreachable">{t("server.missing")}</Badge>
-                  ) : serverQuery.data.scan_root.run_count === 0 ? (
-                    <Badge tone="unknown">{t("server.noRunsFound")}</Badge>
-                  ) : null}
+                  {/* Where the root is diagnosed and, when the server allows it,
+                      repointed. A root that exists and holds runs carries no
+                      count here: that is the row above, and printing it twice
+                      invited the reader to compare two numbers that are allowed
+                      to differ -- this one froze at page load, that one follows
+                      the list. */}
+                  <ScanRootField
+                    root={scanRoot ?? serverQuery.data.scan_root}
+                    onChanged={onScanRootChanged}
+                  />
                 </dd>
               </div>
             </Note>
@@ -413,7 +436,7 @@ interface RenderArgs {
   route: Route;
   runs: RunSummary[];
   discovering: boolean;
-  scanRoot?: { path: string; exists: boolean; run_count: number };
+  scanRoot?: ScanRoot;
   status: RunStatus | null;
   template: RunTemplate | null;
   templateError: string | null;

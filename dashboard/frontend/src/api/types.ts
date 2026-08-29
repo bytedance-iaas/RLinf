@@ -351,12 +351,27 @@ export interface RunTemplate {
 export interface ServerHealth {
   status: string;
   version: string;
-  /**
-   * The one directory this server scans, and what it found there.
-   *
-   * `run_count` is here because "exists" alone cannot tell a correct root from
-   * one level off: both report true, and only the count says which.
-   */
-  scan_root: { path: string; exists: boolean; run_count: number };
+  scan_root: ScanRoot;
   run_count: number;
+}
+
+/**
+ * The directory this server scans, and what may be done to it.
+ *
+ * `run_count` is here because "exists" alone cannot tell a correct root from
+ * one level off: both report true, and only the count says which.
+ *
+ * `editable` and `is_default` are what the page decides its controls from,
+ * rather than inferring them: a server that forbids repointing must not render
+ * a control that always fails, and "reset" must not be offered against a root
+ * that is already the configured one.
+ */
+export interface ScanRoot {
+  path: string;
+  exists: boolean;
+  run_count: number;
+  /** The root this server was started with -- what a reset returns to. */
+  default_path: string;
+  is_default: boolean;
+  editable: boolean;
 }

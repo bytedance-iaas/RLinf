@@ -23,6 +23,7 @@ one malformed run file is worse than one that shows that run as broken.
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -139,6 +140,126 @@ def test_health_separates_a_wrong_root_from_a_missing_one(tmp_path, settings_for
         body = client.get("/api/health").json()
         assert body["scan_root"]["exists"] is True
         assert body["scan_root"]["run_count"] == 0
+
+
+# ------------------------------------------------------------------------ scan root
+
+
+def _second_tree(source_log_path, destination, source_run_id: str, run_id: str) -> str:
+    """Copy a run tree to another directory under a different run id.
+
+    Two roots holding the *same* run id would prove nothing: the run list would
+    look identical either way, and the test would pass with discovery never
+    having moved.
+    """
+    shutil.copytree(source_log_path, destination)
+    manifest = destination / "_rlinf" / "runs" / source_run_id / "manifest.json"
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["run_id"] = run_id
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    return str(destination)
+
+
+def test_health_reports_what_can_be_done_to_the_scan_root(client, tmp_path):
+    """The page decides whether to offer the control from these two fields.
+
+    A control that cannot do anything is a question about a feature rather than
+    an answer about this server, so `editable` has to travel with the state --
+    and `is_default` is how the page knows whether there is anything to reset.
+    """
+    root = client.get("/api/health").json()["scan_root"]
+    assert root["editable"] is True
+    assert root["is_default"] is True
+    assert root["default_path"] == str(tmp_path / "logs")
+
+
+def test_scan_root_can_be_repointed(client, tmp_path):
+    other = _second_tree(tmp_path / "logs", tmp_path / "elsewhere", "api-run", "run-b")
+
+    body = client.put("/api/scan-root", json={"path": other}).json()
+    assert body["path"] == other
+    assert body["is_default"] is False
+    assert body["run_count"] == 1
+    # The default is still reported, because that is what reset returns to.
+    assert body["default_path"] == str(tmp_path / "logs")
+
+    assert [run["run_id"] for run in client.get("/api/runs").json()] == ["run-b"]
+    assert client.get("/api/health").json()["scan_root"]["path"] == other
+
+
+def test_scan_root_resets_to_the_configured_default(client, tmp_path):
+    other = _second_tree(tmp_path / "logs", tmp_path / "elsewhere", "api-run", "run-b")
+    client.put("/api/scan-root", json={"path": other})
+
+    body = client.put("/api/scan-root", json={"path": None}).json()
+    assert body["is_default"] is True
+    assert body["path"] == str(tmp_path / "logs")
+    assert [run["run_id"] for run in client.get("/api/runs").json()] == ["api-run"]
+
+
+def test_scan_root_treats_an_empty_string_as_a_reset(client, tmp_path):
+    """The field is cleared and submitted, which is the same gesture as reset."""
+    other = _second_tree(tmp_path / "logs", tmp_path / "elsewhere", "api-run", "run-b")
+    client.put("/api/scan-root", json={"path": other})
+
+    assert (
+        client.put("/api/scan-root", json={"path": "   "}).json()["is_default"] is True
+    )
+
+
+def test_scan_root_refuses_a_path_that_is_not_a_directory(client, tmp_path):
+    """A typo must not cost the operator the root that was working.
+
+    Accepting it would empty the run list, and the page cannot then tell "you
+    mistyped the path" from "the runs are gone".
+    """
+    response = client.put("/api/scan-root", json={"path": str(tmp_path / "typo")})
+    assert response.status_code == 400
+    assert "No such directory" in response.json()["detail"]
+
+    assert client.get("/api/health").json()["scan_root"]["path"] == str(
+        tmp_path / "logs"
+    )
+    assert [run["run_id"] for run in client.get("/api/runs").json()] == ["api-run"]
+
+
+def test_scan_root_is_refused_when_the_deployment_locks_it(
+    tmp_path, run_tree, settings_for
+):
+    run_tree("run-a")
+    settings = settings_for(scan_root_editable=False)
+    with TestClient(create_app(settings)) as locked:
+        assert locked.get("/api/health").json()["scan_root"]["editable"] is False
+
+        response = locked.put("/api/scan-root", json={"path": str(tmp_path)})
+        assert response.status_code == 403
+        assert locked.get("/api/health").json()["scan_root"]["path"] == str(
+            tmp_path / "logs"
+        )
+
+
+def test_scan_root_change_is_visible_immediately_with_a_warm_cache(
+    tmp_path, run_tree, settings_for
+):
+    """The change is not deferred to the next cache expiry.
+
+    Every other test here runs with the cache disabled, so this is the only
+    place the endpoint meets a warm one -- and a change that appears a TTL later
+    reads as "it did not take", which invites a second change on top of it.
+    (The invalidation itself belongs to `RunDiscovery.set_root` and is asserted
+    in test_discovery.py; this pins the behaviour end to end.)
+    """
+    run_tree("run-a")
+    settings = settings_for(discovery_cache_ttl_s=60.0)
+    with TestClient(create_app(settings)) as cached:
+        assert [run["run_id"] for run in cached.get("/api/runs").json()] == ["run-a"]
+
+        other = _second_tree(
+            tmp_path / "logs", tmp_path / "elsewhere", "run-a", "run-b"
+        )
+        cached.put("/api/scan-root", json={"path": other})
+
+        assert [run["run_id"] for run in cached.get("/api/runs").json()] == ["run-b"]
 
 
 # ------------------------------------------------------------------------- run lists
