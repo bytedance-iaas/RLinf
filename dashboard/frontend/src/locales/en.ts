@@ -90,6 +90,13 @@ export const en = {
   "server.scanRoot": "scan root",
   "server.missing": "missing",
   "server.noRunsFound": "no runs found",
+  "server.scanRootChange": "change",
+  "server.scanRootSave": "Save",
+  "server.scanRootCancel": "Cancel",
+  "server.scanRootReset": "reset",
+  "server.scanRootResetTitle": "Back to the root this server was started with: {path}",
+  "server.scanRootLabel": "Scan root path",
+  "server.scanRootPlaceholder": "a directory on the server",
 
   "rollup.none": "No runs discovered yet",
   "rollup.summary": "Worst health across {total} runs: {health}. {bad} not healthy.",

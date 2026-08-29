@@ -84,6 +84,7 @@ variables:
 | Variable | Default | Meaning |
 | --- | ---: | --- |
 | `RLINF_DASHBOARD_SCAN_ROOT` | `./logs` | One directory. Point it at the common ancestor when runs live in several |
+| `RLINF_DASHBOARD_SCAN_ROOT_EDITABLE` | `true` | Whether the scan root may be repointed from the browser |
 | `RLINF_DASHBOARD_SCAN_MAX_DEPTH` | `6` | Maximum discovery depth below each root |
 | `RLINF_DASHBOARD_HEARTBEAT_TIMEOUT_K` | `5.0` | Missed heartbeat intervals before `unreachable` |
 | `RLINF_DASHBOARD_HEARTBEAT_INTERVAL_S` | `5.0` | Fallback interval for older manifests |
@@ -137,6 +138,35 @@ outside localhost. In Kubernetes, set the mode explicitly and inject both
 values from Secret keys into the dashboard sidecar; do not put credentials in
 container args, probe headers, URLs, or a ConfigMap.
 
+### Changing the scan root from the page
+
+`RLINF_DASHBOARD_SCAN_ROOT` (or the CLI argument) is the default. The **scan
+root** row on the run list also carries a `change` control that repoints the
+server at another directory, and a `reset` back to the configured default. An
+empty run list is almost always a mistyped path or a root one level off the
+runs, and that row is where the dashboard already says so.
+
+Three properties worth knowing before relying on it:
+
+- **The change is process-global.** Every viewer of that server sees it — this
+  is a server setting being edited, not a per-browser preference.
+- **It is not persisted.** A restart returns to the configured value, so the
+  deployment's own configuration stays the source of truth and a container that
+  comes back cannot quietly disagree with the YAML that launched it.
+- **A path that is not a directory is refused**, and the previous root keeps
+  serving. Accepting a typo would answer it by discarding the root that was
+  working.
+
+Set `RLINF_DASHBOARD_SCAN_ROOT_EDITABLE=false` to turn the control off; the
+endpoint then answers `403` and the page renders the row without controls. Do
+that wherever the reader is not the owner of the deployment: with it on, anyone
+who can reach the server can point it at any directory the process can read and
+enumerate the RLinf run trees under it. That is bounded — discovery only reports
+directories holding `_rlinf/runs/*/manifest.json`, and media is still served
+only for files a run's own index lists — but it moves the choice of root from
+whoever starts the container to whoever opens the page, so on a shared host it
+belongs behind `RLINF_DASHBOARD_AUTH_MODE=basic`.
+
 ## Run and health semantics
 
 `state` is a fact written by the training process: `pending`, `running`,
@@ -159,6 +189,7 @@ valid step duration varies substantially across reasoning and embodied jobs.
 | --- | --- |
 | `GET /healthz` | Minimal process liveness for container and Kubernetes probes |
 | `GET /api/health` | Service status and scan-root diagnostics |
+| `PUT /api/scan-root` | Scan another directory, or reset to the configured one |
 | `GET /api/runs` | Filterable run summaries |
 | `GET /api/runs/{run_id}` | Manifest, snapshot, health, and capabilities |
 | `GET /api/runs/{run_id}/events` | Paginated lifecycle and phase events |

@@ -53,6 +53,19 @@ class Settings(BaseSettings):
     #: the meantime only invited half of it.
     scan_root: str = "./logs"
 
+    #: Whether the scan root may be repointed at runtime from the browser.
+    #:
+    #: On by default, because the dashboard is an operator tool and the operator
+    #: is the person who chose the root in the first place. Turn it off for a
+    #: deployment where the reader is not the owner: with it on, anyone who can
+    #: reach this server can point it at any directory the process can read and
+    #: enumerate the RLinf run trees under it. That is bounded -- discovery only
+    #: reports directories holding ``_rlinf/runs/*/manifest.json``, and media is
+    #: still served only for files a run's own index lists -- but it does move
+    #: the choice of root from whoever starts the container to whoever opens the
+    #: page, so it belongs behind authentication on a shared host.
+    scan_root_editable: bool = True
+
     #: How deep below a scan root to look for the ``_rlinf`` marker. Bounded
     #: because a scan root on NFS can be arbitrarily large and an unbounded walk
     #: would make ``/runs`` latency depend on unrelated data.
