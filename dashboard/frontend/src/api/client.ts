@@ -14,6 +14,7 @@ import type {
   RunStatus,
   RunSummary,
   RunTemplate,
+  ScanRoot,
   Series,
   ServerHealth,
 } from "./types";
@@ -51,8 +52,38 @@ async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function put<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(`${BASE}${path}`, {
+    method: "PUT",
+    signal,
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      if (payload.detail) detail = payload.detail;
+    } catch {
+      /* not JSON */
+    }
+    throw new ApiError(response.status, detail);
+  }
+  return (await response.json()) as T;
+}
+
 export const api = {
   serverHealth: (signal?: AbortSignal) => get<ServerHealth>("/api/health", signal),
+
+  /**
+   * Point the server at another directory, or back at its configured default.
+   *
+   * `null` resets. The response is the new state of the root, in the same shape
+   * `/api/health` reports it, so the caller can render the outcome without a
+   * second request -- and without inventing what it thinks the outcome was.
+   */
+  setScanRoot: (path: string | null, signal?: AbortSignal) =>
+    put<ScanRoot>("/api/scan-root", { path }, signal),
 
   listRuns: (signal?: AbortSignal) => get<RunSummary[]>("/api/runs", signal),
 
