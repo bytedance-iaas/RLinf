@@ -86,6 +86,13 @@ export const zh: Record<keyof typeof en, string> = {
   "server.scanRoot": "扫描根目录",
   "server.missing": "不存在",
   "server.noRunsFound": "未找到任务",
+  "server.scanRootChange": "修改",
+  "server.scanRootSave": "保存",
+  "server.scanRootCancel": "取消",
+  "server.scanRootReset": "恢复默认",
+  "server.scanRootResetTitle": "回到服务启动时配置的根目录：{path}",
+  "server.scanRootLabel": "扫描根目录路径",
+  "server.scanRootPlaceholder": "服务端上的一个目录",
 
   "rollup.none": "尚未发现任何任务",
   "rollup.summary": "{total} 个任务中最差的健康状态：{health}。{bad} 个不健康。",
