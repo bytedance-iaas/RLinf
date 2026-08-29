@@ -733,6 +733,40 @@ python examples/embodiment/train_embodied_agent.py \
 第 4 节的优化开关同样适用于该任务，同为 openpi π₀.₅。不过第 5 节的数据是在 LIBERO 与
 ManiSkill 的 async 场景下测得的，SO101 上未做测量。
 
+### 9.3 导出到真机
+
+训练产物要在真机上跑，需要走回 LeRobot：它的异步推理栈通过
+`policy_class.from_pretrained()` 加载策略，只认 LeRobot 布局。导出之后机器人侧可以直接用
+现成的 `robot_client`（动作队列、提前重取、chunk 重叠聚合），不必自己写控制循环。这是 9.1
+那次转换的反方向。`--ckpt` 指向按评测结果选定的 `global_step_<N>` 目录，即包含 `actor/` 的
+那一层：
+
+```bash
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft_to_lerobot \
+    --ckpt       "${LOG_DIR}/${RUN_NAME}/checkpoints/global_step_30" \
+    --template   /path/to/lerobot_pi05_same_robot \
+    --norm-stats "${SO101_NORM_STATS}" \
+    --chunk-size 10 \
+    --num-steps  4 \
+    --output     /workspace/models/so101_rl_lerobot
+```
+
+`--template` 是**同一台机器人**的 LeRobot pi05 检查点，它提供 `config.json` 与 processor
+JSON 并定义目标键集，因此其特征名与维度必须与 `robot_client` 实际发送的一致；9.1 里作为
+转换输入的那份 LeRobot 检查点正好可以充当模板。`--norm-stats` 用 SFT、RL 与评测一路用下来
+的同一份统计量——模板自带的来自它自己的数据集，必须覆盖。
+
+`--chunk-size` 与 `--num-steps` 的默认值（10 和 4）就是本任务的正确取值，但两者都不能想当然
+地沿用模板：chunk 长度须等于策略微调时的 horizon，向一个按 10 训练的策略要 50 个动作，多出
+来的 40 个从来没有过训练目标；去噪步数决定推理时 ODE 的积分步数，同样的权重和输入在不同步数
+下给出不同动作，沿用 LeRobot 默认的 10 而不是 RLinf 的 4，实测每个关节的误差都要差约 26%。
+
+转换器会拿转换后的键集与模板核对，任何缺失、多余或形状不符的键都会让它拒绝写出，因此不会有
+被静默截断的产物流到机器人上。但要注意，**往返一致不等于导出正确**：两个方向都验证过无损，
+这只能说明两个映射互为逆运算，如果 openpi 与 LeRobot 的分位数归一化约定存在差异，这种差异
+会在一次往返中相互抵消，却仍然在真机上是错的。上硬件之前，先用导出结果复跑一次离线评测，
+确认它能复现源检查点的成绩。
+
 ---
 
 # 三、常见问题

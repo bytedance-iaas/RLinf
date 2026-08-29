@@ -1,7 +1,10 @@
 # OpenPI checkpoint convertors
 
 Consolidated convertors for the self-contained OpenPI Pi0 and Pi0.5 checkpoints
-used by the `openpi_rlinf` model package. Seven conversion modes share one core
+RLinf trains, evaluates and deploys. Two model packages read different layouts:
+`openpi_rlinf` reads OpenPI_RLinf, and `rlinf/models/embodiment/openpi` — the one
+the embodied π₀.₅ recipes use — reads OpenPI PyTorch. The mode names say which
+layout each conversion produces. Seven conversion modes share one core
 (`_core.py`) that owns the common plumbing: locating `model.safetensors` inside a
 checkpoint directory, safetensors load/save, `config.json` read/write, the
 wrapper/FSDP prefix strip, and the single `copy_norm_stats` helper.
@@ -12,14 +15,18 @@ Unified entry point:
 python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax_to_openpi_rlinf,openpi_pytorch_to_openpi_rlinf,sft_to_openpi_rlinf,openpi_rlinf_to_openpi_pytorch,sft2deploy,lerobot_to_openpi_pytorch,sft_to_lerobot} ...
 ```
 
-Two named checkpoint layouts are referenced throughout:
+Three checkpoint layouts are referenced throughout:
 
-- **OpenPI_RLinf** — the bare `Pi0` layout this package loads: a directory with
-  `model.safetensors` (keys like `img.*`, `llm.*`, `action_in_proj.*`) plus a
-  `config.json`, and a norm-stats asset under
+- **OpenPI_RLinf** — the bare `Pi0` layout the `openpi_rlinf` package loads: a
+  directory with `model.safetensors` (keys like `img.*`, `llm.*`,
+  `action_in_proj.*`) plus a `config.json`, and a norm-stats asset under
   `physical-intelligence/behavior/norm_stats.json`.
 - **OpenPI PyTorch** — the upstream PyTorch / BEHAVIOR-eval layout, with keys under
-  `paligemma_with_expert.*` in `model.safetensors`.
+  `paligemma_with_expert.*` in `model.safetensors`. This is what
+  `rlinf/models/embodiment/openpi` loads.
+- **LeRobot** — what `policy_class.from_pretrained()` reads: `config.json`,
+  `model.safetensors` with a `model.` wrapper prefix, and processor JSONs whose
+  companion safetensors carry the dataset statistics.
 
 Every mode except `lerobot_to_openpi_pytorch` and `sft_to_lerobot` copies the input
 `norm_stats.json` verbatim to the requested output path; those two translate between the
