@@ -1123,6 +1123,16 @@ a:hover {
   cursor: default;
 }
 
+/* A button that sits inside a line of text rather than in a control bar. The
+ * scan-root row is a value first and a control second, so its buttons match the
+ * line they interrupt instead of setting the row's height. */
+.btn-sm {
+  min-height: 24px;
+  padding: 0 var(--space-sm);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+}
+
 /* Series toggle: a coloured swatch plus the run or key name. Colour is never the
  * only cue -- the label is always present and struck through when off. */
 .toggle {
@@ -1505,6 +1515,35 @@ input[type="checkbox"] {
   margin: 0;
   color: var(--color-text);
   overflow-wrap: anywhere;
+}
+
+/* The scan-root row: a path, its diagnosis, and the controls that repoint it.
+ * `align-items: center` with `flex-wrap` keeps a long path from pushing the
+ * buttons off the card, which on a narrow window is where they end up. */
+.scan-root {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-sm);
+  min-width: 0;
+}
+
+/* Monospaced, because it is the same path the code span shows when not editing
+ * -- an operator comparing what they typed against what is displayed should not
+ * have to account for two different faces. */
+.scan-root-input {
+  flex: 1 1 24ch;
+  min-width: 0;
+  font-family: var(--font-jetbrains-mono);
+  font-size: var(--type-numeric-sm-size);
+}
+
+/* The server's own sentence about why a path was refused. It takes the whole
+ * row so a long path in the message does not squeeze the controls. */
+.scan-root-error {
+  flex-basis: 100%;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-unreachable-text);
 }
 
 /* --------------------------------------------------------------- event list */
