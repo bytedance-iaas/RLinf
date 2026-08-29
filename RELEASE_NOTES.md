@@ -44,11 +44,27 @@ action horizon）、`noise_logvar_range` 取 `[0.02, 0.04]`（`flow_noise` 实�
 每轮恰好一次更新。默认组合在该任务上会崩塌，确定性评测在第 9 步跌到 7%，因此这三项应视为
 任务要求而非调参旋钮。
 
-### LeRobot 检查点转换
+### LeRobot 检查点互转
 
 LeRobot 与 RLinf 的 π₀.₅ 检查点布局不同，直接加载会失败，需要先转换。检查点转换器新增
-`lerobot_to_openpi_pytorch` 模式，把 LeRobot 的 `pi05` 检查点转成 RLinf 所加载的布局，权重
-键名与归一化统计量都会一并处理。连同既有模式，转换器现覆盖六种转换方向：
+两个方向的模式，覆盖「拿 LeRobot 的策略进来训」和「把训好的策略交回真机」这两件事。
+
+`lerobot_to_openpi_pytorch` 把 LeRobot 的 `pi05` 检查点转成 RLinf 所加载的布局。LeRobot
+微调是为新机器人得到 π₀.₅ 策略的常见做法，公开发布的 π₀.₅ 检查点也大多是这个格式，而两处
+差异都不会报错：键名带 LeRobot 的 `model.` 前缀，加载走 `strict=False`，不匹配时会静默丢弃
+全部权重，策略实际跑在随机初始化上；归一化统计量存放在 `*_normalizer_processor.safetensors`
+中，而 openpi 需要的是 `norm_stats.json`。两者转换器都会处理。
+
+`sft_to_lerobot` 是它的逆向，把 RLinf 的检查点导出成 LeRobot 布局，交给 LeRobot 的异步推理
+栈部署，机器人侧因此可以直接用现成的 `robot_client`，不必自己写控制循环。权重部分是纯键名
+重写，两个方向往返后逐位一致；真正需要留意的是随权重同行的元数据，它们会被**原样带过来**而
+不是转换出错，且同样不报错：RL 专用参数在 LeRobot 侧没有位置，会被丢弃；绑定的
+`embed_tokens.weight` 以模板为准；推理去噪步数必须取 RLinf 的 4 而非 LeRobot 默认的 10，
+沿用默认值等于导出了另一个策略，在 SO101 上实测每个关节的误差差约 26%；模板自带的归一化
+统计量来自它自己的数据集，必须用导出策略所属血统的统计量覆盖。转换后的键集会与模板核对，
+任何缺失、多余或形状不符都会让转换器拒绝写出。
+
+连同既有模式，转换器现覆盖七种转换方向：
 
 ```text
 python -m rlinf.utils.ckpt_convertor.openpi.convert --mode <mode> ...
@@ -59,7 +75,12 @@ python -m rlinf.utils.ckpt_convertor.openpi.convert --mode <mode> ...
     openpi_rlinf_to_openpi_pytorch   OpenPI_RLinf layout -> OpenPI PyTorch layout
     sft2deploy                       RLinf SFT -> OpenPI PyTorch deploy full_weights.pt
     lerobot_to_openpi_pytorch        LeRobot pi05 checkpoint -> OpenPI PyTorch layout
+    sft_to_lerobot                   RLinf SFT checkpoint -> LeRobot pi05 layout
 ```
+
+需要说明的是，两个方向都验证过无损，但往返一致只能说明两个映射互为逆运算，无法排除 openpi
+与 LeRobot 的分位数归一化约定存在差异——这类差异会在往返中相互抵消，却仍然在真机上是错的。
+上硬件之前应对导出结果做一次离线评测，确认它能复现源检查点的成绩。
 
 完整说明见 `--help` 与 `--mode <mode> --help`，用法与注意事项见
 [检查点转换器说明](rlinf/utils/ckpt_convertor/openpi/README.md)。

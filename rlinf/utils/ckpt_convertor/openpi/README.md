@@ -12,14 +12,18 @@ Unified entry point:
 python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax_to_openpi,openpi_pytorch_to_openpi,sft_to_openpi,openpi_to_openpi_pytorch,sft2deploy,lerobot_to_openpi_pytorch,sft_to_lerobot} ...
 ```
 
-Two named checkpoint layouts are referenced throughout:
+Three checkpoint layouts are referenced throughout:
 
 - **OpenPI** — the bare `Pi0` layout this package loads: a directory with
   `model.safetensors` (keys like `img.*`, `llm.*`, `action_in_proj.*`) plus a
   `config.json`, and a norm-stats asset under
   `physical-intelligence/behavior/norm_stats.json`.
 - **OpenPI PyTorch** — the upstream PyTorch / BEHAVIOR-eval layout, with keys under
-  `paligemma_with_expert.*` in `model.safetensors`.
+  `paligemma_with_expert.*` in `model.safetensors`. Convert these weights to
+  OpenPI before loading them with the current RLinf OpenPI model.
+- **LeRobot** — what `policy_class.from_pretrained()` reads: `config.json`,
+  `model.safetensors` with a `model.` wrapper prefix, and processor JSONs whose
+  companion safetensors carry the dataset statistics.
 
 Every mode except `lerobot_to_openpi_pytorch` and `sft_to_lerobot` copies the input
 `norm_stats.json` verbatim to the requested output path; those two translate between the
