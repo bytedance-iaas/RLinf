@@ -33,6 +33,8 @@
   --color-unreachable-text: #FF9692;
   --color-unknown: #86909C;
   --color-unknown-text: #C9CDD4;
+  --color-running: #14C9C9;
+  --color-running-text: #5BDDD6;
   --color-shadow-overlay: rgba(0, 0, 0, 0.32);
   --color-series-1: #3C7EFF;
   --color-series-2: #8D4EDA;
@@ -130,6 +132,10 @@
   --badge-unknown-fg: var(--color-unknown-text);
   --badge-unknown-radius: var(--radius-full);
   --badge-unknown-pad: 4px;
+  --badge-running-bg: color-mix(in srgb, var(--color-running) 14%, transparent);
+  --badge-running-fg: var(--color-running-text);
+  --badge-running-radius: var(--radius-full);
+  --badge-running-pad: 4px;
   --health-bar-radius: var(--radius-none);
   --health-bar-height: 4px;
   --progress-track-bg: var(--color-surface-sunken);
@@ -187,6 +193,8 @@
   --color-unreachable-text: #B71F2A;
   --color-unknown: #86909C;
   --color-unknown-text: #4E5969;
+  --color-running: #14C9C9;
+  --color-running-text: #026E75;
   --color-shadow-overlay: rgba(0, 0, 0, 0.12);
   --color-series-1: #165DFF;
   --color-series-2: #722ED1;
