@@ -1,7 +1,7 @@
 # OpenPI checkpoint convertors
 
 Consolidated convertors for the self-contained OpenPI Pi0 and Pi0.5 checkpoints
-used by the `openpi_rlinf` model package. Six conversion modes share one core
+used by the `openpi_rlinf` model package. Seven conversion modes share one core
 (`_core.py`) that owns the common plumbing: locating `model.safetensors` inside a
 checkpoint directory, safetensors load/save, `config.json` read/write, the
 wrapper/FSDP prefix strip, and the single `copy_norm_stats` helper.
@@ -9,7 +9,7 @@ wrapper/FSDP prefix strip, and the single `copy_norm_stats` helper.
 Unified entry point:
 
 ```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax_to_openpi_rlinf,openpi_pytorch_to_openpi_rlinf,sft_to_openpi_rlinf,openpi_rlinf_to_openpi_pytorch,sft2deploy,lerobot_to_openpi_pytorch} ...
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax_to_openpi_rlinf,openpi_pytorch_to_openpi_rlinf,sft_to_openpi_rlinf,openpi_rlinf_to_openpi_pytorch,sft2deploy,lerobot_to_openpi_pytorch,sft_to_lerobot} ...
 ```
 
 Two named checkpoint layouts are referenced throughout:
@@ -21,10 +21,10 @@ Two named checkpoint layouts are referenced throughout:
 - **OpenPI PyTorch** — the upstream PyTorch / BEHAVIOR-eval layout, with keys under
   `paligemma_with_expert.*` in `model.safetensors`.
 
-Every mode except `lerobot_to_openpi_pytorch` copies the input
-`norm_stats.json` verbatim to the requested output path; that one mode builds the
-JSON from LeRobot's normalizer safetensors, because LeRobot has no
-`norm_stats.json` to copy.
+Every mode except `lerobot_to_openpi_pytorch` and `sft_to_lerobot` copies the input
+`norm_stats.json` verbatim to the requested output path; those two translate between the
+two representations, because LeRobot stores its statistics inside the processor
+safetensors rather than as a `norm_stats.json`.
 
 ---
 
@@ -244,4 +244,65 @@ python -m rlinf.utils.ckpt_convertor.openpi.convert --mode lerobot_to_openpi_pyt
     --input-norm-stats /path/to/lerobot_ckpt/policy_preprocessor_step_3_normalizer_processor.safetensors \
     --output-model     /path/to/out_openpi_pytorch \
     --asset-id         my-dataset
+```
+
+---
+
+## `sft_to_lerobot`
+
+RLinf SFT checkpoint -> LeRobot `pi05` layout. The deployment direction, and the
+inverse of `lerobot_to_openpi_pytorch`.
+
+LeRobot's async inference stack (`lerobot.async_inference.policy_server` plus
+`robot_client`) loads policies through `policy_class.from_pretrained(path)`,
+which only reads the LeRobot layout. Exporting lets a robot run the stock client
+-- action queue, early re-request, overlapping chunk aggregation -- instead of a
+hand-written control loop.
+
+The weights need almost nothing done to them: RLinf's openpi backend *is* the
+LeRobot pi05 module tree, so the tensor half is pure key renaming and round-trips
+bit-identically (there is a test for it). What needs attention is the metadata
+travelling alongside them -- these are things that can be *carried over wrong*
+rather than *converted wrong*, and each fails silently:
+
+- **RL-only tensors.** `value_head.*`, `noise_head.*` and friends have no LeRobot
+  slot and are dropped.
+- **The tied embedding.** `embed_tokens.weight` is tied to `lm_head.weight`; some
+  LeRobot checkpoints store it and some deduplicate it away. The template decides.
+- **Inference steps.** Flow matching integrates an ODE at inference, so the step
+  count changes the action for identical weights and inputs. RLinf runs 4, the
+  LeRobot PI05 default is 10, and keeping the template's value exports a
+  *different policy* -- measured on SO101: every joint's error ~26% worse.
+- **Normalization.** LeRobot bakes dataset statistics into the processor
+  safetensors. The template's come from *its* dataset, so they are rewritten from
+  `--norm-stats`.
+
+- **Input**: `--ckpt` is an RLinf checkpoint directory containing `actor/`.
+  `--template` is a LeRobot pi05 checkpoint **for the same robot**: it supplies
+  `config.json` and the processor JSONs, and defines the target key set, so its
+  feature names and dimensions must already match what `robot_client` sends.
+  `--norm-stats` is the openpi `norm_stats.json` of the lineage the policy was
+  trained under.
+- **Output**: a LeRobot checkpoint directory at `--output`.
+- **Safety**: the converted key set is checked against the template and the mode
+  refuses to write on any missing, unexpected or wrongly-shaped key, so a
+  silently truncated export cannot reach a robot.
+
+> **A round trip does not prove the export is correct.** Both directions are
+> verified lossless -- weights bit-identical, stats equal to within the fp32 the
+> processor safetensors store them in -- but that only shows the two mappings are
+> mutually inverse. It cannot catch a quantile-normalization convention that
+> differs between openpi and LeRobot, because such a difference would cancel out
+> across a round trip and still be wrong on a robot. Run an offline check against
+> the output and confirm it reproduces the source checkpoint's numbers before
+> putting it on hardware.
+
+```bash
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft_to_lerobot \
+    --ckpt       /path/to/checkpoints/global_step_1000 \
+    --template   /path/to/lerobot_pi05_same_robot \
+    --norm-stats /path/to/norm_stats.json \
+    --chunk-size 10 \
+    --num-steps  4 \
+    --output     /path/to/out_lerobot
 ```
