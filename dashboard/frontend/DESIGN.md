@@ -31,6 +31,8 @@ colors:
   unreachable-text: "#FF9692"
   unknown: "#86909C"
   unknown-text: "#C9CDD4"
+  running: "#14C9C9"
+  running-text: "#5BDDD6"
 
   shadow-overlay: "rgba(0, 0, 0, 0.32)"
 
@@ -71,6 +73,8 @@ themes:
       unreachable-text: "#B71F2A"
       unknown: "#86909C"
       unknown-text: "#4E5969"
+      running: "#14C9C9"
+      running-text: "#026E75"
 
       shadow-overlay: "rgba(0, 0, 0, 0.12)"
 
@@ -203,6 +207,12 @@ components:
     typography: "{typography.label-sm}"
     rounded: "{rounded.full}"
     padding: 4px
+  badge-running:
+    backgroundColor: "color-mix(in srgb, var(--color-running) 14%, transparent)"
+    textColor: "{colors.running-text}"
+    typography: "{typography.label-sm}"
+    rounded: "{rounded.full}"
+    padding: 4px
 
   health-bar:
     height: 4px
@@ -317,8 +327,8 @@ containers and `#E5E6EB` boundaries; dark uses `#17171A` canvas and stepped
 and chart wells. Neither palette uses pure black against pure white for the main
 reading surface.
 
-**Status is the only semantic axis, and it has exactly four values** because the
-server's `health` field has exactly four:
+**Status is the only semantic axis, and health has exactly four values** because
+the server's `health` field has exactly four:
 
 | Token | Meaning |
 |---|---|
@@ -326,6 +336,22 @@ server's `health` field has exactly four:
 | `degraded` (amber) | alive but something is wrong — hung thread, dead metric path, degrading step time |
 | `unreachable` (red) | no heartbeat; the driver process is probably gone |
 | `unknown` (grey) | no readable snapshot — we genuinely do not know |
+
+Lifecycle state is the *other* question — what the run is doing, not whether it
+is well — and it maps onto those four plus one:
+
+| State | Colour | Why |
+|---|---|---|
+| `running` | `running` (cyan) | In progress. Deliberately **not** a health colour: "it is working" is not a verdict on whether it is working *well*, and the health badge beside it is what answers that. |
+| `finished` | `healthy` (green) | A finished run is healthy and must not look alarming for being silent. |
+| `failed` | `unreachable` (red) | The run ended badly, which is the same thing to go look at. |
+| `pending` / `stopped` | `unknown` (grey) | Neither is a warning: a queued run has nothing wrong with it, and a deliberate stop is not a degradation. |
+
+`running` was green until it earned its own hue, and the cost was visible on the
+run list: the State column and the Health column beside it rendered the same
+colour for two different claims, so the badge added nothing the word had not
+already said. Amber is now reserved for `degraded` alone — the one value that
+means "look at this".
 
 The semantic backgrounds follow Arco's success, warning and danger ramps. Each
 has a separate `*-text` token, darker in light mode and lighter in dark mode, so
@@ -459,11 +485,14 @@ second time you see it, so the reason string the server already returns is
 rendered, not dropped.
 
 **Status badges** are a coloured word on a 14%-opacity wash of the same hue, in
-a `full`-rounded pill. Four variants, one per health value, plus the same
-treatment reused for lifecycle state (`running` / `finished` / `failed` /
-`stopped` / `pending`). Lifecycle and health are visually parallel because they
-are genuinely different questions — a `finished` run is `healthy` and must not
-look alarming for being silent.
+a `full`-rounded pill. Five variants: one per health value, plus `running` for
+the lifecycle axis. Lifecycle state reuses the health colours wherever the two
+axes genuinely agree — `finished` is green, `failed` is red, `pending` and
+`stopped` are grey — and takes its own hue exactly where they do not, which is
+`running`. The two are visually parallel because they are genuinely different
+questions, and parallel is not the same as identical: a `finished` run is
+`healthy` and must not look alarming for being silent, while a `running` one has
+not yet been judged either way.
 
 **The health bar** is a 4px full-bleed strip below the header, in the health
 colour, present on every page. It is the fastest possible answer to the page's
@@ -514,7 +543,10 @@ be styled as one.
 
 **Do** reserve `primary` for action, selection and the first data series, and
 `secondary` for the RLinf brand accent and second series. **Don't** use either
-for status; success, warning, danger and unknown are a separate semantic axis.
+for status; success, warning, danger, unknown and in-progress are a separate
+semantic axis. That is why `running` is cyan rather than the action blue it
+would otherwise want to be — a blue badge beside blue run links reads as
+something to click.
 
 **Do** pair every status colour with a word. Colour alone excludes readers with
 red-green deficiency and is invisible in a screenshot pasted into a chat.

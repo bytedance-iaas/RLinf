@@ -294,16 +294,27 @@ a:hover {
   color: var(--badge-unknown-fg);
 }
 
+/* Health and lifecycle share this treatment but not every colour. The two
+ * agree on the terminal states -- a finished run is healthy, a failed one is
+ * worth the same look -- and disagree on exactly one: `running` says the run is
+ * working, not that it is working well, and the health badge beside it in the
+ * same row is what answers that. Green for both made the two columns render one
+ * colour for two different claims. See DESIGN.md's Colour section. */
 .badge[data-tone="healthy"],
-.badge[data-tone="running"],
 .badge[data-tone="finished"] {
   background: var(--badge-healthy-bg);
   color: var(--badge-healthy-fg);
 }
 
-.badge[data-tone="degraded"],
-.badge[data-tone="pending"],
-.badge[data-tone="stopped"] {
+.badge[data-tone="running"] {
+  background: var(--badge-running-bg);
+  color: var(--badge-running-fg);
+}
+
+/* Amber is reserved for the one value that means "look at this". A queued run
+ * has nothing wrong with it and a deliberate stop is not a degradation, so
+ * neither borrows the warning colour. */
+.badge[data-tone="degraded"] {
   background: var(--badge-degraded-bg);
   color: var(--badge-degraded-fg);
 }
@@ -314,7 +325,9 @@ a:hover {
   color: var(--badge-unreachable-fg);
 }
 
-.badge[data-tone="unknown"] {
+.badge[data-tone="unknown"],
+.badge[data-tone="pending"],
+.badge[data-tone="stopped"] {
   background: var(--badge-unknown-bg);
   color: var(--badge-unknown-fg);
 }
