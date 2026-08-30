@@ -149,17 +149,6 @@ export function App() {
     setDataVersion((value) => value + 1);
   }, [runId, step, refreshNonce]);
 
-  // The template is a property of the run's task type, so it is fetched once per
-  // run and not on every advance.
-  const templateQuery = useFetch<RunTemplate | null>(
-    useCallback(
-      (signal) => (runId ? api.template(runId, signal) : Promise.resolve(null)),
-      [runId],
-    ),
-    [runId],
-  );
-  const template = templateQuery.data;
-
   // Keys and workers come from one response: both describe what this run logged,
   // and the drill-down toggle must not appear a request later than the charts.
   const keysQuery = useFetch<{ keys: string[]; workers: string[] }>(
@@ -171,6 +160,54 @@ export function App() {
     [runId, dataVersion],
   );
   const workers = keysQuery.data?.workers ?? [];
+
+  /**
+   * The keys this run has logged, as one value that changes when the set does.
+   *
+   * This is the template's identity, not just an input to it -- see below.
+   *
+   * Held in state rather than read straight off the query, because that query's
+   * identity includes `dataVersion`: every step gives it a new identity, and a
+   * new identity blanks its data for the length of one request. Read directly,
+   * the signature would go "these keys" -> "" -> "these keys" on every step and
+   * refetch the layout twice per step to arrive back where it started. Advancing
+   * it only on a loaded list keeps the value flat while nothing has changed --
+   * and setting a string it already holds re-renders nothing.
+   */
+  const [keySignature, setKeySignature] = useState("");
+  const loadedKeys = keysQuery.data?.keys;
+  useEffect(() => {
+    if (loadedKeys) setKeySignature(loadedKeys.join("\0"));
+  }, [loadedKeys]);
+
+  /**
+   * The chart layout: the task type's template, bound on the server against the
+   * keys the run has actually logged.
+   *
+   * Fetched per `(run, keys)` rather than per run. The template *document* is a
+   * property of the task type, but the response is not: `bind_keys` drops every
+   * chart whose keys are absent, so a run opened before its first step is bound
+   * against nothing and comes back with no groups and `north_star.resolved:
+   * false`. Keyed on the run alone, that empty binding was then kept for the
+   * life of the page -- the first step would land, the key list beside this one
+   * would refresh, and the metrics tab would go on saying the run logs no
+   * north-star metric until someone reloaded the whole page.
+   *
+   * The cost is one extra request when a run is opened: the key list arrives a
+   * request after the page mounts, so the layout is fetched once without it and
+   * once with. The alternative -- waiting for the key list before asking for the
+   * layout -- delays every chart on every visit by a round trip in order to save
+   * a small one, and this way a key appearing mid-run (the first eval, a group
+   * that only logs once it runs) rebinds the layout too.
+   */
+  const templateQuery = useFetch<RunTemplate | null>(
+    useCallback(
+      (signal) => (runId ? api.template(runId, signal) : Promise.resolve(null)),
+      [runId],
+    ),
+    [runId, keySignature],
+  );
+  const template = templateQuery.data;
 
   // The overview's watch set: enough series to run the metric-side checks without
   // pulling every key of a long run into the page that has to be legible in five
