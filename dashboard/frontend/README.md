@@ -287,11 +287,19 @@ and the connection state with the age of the data under it.
   tooltip carries the precise `connecting` / `live` / `reconnecting` / `error`,
   which is what someone debugging the stream needs and what someone reading the
   numbers does not.
-- The age sits **under** the state, as `updated 4s ago`. Watch the header for a
-  minute with the element inspector on the theme button: **nothing to its left
-  may move.** Before this, the age lived in the row, and `just now` is wider
-  than `5s ago`, so every second it resized its own box and shoved the controls
-  along. The group has a `min-width` for that reason.
+- While connected there is **no age readout at all**. The answer would always
+  be "less than one push interval", which is a number moving for its own sake.
+  Kill the server and it appears under the badge as `updated 12s ago`, in the
+  unit the duration deserves — seconds, then minutes, then hours for a tab left
+  open over a weekend. That is the one state where the question is real.
+- The row it appears in is held open by `min-height` even when empty, so the
+  badge does not jump at the moment the connection changes — which is the one
+  moment that badge is being watched.
+- Watch the header for a minute with the element inspector on the theme button:
+  **nothing to its left may move.** Before this, the age lived in the header
+  row, and `just now` is wider than `5s ago`, so every second it resized its own
+  box and shoved the controls along. The group has a `min-width` for that
+  reason.
 - The push interval is 5s (`RLINF_DASHBOARD_SSE_INTERVAL_S`), matching the
   writer's heartbeat. Polling faster only costs syscalls and made that readout
   restless for no new information.

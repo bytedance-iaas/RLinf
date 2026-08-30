@@ -167,24 +167,31 @@ export function Code(props: { children: ReactNode; title?: string }) {
 }
 
 /**
- * "As of" readout for a live view.
+ * "As of" readout for a live view: how stale what you are looking at is.
  *
- * Shows the age of the data, not a spinner. A long-session console needs to say
- * how stale what you are looking at is; a spinner says only that something is
- * happening somewhere.
+ * **Only while the stream is down.** Connected, the answer is always "less than
+ * one push interval", which is not information -- it is a number moving on
+ * screen for its own sake. The question only becomes real when the pushes stop,
+ * and then it is the only thing on the page that says how far behind the
+ * numbers have fallen. So this is silent until it has something to say.
  *
  * The age is labelled rather than bare. On its own, a `3s ago` next to a
- * connection state reads as part of that state, and the two changed on
- * different clocks -- so it says what is three seconds old.
+ * connection state reads as part of that state, and the two run on different
+ * clocks -- so it says what is three seconds old. The unit follows the duration:
+ * seconds, then minutes, then hours, for a tab left open over a weekend.
  *
- * Nothing at all before the first payload: an `updated —` line would take the
- * space and say less than the empty space does.
+ * Nothing is rendered when there is nothing to say, so the header is one
+ * centred line while the stream is healthy and grows a second one only when it
+ * stops. The alternative -- holding an empty row open -- keeps the badge still
+ * across that change, at the cost of a permanent gap under it on the state the
+ * page is in almost always.
  */
-export function AsOf(props: { updatedAt: number | null; now: number }) {
-  if (props.updatedAt === null) return null;
+export function AsOf(props: { updatedAt: number | null; now: number; connected: boolean }) {
+  const updatedAt = props.updatedAt;
+  if (props.connected || updatedAt === null) return null;
   return (
     <span className="as-of">
-      {t("app.updated", { age: age((props.now - props.updatedAt) / 1000) })}
+      {t("app.updated", { age: age((props.now - updatedAt) / 1000) })}
     </span>
   );
 }

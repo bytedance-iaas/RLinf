@@ -292,6 +292,10 @@ export function App() {
   }, [route, mediaTab]);
 
   const liveState: LiveState = runId ? run.liveState : runs.liveState;
+  // `connecting` and `reconnecting` are both "not connected" to a reader
+  // deciding whether to trust what is on screen; only `live` is the stream
+  // actually delivering.
+  const connected = liveState === "live";
   const updatedAt = runId ? run.updatedAt : runs.updatedAt;
 
   const toggleSelect = useCallback((id: string) => {
@@ -396,9 +400,9 @@ export function App() {
                 title={t("app.liveTitle", { state: t(`live.${liveState}`) })}
               >
                 <span className="header-live-dot" />
-                {t(liveState === "live" ? "live.connected" : "live.disconnected")}
+                {t(connected ? "live.connected" : "live.disconnected")}
               </span>
-              <AsOf updatedAt={updatedAt} now={now} />
+              <AsOf updatedAt={updatedAt} now={now} connected={connected} />
             </div>
           </div>
         </div>
