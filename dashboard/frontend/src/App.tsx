@@ -247,6 +247,25 @@ export function App() {
   const [scanRootOverride, setScanRootOverride] = useState<ScanRoot | null>(null);
   const scanRoot = scanRootOverride ?? serverQuery.data?.scan_root;
 
+  /**
+   * Re-read everything this page fetched once.
+   *
+   * On a run page that is the template, the key list, events, media and the
+   * series; on the run list it is the server card, since the list itself is the
+   * SSE document and refreshes itself. Without the second half the button would
+   * be present on the home page and visibly do nothing, which is worse than not
+   * offering it.
+   *
+   * The scan-root override goes too: it is this page's memory of a change made
+   * from it, and a refresh should show what the server says now -- including a
+   * root some other operator has since reset.
+   */
+  const refresh = useCallback(() => {
+    setRefreshNonce((nonce) => nonce + 1);
+    setScanRootOverride(null);
+    serverQuery.reload();
+  }, [serverQuery]);
+
   const onScanRootChanged = useCallback((next: ScanRoot) => {
     setScanRootOverride(next);
     // The run list follows on its own -- it is the SSE document -- but the
@@ -273,6 +292,10 @@ export function App() {
   }, [route, mediaTab]);
 
   const liveState: LiveState = runId ? run.liveState : runs.liveState;
+  // `connecting` and `reconnecting` are both "not connected" to a reader
+  // deciding whether to trust what is on screen; only `live` is the stream
+  // actually delivering.
+  const connected = liveState === "live";
   const updatedAt = runId ? run.updatedAt : runs.updatedAt;
 
   const toggleSelect = useCallback((id: string) => {
@@ -355,21 +378,32 @@ export function App() {
             </button>
             {/* Refresh invalidates the fetched-once resources. The live document
                 does not need it -- SSE owns that -- so this is deliberately not a
-                "reload the page" button. */}
-            {runId && (
-              <button className="btn" type="button" onClick={() => setRefreshNonce((n) => n + 1)}>
-                {t("app.refresh")}
-              </button>
-            )}
-            <span
-              className="header-live"
-              data-state={liveState}
-              title={t("app.liveTitle", { state: liveState })}
-            >
-              <span className="header-live-dot" />
-              {t(`live.${liveState}`)}
-            </span>
-            <AsOf updatedAt={updatedAt} now={now} />
+                "reload the page" button. On every page, not only inside a run:
+                the header is one region and a control that comes and goes with
+                the route makes the reader look for it. */}
+            <button className="btn" type="button" onClick={refresh}>
+              {t("app.refresh")}
+            </button>
+            {/* Stacked, and in that order. Both used to sit in the header row,
+                where the age is the only thing on the line that changes every
+                second -- so it resized its own box and pushed every control
+                beside it. On its own line under the state, with a floor on the
+                group's width, nothing moves but the digits. */}
+            <div className="header-live-group">
+              <span
+                className="header-live"
+                data-state={liveState}
+                // The precise state stays in the tooltip. `reconnecting` and
+                // `error` are both "not connected" to a reader deciding whether
+                // to trust the numbers, but they are different things to
+                // whoever is debugging the stream.
+                title={t("app.liveTitle", { state: t(`live.${liveState}`) })}
+              >
+                <span className="header-live-dot" />
+                {t(connected ? "live.connected" : "live.disconnected")}
+              </span>
+              <AsOf updatedAt={updatedAt} now={now} connected={connected} />
+            </div>
           </div>
         </div>
       </header>
