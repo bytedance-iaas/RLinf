@@ -36,6 +36,7 @@
   --color-running: #14C9C9;
   --color-running-text: #5BDDD6;
   --color-shadow-overlay: rgba(0, 0, 0, 0.32);
+  --color-scrim: rgba(0, 0, 0, 0.56);
   --color-series-1: #3C7EFF;
   --color-series-2: #8D4EDA;
   --color-series-3: #27C346;
@@ -196,6 +197,7 @@
   --color-running: #14C9C9;
   --color-running-text: #026E75;
   --color-shadow-overlay: rgba(0, 0, 0, 0.12);
+  --color-scrim: rgba(0, 0, 0, 0.32);
   --color-series-1: #165DFF;
   --color-series-2: #722ED1;
   --color-series-3: #008A1E;
