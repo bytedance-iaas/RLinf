@@ -94,9 +94,9 @@ Triton 实现，同时保持 checkpoint 参数命名、FSDP 封装、prefix cach
 当前实现是 flash attention 版本：additive mask 直接进入 kernel，前向与反向都不再落地
 `[B, Hq, S, S]` 的分数矩阵，也不再依赖外部 `flash_attn`。
 
-在单机 8 张 H20 的五个场景（LIBERO / ManiSkill × colocated / disaggregated，含 4 卡对照臂）中，
+在单机 8 张 H20 的五个场景（LIBERO / ManiSkill × colocated / disaggregated，含 4 卡对比臂）中，
 每组重复 2 至 3 次，actor 训练耗时 `time/actor_training` 一致下降 **6.6% 至 9.4%**，全部 95%
-区间（基于 run 间方差）不跨零。收益随卡数缩水：4 卡为 −9.4%，8 卡为 −6.6%。kernel 级测试中，
+区间（基于 run 间方差）不跨零。8 卡为 −6.6%，4 卡为 −9.4%——收益随卡数缩水。kernel 级测试中，
 带 mask 的前向峰值激活显存下降 15% 至 24%，构建 prefix cache 的峰值显存下降 32% 至 39%。
 
 **显存收益仅限前向。** 上述显存数字测于 `train_expert_only: true`，此时 `freeze_vlm()` 使融合层
@@ -114,12 +114,9 @@ Triton 实现，同时保持 checkpoint 参数命名、FSDP 封装、prefix cach
 −12.19%。
 
 端到端收益小于阶段收益，取决于 rollout 是否是瓶颈：ManiSkill disaggregated 4+4 下稳态 step
-time 下降 5.89%，LIBERO colocated 下为 0.6% 至 3.1%。首次运行包含约 53 至 59 秒的编译预热
+time 下降 5.89%，LIBERO colocated 8 卡下为 3.14%。首次运行包含约 53 至 59 秒的编译预热
 开销，短任务应结合总墙钟时间评估收益。
 
-> 早期一批 4 卡测试曾报告 colocated 下开启图编译会慢 8.85%。该结果**未能复现**：新一轮在独占
-> 节点、每组 3 次重复的条件下，4 卡 colocated 三次运行均快于 baseline（−2.83%）。旧数字来自
-> 单次运行且节点与其它负载共享，以新数据为准。
 
 该能力默认关闭，通过 `+rollout.enable_torch_compile=true` 与
 `+rollout.torch_compile_mode=default` 启用。
@@ -157,10 +154,10 @@ actor.model.openpi.enable_fused_prefix=true \
 
 | 场景 | baseline 稳态 step | fused | compile | **split** |
 | --- | --- | --- | --- | --- |
-| LIBERO colocated 8 卡 | 102.98±0.90 s | −6.91% | −3.14% | **−8.31%** |
-| LIBERO colocated 4 卡 | 89.74±2.04 s | −11.53% | −2.83% | **−14.24%** |
+| **LIBERO colocated 8 卡** | 102.98±0.90 s | −6.91% | −3.14% | **−8.31%** |
 | LIBERO disaggregated 4+4 | 103.23±0.24 s | −4.15% | −2.40% | +1.12% |
 | ManiSkill disaggregated 4+4 | 221.85±1.14 s | −4.55% | −5.89% | **−6.24%** |
+| LIBERO colocated 4 卡（对比） | 89.74±2.04 s | −11.53% | −2.83% | **−14.24%** |
 
 split 相对当场最优单项的领先幅度，在每个场景都小于二者 run 间标准差之和，应理解为
 **「不劣于最优单项」** 而非「严格更优」。它可靠的优势在阶段指标：`time/actor_training`
@@ -173,10 +170,10 @@ split 相对当场最优单项的领先幅度，在每个场景都小于二者 r
 
 经过验证的 LIBERO 起始配置，两组每卡工作量相同：
 
-| | 4 卡 | 8 卡 |
+| | **8 卡（推荐起点）** | 4 卡 |
 | --- | --- | --- |
-| 训练环境数 | 64 | 128 |
-| global batch / micro batch | 128 / 32 | 256 / 32 |
+| 训练环境数 | **128** | 64 |
+| global batch / micro batch | **256** / 32 | 128 / 32 |
 | horizon、`group_size`、`update_epoch` | 120、2、2 | 120、2、2 |
 
 **4 卡取值不能直接搬到 8 卡**：actor 侧断言
