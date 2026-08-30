@@ -35,6 +35,7 @@ colors:
   running-text: "#5BDDD6"
 
   shadow-overlay: "rgba(0, 0, 0, 0.32)"
+  scrim: "rgba(0, 0, 0, 0.56)"
 
   series-1: "#3C7EFF"
   series-2: "#8D4EDA"
@@ -77,6 +78,7 @@ themes:
       running-text: "#026E75"
 
       shadow-overlay: "rgba(0, 0, 0, 0.12)"
+      scrim: "rgba(0, 0, 0, 0.32)"
 
       series-1: "#165DFF"
       series-2: "#722ED1"
@@ -558,6 +560,13 @@ cannot be read.
 **Don't** add blur or decorative gradients to a surface. Static depth is the
 lightness ladder plus 1px borders; a restrained shadow is only for an overlay
 that must visibly float above data.
+
+**Do** dim the page behind a modal with `scrim`, not with `shadow-overlay`.
+They are different jobs: the shadow lifts an element off the surface below it,
+while the scrim has to say the page is not accepting clicks. Reused as a
+backdrop the shadow value is too faint to say anything -- on the dark theme it
+is 32% black over an already dark page -- and a modal over an undimmed page
+reads as a floating card someone forgot to close.
 
 **Do** keep the page geometry constant across SSE updates. **Don't** let a card
 resize, a chart re-fit its axes on every push, or a list reorder itself while
