@@ -91,7 +91,7 @@ variables:
 | `RLINF_DASHBOARD_PROGRESS_TIMEOUT_K` | `10.0` | Step-time budgets before `degraded` |
 | `RLINF_DASHBOARD_TIMEOUT_FLOOR_S` | `30.0` | Minimum progress budget during startup |
 | `RLINF_DASHBOARD_STARTUP_GRACE_S` | `600.0` | Grace period for a manifest-only run to publish its first snapshot |
-| `RLINF_DASHBOARD_SSE_INTERVAL_S` | `2.0` | Live update interval |
+| `RLINF_DASHBOARD_SSE_INTERVAL_S` | `5.0` | Live update interval; matches the writer's heartbeat period |
 | `RLINF_DASHBOARD_DISCOVERY_CACHE_TTL_S` | `5.0` | Run discovery cache lifetime |
 | `RLINF_DASHBOARD_MAX_SERIES_POINTS` | `4000` | Per-series response budget |
 | `RLINF_DASHBOARD_CORS_ORIGINS` | local Vite origins | Allowed development origins |
