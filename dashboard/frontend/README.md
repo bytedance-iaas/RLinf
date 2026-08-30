@@ -625,6 +625,36 @@ the fixture tree, then:
   **no buttons at all** — absent, not disabled, for the same reason the metrics
   view hides the rank drill-down on a run that has no per-worker data.
 
+### 12. A run opened before its first step
+
+The layout is bound server-side against the keys the run has logged, so a run
+opened during startup binds against nothing. That state is correct and says so;
+what matters is that the page leaves it on its own.
+
+```bash
+# a run with a manifest, a snapshot at step 0, and an empty tensorboard/
+python -m rlinf_dashboard /tmp/rlinf-lazy --port 8861
+```
+
+- The metrics tab reads `0/0 KEYS`, no panels, and **North-star metric not
+  logged**. All three are the truth about a run that has logged nothing yet.
+- Now let the first step land: write an event file into `tensorboard/` and
+  advance `progress.step` in `run.json`.
+- Within one SSE push the tab must fill in by itself — key count, groups and
+  charts — with **no page reload**. Confirm it really was not reloaded:
+  `performance.getEntriesByType("navigation")[0].type` is still `navigate`.
+- Then watch the cost. Advance several more steps without adding keys and count
+  the requests:
+
+  ```js
+  performance.getEntriesByType("resource").filter(e => e.name.includes("/template")).length
+  ```
+
+  It must stay put. The layout is fetched per `(run, key set)`, so steps that add
+  no key add no request — one on open, one when the keys first appear, none
+  after. A count that climbs with the step count means the fetch has been keyed
+  on `dataVersion` instead, which refetches the layout for every run forever.
+
 ## Conventions worth knowing before editing
 
 - **The server's verdict is never recomputed.** `health` and `reason` are rendered
