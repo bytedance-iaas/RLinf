@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { useFetch } from "../api/useLive";
 import type { CheckpointEntry, EventKind, RunEvent, RunStatus } from "../api/types";
+import { PAGE_SIZE, Pager } from "../components/Pager";
 import { Code, Note } from "../components/primitives";
 import { bytes, clockTime, duration, integer, semanticsShort, timestamp } from "../lib/format";
 import { t, tNode } from "../lib/i18n";
@@ -24,9 +25,6 @@ export interface EventsProps {
 
 /** Kinds the "problems only" filter keeps. */
 const PROBLEM_KINDS: ReadonlySet<string> = new Set<EventKind>(["warn", "error"]);
-
-/** Rows per page. */
-const PAGE_SIZE = 50;
 
 /**
  * How many events are fetched.
@@ -114,7 +112,7 @@ export function Events(props: EventsProps) {
         <span className="control-value faint">
           {rows.length === 0
             ? t("events.rangeEmpty", { total: (eventsQuery.data ?? []).length })
-            : t("events.range", {
+            : t("pager.range", {
                 from: start + 1,
                 to: start + pageRows.length,
                 total: rows.length,
@@ -124,52 +122,6 @@ export function Events(props: EventsProps) {
         </span>
         {problemCount > 0 && (
           <span className="chip">{t("events.problemCount", { count: problemCount })}</span>
-        )}
-        {pageCount > 1 && (
-          <div className="control">
-            <span>{t("events.page")}</span>
-            <div className="control-group">
-              <button
-                className="btn"
-                type="button"
-                onClick={() => setPage(0)}
-                disabled={current === 0}
-                aria-label={t("events.firstPage")}
-              >
-                ‹‹
-              </button>
-              <button
-                className="btn"
-                type="button"
-                onClick={() => setPage(current - 1)}
-                disabled={current === 0}
-                aria-label={t("events.prevPage")}
-              >
-                ‹
-              </button>
-              <span className="control-value" aria-live="polite">
-                {current + 1} / {pageCount}
-              </span>
-              <button
-                className="btn"
-                type="button"
-                onClick={() => setPage(current + 1)}
-                disabled={current >= pageCount - 1}
-                aria-label={t("events.nextPage")}
-              >
-                ›
-              </button>
-              <button
-                className="btn"
-                type="button"
-                onClick={() => setPage(pageCount - 1)}
-                disabled={current >= pageCount - 1}
-                aria-label={t("events.lastPage")}
-              >
-                ››
-              </button>
-            </div>
-          </div>
         )}
       </div>
 
@@ -212,6 +164,10 @@ export function Events(props: EventsProps) {
           </div>
         ))}
       </div>
+
+      {/* Under the rows, which is where a reader is when they want the next
+          page. It renders nothing while the log fits on one. */}
+      <Pager page={current} pageCount={pageCount} onChange={setPage} />
 
       {/* Said on the last page only, where "no more rows" would otherwise read as
           "this is where the run began". The server returns the tail of the file,

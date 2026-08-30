@@ -77,6 +77,14 @@ export const zh: Record<keyof typeof en, string> = {
   "format.daysAgo": "{n} 天前",
 
   "healthbar.aria": "任务健康状态：{health}",
+
+  "pager.label": "翻页",
+  "pager.page": "第 {current} / {total} 页",
+  "pager.range": "{from}–{to} / 共 {total}",
+  "pager.first": "第一页",
+  "pager.prev": "上一页",
+  "pager.next": "下一页",
+  "pager.last": "最后一页",
   "progress.noHorizon": "无总步数",
 
   // -- Server card (run list) ----------------------------------------------
@@ -303,14 +311,8 @@ export const zh: Record<keyof typeof en, string> = {
   "events.all": "全部",
   "events.warnError": "警告 + 错误",
   "events.rangeEmpty": "0 / 共 {total}",
-  "events.range": "{from}–{to} / 共 {total}",
   "events.filteredFrom": "（从 {total} 条中筛选）",
   "events.problemCount": "{count} 条警告/错误",
-  "events.page": "页",
-  "events.firstPage": "第一页",
-  "events.prevPage": "上一页",
-  "events.nextPage": "下一页",
-  "events.lastPage": "最后一页",
   "events.exit": "退出信息",
   "events.logUnreadable": "事件日志不可读",
   "events.noneWarnTitle": "没有警告或错误",

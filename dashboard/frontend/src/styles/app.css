@@ -1212,8 +1212,13 @@ a:hover {
   color: var(--color-text-faint);
 }
 
+/* `align-items: center` is load-bearing, not cosmetic. Without it the default
+ * `stretch` makes a bare `<span>` in the group as tall as the 32px buttons
+ * beside it while its text stays at the top of that box, so a page position or
+ * a count sat visibly higher than the glyphs it belongs with. */
 .control-group {
   display: flex;
+  align-items: center;
   gap: var(--space-xs);
 }
 
@@ -1249,6 +1254,29 @@ input[type="checkbox"] {
   font-feature-settings: var(--type-numeric-sm-feature);
   font-variant-numeric: tabular-nums;
   color: var(--color-text);
+}
+
+/* The pager sits under the list it pages, which is where a reader arrives after
+ * reading one. Centred, because it is a control rather than data -- everything
+ * left-aligned in this app is something to read. */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
+}
+
+/* Tabular figures and a floor on the width so the row does not shift when the
+ * page number gains a digit -- the same rule every live number here follows. */
+.pager-position {
+  min-width: 12ch;
+  padding: 0 var(--space-sm);
+  text-align: center;
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
 }
 
 /* -------------------------------------------------------------------- tabs */
