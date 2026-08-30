@@ -231,6 +231,24 @@ Restart the server after regenerating the fixture. The TensorBoard accumulator
 caches file offsets per process, so a long-lived server keeps serving the old
 values for event files that were replaced underneath it.
 
+### 1b. The run list pages at twenty
+
+Point the server at a scan root with more than twenty runs (copying the fixture
+tree beside itself is enough) and open the list.
+
+- Twenty rows, `1–20 of 48` in the control bar, and the same pager as the event
+  log centred under the table.
+- The last page carries the remainder (`41–48 of 48`, eight rows) with `next`
+  and `last` disabled.
+- Filtering or searching returns to page 1. Staying on page 3 of a filter that
+  now has one page shows an empty table over a list that is not empty, which
+  reads as "no runs match" — the one thing the page must not say wrongly.
+- A filter that leaves one page removes the pager entirely.
+- The page position is vertically centred with the arrow buttons. It sounds
+  cosmetic; it was a real defect, because `.control-group` had no `align-items`
+  and the default `stretch` left every bare span in a button row sitting at the
+  top of its own box.
+
 ### 2. Overview — eight cards, legible in five seconds
 
 Open `http://localhost:5273/#/runs/20260801-142200-libero_10_ppo_lr3e6`.
@@ -334,7 +352,12 @@ and reload the page. The change appears with no frontend rebuild.
 Then open `.../events`. Newest first — an operator arriving after an alert wants the
 last thing that happened at the top:
 
-- `32 of 32` events, and the `warn + error` filter narrows to just those. On
+- `32 of 32` events, and the `warn + error` filter narrows to just those. The
+  control bar carries the filter and the range and nothing else: the pager lives
+  under the rows, where a reader is when they want the next page, and reads
+  `Page 1 of 3` between its arrows rather than a `Page` label attached to
+  whichever field precedes it. It is absent, not disabled, on a log that fits on
+  one page. On
   `.../libero_10_ppo_nan` the filter finds the "non-finite loss observed" warning and
   the page carries a red `Exit` note above the log, because for a failed run that is
   the single most useful thing on the page.

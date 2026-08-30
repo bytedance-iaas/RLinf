@@ -9,8 +9,9 @@
  * not by moving the row.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Health, RunState, RunSummary } from "../api/types";
+import { Pager } from "../components/Pager";
 import { Badge, Code, Note } from "../components/primitives";
 import { age, ageSince, duration, integer, semanticsLabel } from "../lib/format";
 import { statusLabel, t, tNode } from "../lib/i18n";
@@ -34,6 +35,17 @@ export interface RunListProps {
   onToggleSelect: (runId: string) => void;
   onCompare: () => void;
 }
+
+/**
+ * Rows per page.
+ *
+ * Twenty is what fits above the fold on a laptop without scrolling past the
+ * table into the server card, which is the geometry this page is read in: the
+ * question is "is anything wrong", and the answer should not require a scroll
+ * to know it has been fully asked. A scan root with a hundred runs is an
+ * archive, and paging one is cheaper to read than scrolling one.
+ */
+const PAGE_SIZE = 20;
 
 /**
  * Attention order, for the "needs attention" card only -- never for row order.
@@ -91,6 +103,19 @@ export function RunList(props: RunListProps) {
       );
     });
   }, [runs, stateFilter, query]);
+
+  const [page, setPage] = useState(0);
+  // Back to the first page whenever the set of rows changes meaning. Staying on
+  // page 4 of a filter that now has one page reads as an empty list.
+  useEffect(() => setPage(0), [stateFilter, query]);
+
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  // Clamped rather than stored back: a live list can lose rows between renders,
+  // and writing the correction into state would re-render to fix a number the
+  // reader never saw.
+  const current = Math.min(page, pageCount - 1);
+  const start = current * PAGE_SIZE;
+  const pageRows = rows.slice(start, start + PAGE_SIZE);
 
   /**
    * Every run that is not healthy, `unknown` included.
@@ -193,6 +218,18 @@ export function RunList(props: RunListProps) {
             ? t("runlist.compareN", { count: selected.length })
             : t("runlist.compare")}
         </button>
+        {/* How much of the list is on screen. Without it a paged table looks
+            like a filtered one, and the run you cannot find looks absent
+            rather than one page over. */}
+        {rows.length > 0 && (
+          <span className="control-value faint">
+            {t("pager.range", {
+              from: start + 1,
+              to: start + pageRows.length,
+              total: rows.length,
+            })}
+          </span>
+        )}
       </div>
 
       {collided.size > 0 && (
@@ -255,7 +292,7 @@ export function RunList(props: RunListProps) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((run) => (
+            {pageRows.map((run) => (
               <tr
                 key={rowKey(run)}
                 data-selected={selected.includes(rowKey(run)) ? "true" : undefined}
@@ -312,6 +349,8 @@ export function RunList(props: RunListProps) {
           </tbody>
         </table>
       </div>
+
+      <Pager page={current} pageCount={pageCount} onChange={setPage} />
 
       {rows.length === 0 &&
         (props.discovering ? (
