@@ -274,6 +274,28 @@ problem is one run or all of them — and offers the rest.
   over an already dark page, and the modal reads as a card someone forgot to
   close.
 
+### 1d. The header says one thing at a time
+
+The top-right region is the same on every page: theme, language, **Refresh**,
+and the connection state with the age of the data under it.
+
+- `Refresh` is present on the run list too, not only inside a run. It
+  re-fetches what the page fetched once — the server card here, the template,
+  keys, events, media and series inside a run — and clears this tab's memory of
+  a scan-root change so the row shows what the server says now.
+- The state reads `CONNECTED` or `DISCONNECTED` and nothing else. Hover it: the
+  tooltip carries the precise `connecting` / `live` / `reconnecting` / `error`,
+  which is what someone debugging the stream needs and what someone reading the
+  numbers does not.
+- The age sits **under** the state, as `updated 4s ago`. Watch the header for a
+  minute with the element inspector on the theme button: **nothing to its left
+  may move.** Before this, the age lived in the row, and `just now` is wider
+  than `5s ago`, so every second it resized its own box and shoved the controls
+  along. The group has a `min-width` for that reason.
+- The push interval is 5s (`RLINF_DASHBOARD_SSE_INTERVAL_S`), matching the
+  writer's heartbeat. Polling faster only costs syscalls and made that readout
+  restless for no new information.
+
 ### 2. Overview — eight cards, legible in five seconds
 
 Open `http://localhost:5273/#/runs/20260801-142200-libero_10_ppo_lr3e6`.

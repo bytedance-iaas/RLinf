@@ -192,6 +192,29 @@ a:hover {
   stroke-linejoin: round;
 }
 
+/* The connection state and the age of the data, stacked.
+ *
+ * `min-width` is the point of the group. The age is the one thing in the header
+ * that changes every second, and while it sat in the row it resized its own box
+ * -- "just now" is wider than "5s ago" -- and pushed every control to its left.
+ * A floor wide enough for the longest phrase in either language leaves the
+ * digits the only thing that moves, and tabular figures keep even those in
+ * place. */
+.header-live-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 9.5rem;
+}
+
+.as-of {
+  font-size: var(--type-label-sm-size);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--color-text-faint);
+}
+
 .header-live {
   display: flex;
   align-items: center;
@@ -371,7 +394,7 @@ a:hover {
     display: inline;
   }
 
-  .header-live {
+  .header-live-group {
     display: none;
   }
 
