@@ -21,6 +21,20 @@
 
 import { t } from "../lib/i18n";
 
+/**
+ * Rows per page, for every list in the console.
+ *
+ * Twenty is what fits above the fold on a laptop without scrolling past the
+ * list into whatever follows it, which is the geometry both lists are read in:
+ * the run list answers "is anything wrong", and the event log is read after an
+ * alert. Neither answer should need a scroll to know it has been fully asked.
+ *
+ * One constant because it is one decision. The event log paged at fifty until
+ * the run list picked twenty, and a console where two lists disagree about how
+ * much a page holds makes the reader relearn the pager on every view.
+ */
+export const PAGE_SIZE = 20;
+
 export interface PagerProps {
   /** Zero-based, because the call sites slice arrays with it. */
   page: number;

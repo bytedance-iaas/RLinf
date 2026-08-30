@@ -231,13 +231,15 @@ Restart the server after regenerating the fixture. The TensorBoard accumulator
 caches file offsets per process, so a long-lived server keeps serving the old
 values for event files that were replaced underneath it.
 
-### 1b. The run list pages at twenty
+### 1b. Both lists page at twenty
 
 Point the server at a scan root with more than twenty runs (copying the fixture
 tree beside itself is enough) and open the list.
 
-- Twenty rows, `1–20 of 48` in the control bar, and the same pager as the event
-  log centred under the table.
+- Twenty rows, `1–20 of 48` in the control bar, and the pager centred under the
+  table. Twenty is `PAGE_SIZE` in `src/components/Pager.tsx` — one constant for
+  every list, because a console where two lists disagree about how much a page
+  holds makes the reader relearn the pager on each view.
 - The last page carries the remainder (`41–48 of 48`, eight rows) with `next`
   and `last` disabled.
 - Filtering or searching returns to page 1. Staying on page 3 of a filter that
@@ -382,7 +384,8 @@ last thing that happened at the top:
   under the rows, where a reader is when they want the next page, and reads
   `Page 1 of 3` between its arrows rather than a `Page` label attached to
   whichever field precedes it. It is absent, not disabled, on a log that fits on
-  one page. On
+  one page — which a 32-event log does, at twenty rows a page. Append a hundred
+  lines to `events.jsonl` to see the pager here. On
   `.../libero_10_ppo_nan` the filter finds the "non-finite loss observed" warning and
   the page carries a red `Exit` note above the log, because for a failed run that is
   the single most useful thing on the page.

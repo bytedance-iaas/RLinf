@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Health, RunState, RunSummary } from "../api/types";
 import { Dialog } from "../components/Dialog";
-import { Pager } from "../components/Pager";
+import { PAGE_SIZE, Pager } from "../components/Pager";
 import { Badge, Code, Note } from "../components/primitives";
 import { age, ageSince, duration, integer, semanticsLabel } from "../lib/format";
 import { statusLabel, t, tNode } from "../lib/i18n";
@@ -36,17 +36,6 @@ export interface RunListProps {
   onToggleSelect: (runId: string) => void;
   onCompare: () => void;
 }
-
-/**
- * Rows per page.
- *
- * Twenty is what fits above the fold on a laptop without scrolling past the
- * table into the server card, which is the geometry this page is read in: the
- * question is "is anything wrong", and the answer should not require a scroll
- * to know it has been fully asked. A scan root with a hundred runs is an
- * archive, and paging one is cheaper to read than scrolling one.
- */
-const PAGE_SIZE = 20;
 
 /**
  * How many runs the attention card names before it stops.

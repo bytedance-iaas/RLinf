@@ -12,7 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { useFetch } from "../api/useLive";
 import type { CheckpointEntry, EventKind, RunEvent, RunStatus } from "../api/types";
-import { Pager } from "../components/Pager";
+import { PAGE_SIZE, Pager } from "../components/Pager";
 import { Code, Note } from "../components/primitives";
 import { bytes, clockTime, duration, integer, semanticsShort, timestamp } from "../lib/format";
 import { t, tNode } from "../lib/i18n";
@@ -25,9 +25,6 @@ export interface EventsProps {
 
 /** Kinds the "problems only" filter keeps. */
 const PROBLEM_KINDS: ReadonlySet<string> = new Set<EventKind>(["warn", "error"]);
-
-/** Rows per page. */
-const PAGE_SIZE = 50;
 
 /**
  * How many events are fetched.
