@@ -1,7 +1,7 @@
 # RLinf 快速上手
 
 本文介绍如何在火山引擎容器服务上部署 RLinf，并跑通一次完整的具身强化学习训练。全文以
-π₀.₅ 为例，主线是单机 4 卡的 LIBERO async PPO 训练，第二部分第 9 节另给出 SO101 +
+π₀.₅ 为例，主线是单机 8 卡的 LIBERO async PPO 训练，第二部分第 9 节另给出 SO101 +
 ManiSkill 的跑法。
 
 内容分为两部分：**部署**只做一次，**运行训练**每次实验重复。源码、模型、日志与
@@ -94,10 +94,11 @@ persistence:
   storageClass: <集群块存储 StorageClass>    # kubectl get storageclass，例如 ebs-essd
   size: 500Gi
 
-# 4 卡训练的实测取值。变更卡数时，按每卡约 4 core / 32Gi 申请量等比缩放。
+# 8 卡训练的实测取值。变更卡数时，按每卡约 4 core / 32Gi 申请量等比缩放
+# （4 卡即 requests 16 core / 128Gi、limits 60 core / 512Gi）。
 resources:
-  requests: { cpu: "16", memory: 128Gi, nvidia.com/gpu: "4" }
-  limits:   { cpu: "60", memory: 512Gi, nvidia.com/gpu: "4" }
+  requests: { cpu: "32", memory: 256Gi, nvidia.com/gpu: "8" }
+  limits:   { cpu: "120", memory: 1Ti, nvidia.com/gpu: "8" }
 
 dashboard:
   image:
@@ -343,13 +344,13 @@ test -d /workspace/models/RLinf-Pi05-LIBERO-SFT && echo "model exists"
 `examples/embodiment/config/libero_spatial_async_ppo_openpi_pi05.yaml`，并通过命令行覆盖为
 经过验证的配置。以下两组取值均为实测，每卡工作量相同（per-rank batch 32、每卡 16 个 env）：
 
-| | **4 卡** | **8 卡** |
+| | **8 卡（本文主线）** | 4 卡 |
 |---|---|---|
 | 模式 | async + colocated，actor/rollout/env 共用全部 GPU | 同左 |
-| 训练环境数 | 64 | **128** |
+| 训练环境数 | **128** | 64 |
 | horizon | 120 | 120 |
 | `group_size` / `update_epoch` | 2 / 2 | 2 / 2 |
-| global batch / micro batch | 128 / 32 | **256** / 32 |
+| global batch / micro batch | **256** / 32 | 128 / 32 |
 | checkpoint | 每 40 step 及最后一步保存 | 同左 |
 
 > ⚠️ **4 卡的取值不能直接搬到 8 卡。** actor 侧有硬断言
@@ -359,8 +360,8 @@ test -d /workspace/models/RLinf-Pi05-LIBERO-SFT && echo "model exists"
 > 另外 `env.eval.total_num_envs` 默认 500，8 卡下 `500 % 8 ≠ 0`。性能测试关闭了 eval 所以不触发，
 > 但**正常开着 eval 训练时会撞上**，需改成能被卡数整除的值（如 504）。
 
-第 8 节的启动命令给出的是 4 卡取值，按上表替换 `env.train.total_num_envs` 与
-`actor.global_batch_size` 即为 8 卡版本。
+第 8 节的启动命令给出的是 8 卡取值；改跑 4 卡时按上表把 `env.train.total_num_envs` 换成 64、
+`actor.global_batch_size` 换成 128 即可。
 
 ## 4. 性能优化特性
 
@@ -415,10 +416,10 @@ actor.model.openpi.enable_fused_prefix=true \
 
 | 场景 | baseline | fused | compile | **split** |
 |---|---|---|---|---|
-| LIBERO colocated **8 卡** | 102.98±0.90 s | −6.91% | −3.14% | **−8.31%** |
-| LIBERO colocated 4 卡 | 89.74±2.04 s | −11.53% | −2.83% | **−14.24%** |
+| **LIBERO colocated 8 卡（本文配置）** | 102.98±0.90 s | −6.91% | −3.14% | **−8.31%** |
 | LIBERO disaggregated 4+4 | 103.23±0.24 s | −4.15% | −2.40% | +1.12% |
 | ManiSkill disaggregated 4+4 | 221.85±1.14 s | −4.55% | −5.89% | **−6.24%** |
+| LIBERO colocated 4 卡（对比） | 89.74±2.04 s | −11.53% | −2.83% | **−14.24%** |
 
 > split 相对当场最优单项的领先幅度，在每个场景都小于二者 run 间标准差之和，因此应理解为
 > **"不劣于最优单项"** 而非"严格更优"。它可靠的优势在阶段指标：见下表。
@@ -480,10 +481,10 @@ setsid python examples/embodiment/train_async.py \
   runner.val_check_interval=-1 \
   algorithm.group_size=2 \
   algorithm.update_epoch=2 \
-  env.train.total_num_envs=64 \
+  env.train.total_num_envs=128 \
   env.train.max_episode_steps=120 \
   env.train.max_steps_per_rollout_epoch=120 \
-  actor.global_batch_size=128 \
+  actor.global_batch_size=256 \
   actor.micro_batch_size=32 \
   actor.model.model_path=/workspace/models/RLinf-Pi05-LIBERO-SFT \
   rollout.model.model_path=/workspace/models/RLinf-Pi05-LIBERO-SFT \
