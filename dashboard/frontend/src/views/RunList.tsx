@@ -9,8 +9,10 @@
  * not by moving the row.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Health, RunState, RunSummary } from "../api/types";
+import { Dialog } from "../components/Dialog";
+import { PAGE_SIZE, Pager } from "../components/Pager";
 import { Badge, Code, Note } from "../components/primitives";
 import { age, ageSince, duration, integer, semanticsLabel } from "../lib/format";
 import { statusLabel, t, tNode } from "../lib/i18n";
@@ -34,6 +36,18 @@ export interface RunListProps {
   onToggleSelect: (runId: string) => void;
   onCompare: () => void;
 }
+
+/**
+ * How many runs the attention card names before it stops.
+ *
+ * The card exists to be read in one glance on the way to the table, and a scan
+ * root where thirty runs are unhealthy turns it into a page of its own -- the
+ * table it sits above disappears below the fold, which is the opposite of what
+ * a summary is for. Five is enough to see whether the problem is one run or all
+ * of them; the rest are one click away, in worst-first order, so the five shown
+ * are always the ones that matter most.
+ */
+const ATTENTION_PREVIEW = 5;
 
 /**
  * Attention order, for the "needs attention" card only -- never for row order.
@@ -91,6 +105,20 @@ export function RunList(props: RunListProps) {
       );
     });
   }, [runs, stateFilter, query]);
+
+  const [page, setPage] = useState(0);
+  const [attentionOpen, setAttentionOpen] = useState(false);
+  // Back to the first page whenever the set of rows changes meaning. Staying on
+  // page 4 of a filter that now has one page reads as an empty list.
+  useEffect(() => setPage(0), [stateFilter, query]);
+
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  // Clamped rather than stored back: a live list can lose rows between renders,
+  // and writing the correction into state would re-render to fix a number the
+  // reader never saw.
+  const current = Math.min(page, pageCount - 1);
+  const start = current * PAGE_SIZE;
+  const pageRows = rows.slice(start, start + PAGE_SIZE);
 
   /**
    * Every run that is not healthy, `unknown` included.
@@ -193,6 +221,18 @@ export function RunList(props: RunListProps) {
             ? t("runlist.compareN", { count: selected.length })
             : t("runlist.compare")}
         </button>
+        {/* How much of the list is on screen. Without it a paged table looks
+            like a filtered one, and the run you cannot find looks absent
+            rather than one page over. */}
+        {rows.length > 0 && (
+          <span className="control-value faint">
+            {t("pager.range", {
+              from: start + 1,
+              to: start + pageRows.length,
+              total: rows.length,
+            })}
+          </span>
+        )}
       </div>
 
       {collided.size > 0 && (
@@ -230,12 +270,44 @@ export function RunList(props: RunListProps) {
             { count: attention.length },
           )}
         >
-          {attention.map((run) => (
+          {attention.slice(0, ATTENTION_PREVIEW).map((run) => (
             <div key={rowKey(run)}>
               <Badge tone={run.health} /> {run.experiment_name ?? run.run_id}
             </div>
           ))}
+          {attention.length > ATTENTION_PREVIEW && (
+            <button
+              className="attention-more"
+              type="button"
+              onClick={() => setAttentionOpen(true)}
+            >
+              {t("runlist.attentionMore", {
+                count: attention.length - ATTENTION_PREVIEW,
+              })}
+            </button>
+          )}
         </Note>
+      )}
+
+      {/* The full list, on request. Same rows, same worst-first order -- the
+          card is a preview of this, not a different answer. */}
+      {attention.length > 0 && (
+        <Dialog
+          open={attentionOpen}
+          onClose={() => setAttentionOpen(false)}
+          title={t(
+            attention.length === 1 ? "runlist.attention.one" : "runlist.attention.other",
+            { count: attention.length },
+          )}
+        >
+          <div className="attention-list">
+            {attention.map((run) => (
+              <div key={rowKey(run)}>
+                <Badge tone={run.health} /> {run.experiment_name ?? run.run_id}
+              </div>
+            ))}
+          </div>
+        </Dialog>
       )}
 
       <div className="table-scroll">
@@ -255,7 +327,7 @@ export function RunList(props: RunListProps) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((run) => (
+            {pageRows.map((run) => (
               <tr
                 key={rowKey(run)}
                 data-selected={selected.includes(rowKey(run)) ? "true" : undefined}
@@ -312,6 +384,8 @@ export function RunList(props: RunListProps) {
           </tbody>
         </table>
       </div>
+
+      <Pager page={current} pageCount={pageCount} onChange={setPage} />
 
       {rows.length === 0 &&
         (props.discovering ? (

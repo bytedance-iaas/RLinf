@@ -231,6 +231,49 @@ Restart the server after regenerating the fixture. The TensorBoard accumulator
 caches file offsets per process, so a long-lived server keeps serving the old
 values for event files that were replaced underneath it.
 
+### 1b. Both lists page at twenty
+
+Point the server at a scan root with more than twenty runs (copying the fixture
+tree beside itself is enough) and open the list.
+
+- Twenty rows, `1–20 of 48` in the control bar, and the pager centred under the
+  table. Twenty is `PAGE_SIZE` in `src/components/Pager.tsx` — one constant for
+  every list, because a console where two lists disagree about how much a page
+  holds makes the reader relearn the pager on each view.
+- The last page carries the remainder (`41–48 of 48`, eight rows) with `next`
+  and `last` disabled.
+- Filtering or searching returns to page 1. Staying on page 3 of a filter that
+  now has one page shows an empty table over a list that is not empty, which
+  reads as "no runs match" — the one thing the page must not say wrongly.
+- A filter that leaves one page removes the pager entirely.
+- The page position is vertically centred with the arrow buttons. It sounds
+  cosmetic; it was a real defect, because `.control-group` had no `align-items`
+  and the default `stretch` left every bare span in a button row sitting at the
+  top of its own box.
+
+### 1c. The attention card stops at five
+
+A scan root where thirty runs are unhealthy used to put a page of names above
+the table. The card is a summary, so it names five — enough to see whether the
+problem is one run or all of them — and offers the rest.
+
+- Five rows, then `… and 31 more`. The five are the worst, since the list is
+  ordered `unreachable`, `degraded`, `unknown`, and the card shares that order
+  with the dialog rather than having its own.
+- Clicking opens a modal with all of them, scrollable, same rows in the same
+  order.
+- It is a native `<dialog>` opened with `showModal()`, so the platform gives
+  what a hand-rolled overlay usually misses. Check all four: **Escape** closes
+  it, a click on the **backdrop** closes it, focus is **trapped** inside it
+  while open, and on close focus **returns to the `… and N more` button**.
+- Reopening after Escape must work. If it does not, the element closed itself
+  while React still believed it was open — which is the whole reason `Dialog`
+  listens for the native `close` event.
+- The page behind is dimmed by `--color-scrim`, not by `--color-shadow-overlay`.
+  The latter is the dialog's own shadow; reused as a backdrop it is 32% black
+  over an already dark page, and the modal reads as a card someone forgot to
+  close.
+
 ### 2. Overview — eight cards, legible in five seconds
 
 Open `http://localhost:5273/#/runs/20260801-142200-libero_10_ppo_lr3e6`.
@@ -274,10 +317,12 @@ allowed to paraphrase either one into a shared string.
 no spinner, shimmer or pulse:
 
 ```bash
-grep -c "@keyframes\|animation:\|transition" src/styles/app.css   # 0
+grep -n "@keyframes\|animation:\|transition" src/styles/app.css
 ```
 
-There is no animation and no transition anywhere in the app.
+Two hits, both on the media play badge's hover, both behind a
+`prefers-reduced-motion` opt-out. Nothing that carries information ever moves:
+no spinner, no shimmer, no pulse, and no entrance animation on the modal.
 
 The **Anomalies** card holds the three signals the server cannot compute, because
 `derive_health` is a pure function of a snapshot and a clock and these need the
@@ -334,7 +379,13 @@ and reload the page. The change appears with no frontend rebuild.
 Then open `.../events`. Newest first — an operator arriving after an alert wants the
 last thing that happened at the top:
 
-- `32 of 32` events, and the `warn + error` filter narrows to just those. On
+- `32 of 32` events, and the `warn + error` filter narrows to just those. The
+  control bar carries the filter and the range and nothing else: the pager lives
+  under the rows, where a reader is when they want the next page, and reads
+  `Page 1 of 3` between its arrows rather than a `Page` label attached to
+  whichever field precedes it. It is absent, not disabled, on a log that fits on
+  one page — which a 32-event log does, at twenty rows a page. Append a hundred
+  lines to `events.jsonl` to see the pager here. On
   `.../libero_10_ppo_nan` the filter finds the "non-finite loss observed" warning and
   the page carries a red `Exit` note above the log, because for a failed run that is
   the single most useful thing on the page.

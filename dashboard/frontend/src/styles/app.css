@@ -1212,8 +1212,13 @@ a:hover {
   color: var(--color-text-faint);
 }
 
+/* `align-items: center` is load-bearing, not cosmetic. Without it the default
+ * `stretch` makes a bare `<span>` in the group as tall as the 32px buttons
+ * beside it while its text stays at the top of that box, so a page position or
+ * a count sat visibly higher than the glyphs it belongs with. */
 .control-group {
   display: flex;
+  align-items: center;
   gap: var(--space-xs);
 }
 
@@ -1249,6 +1254,100 @@ input[type="checkbox"] {
   font-feature-settings: var(--type-numeric-sm-feature);
   font-variant-numeric: tabular-nums;
   color: var(--color-text);
+}
+
+/* The "and N more" control under the attention preview. A button, because it
+ * opens something; styled as the text it interrupts, because it is the last
+ * line of a list rather than an action bar. */
+.attention-more {
+  padding: 0;
+  background: none;
+  border: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-muted);
+  text-align: left;
+}
+
+.attention-more:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+}
+
+/* --------------------------------------------------------------- dialog */
+
+/* The native element, so the top layer, focus trapping and Escape come from the
+ * platform. `padding: 0` because the browser's default padding would sit
+ * outside the border-radius on the backdrop click target. */
+.dialog {
+  max-width: min(560px, calc(100vw - 2 * var(--space-lg)));
+  padding: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  /* The one place DESIGN.md allows a shadow: something that must visibly float
+   * above data. */
+  box-shadow: 0 8px 20px var(--color-shadow-overlay);
+  color: var(--color-text);
+}
+
+/* `scrim`, not `shadow-overlay`: the shadow lifts the dialog off the page, the
+ * scrim says the page is not accepting clicks. See DESIGN.md's Do's and Don'ts. */
+.dialog::backdrop {
+  background: var(--color-scrim);
+}
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dialog-title {
+  margin: 0;
+  font-size: var(--type-headline-md-size);
+  font-weight: var(--type-headline-md-weight);
+}
+
+/* Capped rather than unbounded: a list of forty is the reason this dialog
+ * exists, and a dialog taller than the window has the same problem the card
+ * had. */
+.dialog-body {
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  padding: var(--space-md) var(--space-lg);
+}
+
+.attention-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: var(--type-body-sm-size);
+}
+
+/* The pager sits under the list it pages, which is where a reader arrives after
+ * reading one. Centred, because it is a control rather than data -- everything
+ * left-aligned in this app is something to read. */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
+}
+
+/* Tabular figures and a floor on the width so the row does not shift when the
+ * page number gains a digit -- the same rule every live number here follows. */
+.pager-position {
+  min-width: 12ch;
+  padding: 0 var(--space-sm);
+  text-align: center;
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
 }
 
 /* -------------------------------------------------------------------- tabs */
