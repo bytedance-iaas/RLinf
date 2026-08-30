@@ -81,6 +81,14 @@ export const en = {
   "format.daysAgo": "{n}d ago",
 
   "healthbar.aria": "Run health: {health}",
+
+  "pager.label": "Pagination",
+  "pager.page": "Page {current} of {total}",
+  "pager.range": "{from}–{to} of {total}",
+  "pager.first": "First page",
+  "pager.prev": "Previous page",
+  "pager.next": "Next page",
+  "pager.last": "Last page",
   "progress.noHorizon": "no horizon",
 
   // -- Server card (run list) ----------------------------------------------
@@ -334,14 +342,8 @@ export const en = {
   "events.all": "all",
   "events.warnError": "warn + error",
   "events.rangeEmpty": "0 of {total}",
-  "events.range": "{from}–{to} of {total}",
   "events.filteredFrom": " (filtered from {total})",
   "events.problemCount": "{count} warn/error",
-  "events.page": "Page",
-  "events.firstPage": "First page",
-  "events.prevPage": "Previous page",
-  "events.nextPage": "Next page",
-  "events.lastPage": "Last page",
   "events.exit": "Exit",
   "events.logUnreadable": "Event log unreadable",
   "events.noneWarnTitle": "No warnings or errors",
