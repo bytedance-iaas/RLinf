@@ -249,6 +249,29 @@ tree beside itself is enough) and open the list.
   and the default `stretch` left every bare span in a button row sitting at the
   top of its own box.
 
+### 1c. The attention card stops at five
+
+A scan root where thirty runs are unhealthy used to put a page of names above
+the table. The card is a summary, so it names five — enough to see whether the
+problem is one run or all of them — and offers the rest.
+
+- Five rows, then `… and 31 more`. The five are the worst, since the list is
+  ordered `unreachable`, `degraded`, `unknown`, and the card shares that order
+  with the dialog rather than having its own.
+- Clicking opens a modal with all of them, scrollable, same rows in the same
+  order.
+- It is a native `<dialog>` opened with `showModal()`, so the platform gives
+  what a hand-rolled overlay usually misses. Check all four: **Escape** closes
+  it, a click on the **backdrop** closes it, focus is **trapped** inside it
+  while open, and on close focus **returns to the `… and N more` button**.
+- Reopening after Escape must work. If it does not, the element closed itself
+  while React still believed it was open — which is the whole reason `Dialog`
+  listens for the native `close` event.
+- The page behind is dimmed by `--color-scrim`, not by `--color-shadow-overlay`.
+  The latter is the dialog's own shadow; reused as a backdrop it is 32% black
+  over an already dark page, and the modal reads as a card someone forgot to
+  close.
+
 ### 2. Overview — eight cards, legible in five seconds
 
 Open `http://localhost:5273/#/runs/20260801-142200-libero_10_ppo_lr3e6`.
@@ -292,10 +315,12 @@ allowed to paraphrase either one into a shared string.
 no spinner, shimmer or pulse:
 
 ```bash
-grep -c "@keyframes\|animation:\|transition" src/styles/app.css   # 0
+grep -n "@keyframes\|animation:\|transition" src/styles/app.css
 ```
 
-There is no animation and no transition anywhere in the app.
+Two hits, both on the media play badge's hover, both behind a
+`prefers-reduced-motion` opt-out. Nothing that carries information ever moves:
+no spinner, no shimmer, no pulse, and no entrance animation on the modal.
 
 The **Anomalies** card holds the three signals the server cannot compute, because
 `derive_health` is a pure function of a snapshot and a clock and these need the

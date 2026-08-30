@@ -11,6 +11,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Health, RunState, RunSummary } from "../api/types";
+import { Dialog } from "../components/Dialog";
 import { Pager } from "../components/Pager";
 import { Badge, Code, Note } from "../components/primitives";
 import { age, ageSince, duration, integer, semanticsLabel } from "../lib/format";
@@ -46,6 +47,18 @@ export interface RunListProps {
  * archive, and paging one is cheaper to read than scrolling one.
  */
 const PAGE_SIZE = 20;
+
+/**
+ * How many runs the attention card names before it stops.
+ *
+ * The card exists to be read in one glance on the way to the table, and a scan
+ * root where thirty runs are unhealthy turns it into a page of its own -- the
+ * table it sits above disappears below the fold, which is the opposite of what
+ * a summary is for. Five is enough to see whether the problem is one run or all
+ * of them; the rest are one click away, in worst-first order, so the five shown
+ * are always the ones that matter most.
+ */
+const ATTENTION_PREVIEW = 5;
 
 /**
  * Attention order, for the "needs attention" card only -- never for row order.
@@ -105,6 +118,7 @@ export function RunList(props: RunListProps) {
   }, [runs, stateFilter, query]);
 
   const [page, setPage] = useState(0);
+  const [attentionOpen, setAttentionOpen] = useState(false);
   // Back to the first page whenever the set of rows changes meaning. Staying on
   // page 4 of a filter that now has one page reads as an empty list.
   useEffect(() => setPage(0), [stateFilter, query]);
@@ -267,12 +281,44 @@ export function RunList(props: RunListProps) {
             { count: attention.length },
           )}
         >
-          {attention.map((run) => (
+          {attention.slice(0, ATTENTION_PREVIEW).map((run) => (
             <div key={rowKey(run)}>
               <Badge tone={run.health} /> {run.experiment_name ?? run.run_id}
             </div>
           ))}
+          {attention.length > ATTENTION_PREVIEW && (
+            <button
+              className="attention-more"
+              type="button"
+              onClick={() => setAttentionOpen(true)}
+            >
+              {t("runlist.attentionMore", {
+                count: attention.length - ATTENTION_PREVIEW,
+              })}
+            </button>
+          )}
         </Note>
+      )}
+
+      {/* The full list, on request. Same rows, same worst-first order -- the
+          card is a preview of this, not a different answer. */}
+      {attention.length > 0 && (
+        <Dialog
+          open={attentionOpen}
+          onClose={() => setAttentionOpen(false)}
+          title={t(
+            attention.length === 1 ? "runlist.attention.one" : "runlist.attention.other",
+            { count: attention.length },
+          )}
+        >
+          <div className="attention-list">
+            {attention.map((run) => (
+              <div key={rowKey(run)}>
+                <Badge tone={run.health} /> {run.experiment_name ?? run.run_id}
+              </div>
+            ))}
+          </div>
+        </Dialog>
       )}
 
       <div className="table-scroll">

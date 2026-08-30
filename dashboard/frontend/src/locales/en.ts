@@ -133,8 +133,11 @@ export const en = {
     "also happens when a copied config pins {code}. Give each run its own id to tell " +
     "them apart.",
 
+  "common.close": "Close",
+
   "runlist.attention.one": "1 run needs attention",
   "runlist.attention.other": "{count} runs need attention",
+  "runlist.attentionMore": "… and {count} more",
 
   "runlist.col.run": "Run",
   "runlist.col.state": "State",

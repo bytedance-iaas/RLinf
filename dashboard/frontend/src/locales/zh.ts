@@ -127,8 +127,11 @@ export const zh: Record<keyof typeof en, string> = {
     "默认 id 是秒级时间戳加实验名，所以复制来的配置里写死 {code} 时也会这样。给每个任务" +
     "各自的 id 才能区分开。",
 
+  "common.close": "关闭",
+
   "runlist.attention.one": "1 个任务需要关注",
   "runlist.attention.other": "{count} 个任务需要关注",
+  "runlist.attentionMore": "…… 还有 {count} 个",
 
   "runlist.col.run": "任务",
   "runlist.col.state": "状态",
