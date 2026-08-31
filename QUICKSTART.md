@@ -360,7 +360,7 @@ test -d /workspace/models/RLinf-Pi05-LIBERO-SFT && echo "model exists"
 > 另外 `env.eval.total_num_envs` 默认 500，8 卡下 `500 % 8 ≠ 0`。性能测试关闭了 eval 所以不触发，
 > 但**正常开着 eval 训练时会撞上**，需改成能被卡数整除的值（如 504）。
 
-第 8 节的启动命令给出的是 8 卡取值；改跑 4 卡时按上表把 `env.train.total_num_envs` 换成 64、
+第 6 节的启动命令给出的是 8 卡取值；改跑 4 卡时按上表把 `env.train.total_num_envs` 换成 64、
 `actor.global_batch_size` 换成 128 即可。
 
 ## 4. 性能优化特性
@@ -468,7 +468,7 @@ export MUJOCO_GL=egl
 export PYOPENGL_PLATFORM=egl
 export ROBOT_PLATFORM=LIBERO
 
-export RUN_NAME="$(date +%Y%m%d-%H%M%S)-pi05-libero-4gpu"
+export RUN_NAME="$(date +%Y%m%d-%H%M%S)-pi05-libero-8gpu"
 export LOG_DIR="/workspace/RLinf/logs/${RUN_NAME}"
 mkdir -p "${LOG_DIR}"
 
@@ -490,18 +490,29 @@ setsid python examples/embodiment/train_async.py \
   rollout.model.model_path=/workspace/models/RLinf-Pi05-LIBERO-SFT \
   +actor.sync_weight_no_wait=true \
   actor.model.openpi.enable_fused_prefix=true \
+  +rollout.model.openpi.enable_fused_prefix=false \
+  +rollout.enable_torch_compile=true \
+  +rollout.torch_compile_mode=default \
   > "${LOG_DIR}/run.log" 2>&1 < /dev/null &
 echo $! > "${LOG_DIR}/driver.pid"
 ```
 
-命令末尾两行是第 4 节的**自研优化参数**，其余为常规训练配置。按第 5 节的场景建议增删：
+命令末尾五行是第 4 节的**自研优化参数**，其余为常规训练配置。前四行合起来就是第 5 节推荐
+的 **split**：fused 只作用于 actor、图编译只作用于 rollout，是实测五个场景中唯一同时拿到两侧
+收益的组合，也是各 placement 下的安全默认，改用 disaggregated 时同样适用。
 
-- **`+actor.sync_weight_no_wait=true`**，异步权重同步（4.1）；
-- **`actor.model.openpi.enable_fused_prefix=true`**，Fused Prefix Kernel（4.2）。本文的
-  LIBERO colocated 场景中，它是端到端收益最高的一项；
-- 改用 disaggregated placement 时，换成 **`+rollout.enable_torch_compile=true`**
-  **`+rollout.torch_compile_mode=default`**，即 Rollout 图编译（4.3），并按 4.2 关闭
-  rollout 侧的 fused。
+- **`actor.model.openpi.enable_fused_prefix=true`** 与
+  **`+rollout.model.openpi.enable_fused_prefix=false`**，Fused Prefix Kernel（4.2）只留在
+  actor 侧。第二行不能省——rollout 的模型配置由 actor 深拷贝而来，省掉它 fused 会跟着落到
+  rollout 上，与图编译互相抵消；
+- **`+rollout.enable_torch_compile=true`** 与 **`+rollout.torch_compile_mode=default`**，
+  Rollout 图编译（4.3）。首步有 53～59 秒的一次性编译开销，只跑几步的验证性运行可以摘掉这
+  两行；
+- **`+actor.sync_weight_no_wait=true`**，异步权重同步（4.1）。单机没有可测收益，也没有代价，
+  跨机部署时才会体现出来。
+
+若配置为可训练 prefix（`train_expert_only=false`），删掉 fused 的那两行——见第 5 节末尾的
+显存说明。
 
 几个环境变量的用途：`EMBODIED_PATH` 是配置文件解析所必需的，缺失时 Hydra 在插值阶段就会
 失败；`MUJOCO_GL` 与 `PYOPENGL_PLATFORM` 用于 LIBERO 的离屏渲染；`ROBOT_PLATFORM` 决定动作
