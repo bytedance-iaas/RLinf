@@ -104,8 +104,10 @@ class Settings(BaseSettings):
     startup_grace_s: float = 600.0
 
     #: SSE push period. The training side heartbeats every 5s by default, so
-    #: polling faster than this only costs syscalls.
-    sse_interval_s: float = 2.0
+    #: polling faster than this only costs syscalls -- which is why this matches
+    #: it rather than beating it. A two-second push also made the header's "as
+    #: of" readout restless for no new information.
+    sse_interval_s: float = 5.0
 
     #: Discovery result cache TTL. A scan stats every candidate manifest, which
     #: is the expensive part of ``/runs`` on a large NFS tree.
