@@ -1,7 +1,7 @@
 # RLinf 快速上手
 
 本文介绍如何在火山引擎容器服务上部署 RLinf，并跑通一次完整的具身强化学习训练。全文以
-π₀.₅ 为例，主线是单机 4 卡的 LIBERO async PPO 训练，第二部分第 9 节另给出 SO101 +
+π₀.₅ 为例，主线是单机 8 卡的 LIBERO async PPO 训练，第二部分第 9 节另给出 SO101 +
 ManiSkill 的跑法。
 
 内容分为两部分：**部署**只做一次，**运行训练**每次实验重复。源码、模型、日志与
@@ -94,10 +94,11 @@ persistence:
   storageClass: <集群块存储 StorageClass>    # kubectl get storageclass，例如 ebs-essd
   size: 500Gi
 
-# 4 卡训练的实测取值。变更卡数时，按每卡约 4 core / 32Gi 申请量等比缩放。
+# 8 卡训练的实测取值。变更卡数时，按每卡约 4 core / 32Gi 申请量等比缩放
+# （4 卡即 requests 16 core / 128Gi、limits 60 core / 512Gi）。
 resources:
-  requests: { cpu: "16", memory: 128Gi, nvidia.com/gpu: "4" }
-  limits:   { cpu: "60", memory: 512Gi, nvidia.com/gpu: "4" }
+  requests: { cpu: "32", memory: 256Gi, nvidia.com/gpu: "8" }
+  limits:   { cpu: "120", memory: 1Ti, nvidia.com/gpu: "8" }
 
 dashboard:
   image:
@@ -341,13 +342,26 @@ test -d /workspace/models/RLinf-Pi05-LIBERO-SFT && echo "model exists"
 
 基础配置文件为
 `examples/embodiment/config/libero_spatial_async_ppo_openpi_pi05.yaml`，并通过命令行覆盖为
-经过验证的 4 卡配置：
+经过验证的配置。以下两组取值均为实测，每卡工作量相同（per-rank batch 32、每卡 16 个 env）：
 
-- async + colocated 模式，actor、rollout 与 env 共用 4 张 GPU；
-- 64 个训练环境，horizon 120；
-- `group_size=2`、`update_epoch=2`；
-- global batch 128、micro batch 32；
-- 每 40 step 保存一次 checkpoint，并在最后一步保存。
+| | **8 卡（本文主线）** | 4 卡 |
+|---|---|---|
+| 模式 | async + colocated，actor/rollout/env 共用全部 GPU | 同左 |
+| 训练环境数 | **128** | 64 |
+| horizon | 120 | 120 |
+| `group_size` / `update_epoch` | 2 / 2 | 2 / 2 |
+| global batch / micro batch | **256** / 32 | 128 / 32 |
+| checkpoint | 每 40 step 及最后一步保存 | 同左 |
+
+> ⚠️ **4 卡的取值不能直接搬到 8 卡。** actor 侧有硬断言
+> `global_batch_size % (micro_batch_size × world_size) == 0`，8 卡下 `128 % (32×8) = 128 ≠ 0`
+> 会在模型加载与首轮 rollout 完成后才失败。global batch 必须同步放大到 256。
+>
+> 另外 `env.eval.total_num_envs` 默认 500，8 卡下 `500 % 8 ≠ 0`。性能测试关闭了 eval 所以不触发，
+> 但**正常开着 eval 训练时会撞上**，需改成能被卡数整除的值（如 504）。
+
+第 8 节的启动命令给出的是 8 卡取值；改跑 4 卡时按上表把 `env.train.total_num_envs` 换成 64、
+`actor.global_batch_size` 换成 128 即可。
 
 ## 4. 性能优化特性
 
@@ -388,31 +402,8 @@ rollout 单独关闭时，追加 `+rollout.model.openpi.enable_fused_prefix=fals
 
 ## 5. 优化组合推荐与实测收益
 
-最优组合取决于瓶颈侧，没有通用最优解。判断方法是比较 `time/actor_training` 与
-`time/rollout/generate_one_epoch`，数值大的一侧是瓶颈。加速非瓶颈侧换不到收益，在 colocated
-下还会因为破坏流水线平衡而变慢：同样开图编译，LIBERO colocated 是 +8.85%（更慢），
-LIBERO disaggregated 是 −4.76%（更快），两者只差一个 placement。
-
-| 场景 | 瓶颈侧 | 推荐 | 端到端收益 |
-|---|---|---|---|
-| LIBERO colocated（本文 4 卡配置） | actor | 只开 fused | **−8.0%～−19.0%** |
-| LIBERO disaggregated 2+2 | rollout | 只开 compile | −4.76% |
-| ManiSkill disaggregated 2+2 | rollout | 只开 compile | −6.99% |
-| 瓶颈侧不确定 | — | split（见下） | 距当场最优 1 个百分点以内 |
-
-colocated 的端到端收益随流水线停顿次数波动很大，上表给出的是两批测试的实测区间，不宜取
-其中任一端当作精确值；下面的阶段指标才是稳定的信号。
-
-各优化项的稳态收益（单机 4×H20，async 模式，四场景实测）：
-
-| 优化项 | 观察指标 | 相对 baseline |
-|---|---|---|
-| Fused Prefix Kernel | `time/actor_training` | −7.0%～−10.1% |
-| Rollout 图编译 | `time/rollout/predict` | −11.8%～−12.9% |
-| 异步权重同步 | — | 单机无可测收益（同机同步仅 1～2 s），面向跨机场景 |
-
-fused 与 compile 不要同时落在 rollout 上。两者直接叠加会互相抵消，rollout 推理收益从 −12%
-掉到 −0% 至 −2%。正确用法是两项各管一侧，即 split：
+**推荐 split：actor 用 fused、rollout 用 compile。** 它是唯一同时拿到两侧收益的组合，在实测的
+全部 5 个场景中端到端都不劣于当场最优的单项优化。
 
 ```text
 actor.model.openpi.enable_fused_prefix=true \
@@ -421,7 +412,39 @@ actor.model.openpi.enable_fused_prefix=true \
 +rollout.torch_compile_mode=default
 ```
 
-> 完整的测试方法、四场景逐项数据与测量口径，见
+单机 8×H20 独占节点实测，每组重复 2～3 次，`±` 为 run 间标准差：
+
+| 场景 | baseline | fused | compile | **split** |
+|---|---|---|---|---|
+| **LIBERO colocated 8 卡（本文配置）** | 102.98±0.90 s | −6.91% | −3.14% | **−8.31%** |
+| LIBERO disaggregated 4+4 | 103.23±0.24 s | −4.15% | −2.40% | +1.12% |
+| ManiSkill disaggregated 4+4 | 221.85±1.14 s | −4.55% | −5.89% | **−6.24%** |
+| LIBERO colocated 4 卡（对比） | 89.74±2.04 s | −11.53% | −2.83% | **−14.24%** |
+
+> split 相对当场最优单项的领先幅度，在每个场景都小于二者 run 间标准差之和，因此应理解为
+> **"不劣于最优单项"** 而非"严格更优"。它可靠的优势在阶段指标：见下表。
+
+各优化项的稳态收益（五个场景实测）：
+
+| 优化项 | 观察指标 | 相对 baseline | 备注 |
+|---|---|---|---|
+| Fused Prefix Kernel | `time/actor_training` | **−6.6%～−9.4%** | 收益随卡数缩水：4 卡 −9.4%、8 卡 −6.6% |
+| Rollout 图编译 | `time/rollout/predict` | **−12.1%～−13.5%** | 与卡数无关，4 卡与 8 卡分别为 −12.18% / −12.19% |
+| 异步权重同步 | — | 单机无可测收益 | 已在 4 卡与 8 卡 disaggregated 两处确认，面向跨机场景 |
+
+**收益不随卡数等比放大。** 每卡工作量不变时，4→8 卡端到端收益接近腰斩（split −14.24% →
+−8.31%）。根因是 `no_shard` 的 all-reduce 随卡数变贵：同样的每卡工作量，`time/actor_training`
+从 74.63 s 涨到 86.38 s（+15.7%）。因此**卡更多不等于优化收益更大**，扩容时应重新评估。
+
+fused 与 compile **不要同时落在 rollout 上**。两者直接叠加会互相抵消，rollout 推理收益从 −12%
+掉到 −0% 至 −2%——上面 split 的写法中那行
+`+rollout.model.openpi.enable_fused_prefix=false` 正是用来避免这一点的。
+
+> ⚠️ **fused 的显存收益仅限前向。** 若配置为可训练 prefix（`train_expert_only=false`），
+> 梯度会流经融合层，显存不降反升：实测在 95 GB 卡上任何 micro batch（8 / 4 / 1）都放不下，
+> 而未融合实现 81 GB 即可运行。该场景下请勿启用 fused。
+
+> 完整的测试方法、逐场景数据与测量口径，见
 > [π₀.₅ 强化学习性能报告](docs/performance/pi05_rl_performance.md)。
 
 ## 6. 启动训练
@@ -458,10 +481,10 @@ setsid python examples/embodiment/train_async.py \
   runner.val_check_interval=-1 \
   algorithm.group_size=2 \
   algorithm.update_epoch=2 \
-  env.train.total_num_envs=64 \
+  env.train.total_num_envs=128 \
   env.train.max_episode_steps=120 \
   env.train.max_steps_per_rollout_epoch=120 \
-  actor.global_batch_size=128 \
+  actor.global_batch_size=256 \
   actor.micro_batch_size=32 \
   actor.model.model_path=/workspace/models/RLinf-Pi05-LIBERO-SFT \
   rollout.model.model_path=/workspace/models/RLinf-Pi05-LIBERO-SFT \

@@ -94,21 +94,29 @@ Triton 实现，同时保持 checkpoint 参数命名、FSDP 封装、prefix cach
 当前实现是 flash attention 版本：additive mask 直接进入 kernel，前向与反向都不再落地
 `[B, Hq, S, S]` 的分数矩阵，也不再依赖外部 `flash_attn`。
 
-在 4 张 H20 的四个场景（LIBERO / ManiSkill × colocated / disaggregated）中，actor 训练耗时
-`time/actor_training` 一致下降 **6.98% 至 10.13%**，全部 95% 区间不跨零。kernel 级测试中，
+在单机 8 张 H20 的五个场景（LIBERO / ManiSkill × colocated / disaggregated，含 4 卡对比臂）中，
+每组重复 2 至 3 次，actor 训练耗时 `time/actor_training` 一致下降 **6.6% 至 9.4%**，全部 95%
+区间（基于 run 间方差）不跨零。8 卡为 −6.6%，4 卡为 −9.4%——收益随卡数缩水。kernel 级测试中，
 带 mask 的前向峰值激活显存下降 15% 至 24%，构建 prefix cache 的峰值显存下降 32% 至 39%。
+
+**显存收益仅限前向。** 上述显存数字测于 `train_expert_only: true`，此时 `freeze_vlm()` 使融合层
+只执行前向。若改为可训练 prefix，梯度流经融合层后显存不降反升：实测在 95 GB 卡上 micro batch
+取 8、4、1 均 OOM（峰值与 batch 无关），而未融合实现 81 GB 即可运行。该场景下不应启用 fused。
+手写 backward 本身可正常执行，问题在显存而非正确性。
 
 该能力默认关闭，通过 `actor.model.openpi.enable_fused_prefix=true` 启用。
 
 ### π₀.₅ Rollout 图编译
 
 新增 rollout 侧的 torch.compile 支持，仅编译 rollout inference，actor training 保持 eager
-模式。在 4 张 H20 的三个场景中，rollout 推理耗时 `time/rollout/predict` 下降
-**11.84% 至 12.93%**，对 actor 训练无影响。
+模式。在 8 张 H20 的五个场景中，rollout 推理耗时 `time/rollout/predict` 下降
+**12.1% 至 13.5%**，对 actor 训练无影响。该收益**与卡数无关**：4 卡与 8 卡分别为 −12.18% 与
+−12.19%。
 
-端到端收益取决于 rollout 是否是瓶颈：disaggregated 下 LIBERO 稳态 step time 下降 4.76%、
-ManiSkill 下降 6.99%；colocated 下 rollout 不是瓶颈，同一配置反而慢 8.85%。首次运行包含约
-53 至 59 秒的编译预热开销，短任务应结合总墙钟时间评估收益。
+端到端收益小于阶段收益，取决于 rollout 是否是瓶颈：ManiSkill disaggregated 4+4 下稳态 step
+time 下降 5.89%，LIBERO colocated 8 卡下为 3.14%。首次运行包含约 53 至 59 秒的编译预热
+开销，短任务应结合总墙钟时间评估收益。
+
 
 该能力默认关闭，通过 `+rollout.enable_torch_compile=true` 与
 `+rollout.torch_compile_mode=default` 启用。
@@ -126,28 +134,54 @@ Async PPO 支持通过 `+actor.sync_weight_no_wait=true` 将 actor-to-rollout �
 执行，与后续训练和 rollout 重叠，消除 runner 每步的串行等待。系统最多保留一个进行中的同步
 任务，并在退出前等待最后一次同步完成，避免权重版本或资源回收不完整。
 
-单机场景下同机权重同步本身只有 1 至 2 秒，实测端到端无可测收益；该能力面向跨机权重传输，
-跨机收益本轮硬件条件下未验证。
+单机场景下同机权重同步本身只有 1 至 2 秒，实测端到端无可测收益。该结论已在 4 卡与 8 卡
+disaggregated 两处确认——后者权重需跨 GPU 组传输，仍无可测收益。该能力面向跨机权重传输，
+跨机收益两轮硬件条件下均未验证。
 
 ### H20 π₀.₅ 推荐配置
 
-最优的优化组合取决于瓶颈侧，判据是比较 `time/actor_training` 与
-`time/rollout/generate_one_epoch`，数值大的一侧是瓶颈。加速非瓶颈侧换不到收益，colocated
-下还会因破坏流水线平衡而变慢。
+**推荐 split：actor 用 fused、rollout 用 compile。** 这是唯一同时拿到两侧收益的组合，在实测的
+五个场景中端到端都不劣于当场最优的单项优化。
 
-| 场景 | 瓶颈侧 | 推荐开关 | 稳态 step time |
-| --- | --- | --- | --- |
-| LIBERO colocated | actor | 只开 fused | −8.0% ~ −19.0% |
-| LIBERO disaggregated 2+2 | rollout | 只开 compile | −4.76% |
-| ManiSkill disaggregated 2+2 | rollout | 只开 compile | −6.99% |
-| 瓶颈侧不确定 | — | actor 开 fused、rollout 开 compile | 距当场最优 1 个百分点以内 |
+```text
+actor.model.openpi.enable_fused_prefix=true \
++rollout.model.openpi.enable_fused_prefix=false \
++rollout.enable_torch_compile=true \
++rollout.torch_compile_mode=default
+```
 
-colocated 的端到端数字随流水线停顿次数波动很大，上表第一行同配置的两批测试分别测到
-−8.0% 与 −19.0%，不宜当作精确值，阶段指标才是稳定的信号。
+单机 8×H20 独占节点实测，每组重复 2 至 3 次，`±` 为 run 间标准差：
 
-单机 4 卡 H20 上经过验证的 LIBERO 起始配置为：async + colocated，64 个训练环境，horizon
-120，`group_size=2`，`update_epoch=2`，global batch 128，micro batch 32。完整命令见快速上手
-文档。这是 H20 上的推荐起点，不应直接视为其他 GPU 型号或任务的通用最优配置。
+| 场景 | baseline 稳态 step | fused | compile | **split** |
+| --- | --- | --- | --- | --- |
+| **LIBERO colocated 8 卡** | 102.98±0.90 s | −6.91% | −3.14% | **−8.31%** |
+| LIBERO disaggregated 4+4 | 103.23±0.24 s | −4.15% | −2.40% | +1.12% |
+| ManiSkill disaggregated 4+4 | 221.85±1.14 s | −4.55% | −5.89% | **−6.24%** |
+| LIBERO colocated 4 卡（对比） | 89.74±2.04 s | −11.53% | −2.83% | **−14.24%** |
+
+split 相对当场最优单项的领先幅度，在每个场景都小于二者 run 间标准差之和，应理解为
+**「不劣于最优单项」** 而非「严格更优」。它可靠的优势在阶段指标：`time/actor_training`
+−6.6% 至 −9.4%，同时 `time/rollout/predict` −12.1% 至 −13.5%。
+
+**收益不随卡数等比放大。** 每卡工作量不变时，4 卡到 8 卡的端到端收益接近腰斩（split 由
+−14.24% 降到 −8.31%）。根因是 `no_shard` 的 all-reduce 随卡数变贵：同样的每卡工作量，
+`time/actor_training` 由 74.63 s 涨到 86.38 s（+15.7%）。rollout 侧收益则与卡数无关。扩容时
+应重新评估，不要按卡数外推收益。
+
+经过验证的 LIBERO 起始配置，两组每卡工作量相同：
+
+| | **8 卡（推荐起点）** | 4 卡 |
+| --- | --- | --- |
+| 训练环境数 | **128** | 64 |
+| global batch / micro batch | **256** / 32 | 128 / 32 |
+| horizon、`group_size`、`update_epoch` | 120、2、2 | 120、2、2 |
+
+**4 卡取值不能直接搬到 8 卡**：actor 侧断言
+`global_batch_size % (micro_batch_size × world_size) == 0`，8 卡下 `128 % 256 ≠ 0` 会在模型
+加载与首轮 rollout 之后才失败，global batch 必须同步放大到 256。此外 `env.eval.total_num_envs`
+默认 500，8 卡下不被整除，开启评测时需改为 504。完整命令见快速上手文档。
+
+这是 H20 上的推荐起点，不应直接视为其他 GPU 型号或任务的通用最优配置。
 
 ## 问题修复与稳定性改进
 
@@ -165,8 +199,9 @@ colocated 的端到端数字随流水线停顿次数波动很大，上表第一�
 
 ## 使用说明
 
-- 上述性能数字来自特定 H20 workload 的稳态测试。环境数量、任务长度、placement 等会影响
-  实际收益，建议在目标 workload 上复测后再决定是否启用。
+- 上述性能数字来自特定 H20 workload 的稳态测试，每组重复 2 至 3 次并给出 run 间方差。环境
+  数量、任务长度、placement 与卡数都会影响实际收益——尤其**卡数**：本轮实测 4 卡到 8 卡的
+  端到端收益接近腰斩。建议在目标 workload 上复测后再决定是否启用。
 - 部署、训练、面板与 SO101 任务的完整步骤见仓库根目录的 [快速上手文档](QUICKSTART.md)。
 - 性能测试方法、四场景逐项数据与测量口径见
   [π₀.₅ 强化学习性能报告](docs/performance/pi05_rl_performance.md)。
