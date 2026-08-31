@@ -37,12 +37,17 @@ export const en = {
   "app.langToggle": "中文",
   "app.langToggleTitle": "切换到中文 (Switch to Chinese)",
   "app.liveTitle": "SSE: {state}",
+  "app.updated": "updated {age}",
 
   "tab.overview": "Overview",
   "tab.metrics": "Metrics",
   "tab.media": "Media",
   "tab.events": "Events",
 
+  // The visible word is binary -- the reader is deciding whether to trust the
+  // numbers on screen. The four states below stay, for the tooltip.
+  "live.connected": "connected",
+  "live.disconnected": "disconnected",
   "live.connecting": "connecting",
   "live.live": "live",
   "live.reconnecting": "reconnecting",

@@ -33,12 +33,15 @@ export const zh: Record<keyof typeof en, string> = {
   "app.langToggle": "EN",
   "app.langToggleTitle": "Switch to English（切换到英文）",
   "app.liveTitle": "SSE：{state}",
+  "app.updated": "{age}更新",
 
   "tab.overview": "概览",
   "tab.metrics": "指标",
   "tab.media": "视频",
   "tab.events": "事件",
 
+  "live.connected": "已连接",
+  "live.disconnected": "已断开",
   "live.connecting": "连接中",
   "live.live": "实时",
   "live.reconnecting": "重连中",
