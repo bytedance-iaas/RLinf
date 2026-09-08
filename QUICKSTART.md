@@ -353,9 +353,9 @@ test -d /workspace/models/RLinf-Pi05-LIBERO-SFT && echo "model exists"
 | global batch / micro batch | **256** / 32 | 128 / 32 |
 | checkpoint | 每 40 step 及最后一步保存 | 同左 |
 
-> ⚠️ **4 卡的取值不能直接搬到 8 卡。** actor 侧有硬断言
-> `global_batch_size % (micro_batch_size × world_size) == 0`，8 卡下 `128 % (32×8) = 128 ≠ 0`
-> 会在模型加载与首轮 rollout 完成后才失败。global batch 必须同步放大到 256。
+> ⚠️ **4 卡的取值不能直接搬到 8 卡。** `validate_cfg` 检查
+> `global_batch_size % (micro_batch_size × actor_world_size) == 0`，8 卡下
+> `128 % (32×8) = 128 ≠ 0`，启动即报错退出。global batch 必须同步放大到 256。
 >
 > 另外 `env.eval.total_num_envs` 默认 500，8 卡下 `500 % 8 ≠ 0`。性能测试关闭了 eval 所以不触发，
 > 但**正常开着 eval 训练时会撞上**，需改成能被卡数整除的值（如 504）。
@@ -524,19 +524,48 @@ echo $! > "${LOG_DIR}/driver.pid"
 命令会依次完成 Hydra 配置解析、Ray 集群连接、actor/rollout/env worker 创建，然后开始 PPO
 训练。面板会自动发现这次运行。
 
-只想快速验证环境时，在训练命令末尾（重定向之前）追加：
+只想快速验证环境时，用**一张卡**跑两步就够了：链路通不通与用几张卡无关，单卡还能把其余
+GPU 留给正在跑的任务。在训练命令末尾（重定向之前）追加：
 
 ```text
+"~cluster.component_placement" \
+"+cluster.component_placement={actor: 0-0, env: 0-0, rollout: 0-0}" \
+env.train.total_num_envs=16 \
+actor.global_batch_size=32 \
 runner.max_epochs=2 runner.max_steps=2 runner.save_interval=-1
 ```
+
+同一个键出现两次时 Hydra 取后者，所以这几行直接追加即可，不必回头改前面的 `128` 与 `256`。
+
+**卡数不能用 `CUDA_VISIBLE_DEVICES` 控制。** placement 取的是节点上报的加速器数量，不看这个
+变量：在 4 卡容器里设 `CUDA_VISIBLE_DEVICES=0` 仍然按 4 卡规划，随后因
+`actor.global_batch_size (32) must be divisible by (actor.micro_batch_size (32) * actor_world_size (4))`
+在 `validate_cfg` 阶段退出。改用 `cluster.component_placement` 才有效，日志里的
+`Using flexible placement with hardware ranks: [[0]]` 是它生效的标志。
+
+前两行必须成对出现。`~` 先删掉配置里原有的 `actor,env,rollout: all`，否则新旧两份 placement
+会同时存在；而 Hydra 的 override 语法不接受键名中的逗号，没法直接改写原来那一个键。
+
+batch 两项要跟着卡数缩：world size 由 8 变 1，`global_batch_size` 相应由 256 降到 32——也就是
+单卡的 per-rank batch，`total_num_envs` 由 128 降到 16，即 8 卡时每张卡的份额。
+`micro_batch_size` 保持 32 不变。
 
 `runner.max_epochs` 与 `runner.max_steps` 需要同时设置。embodied runner 将每个 epoch 固定为
 一个 RL step，只设置 `max_steps` 无法突破较小的 `max_epochs` 限制。
 
-调整训练规模时不要单独修改 `env.train.total_num_envs`。actor 侧有
-`total_num_envs % (global_batch_size / world_size) == 0` 的约束，只缩小环境数量会在模型加载
-与首轮 rollout 完成之后才触发断言失败。控制单步耗时应通过 `max_episode_steps` 与
-`max_steps_per_rollout_epoch`。
+单机 H20 上实测，这条命令约 5 分钟跑完两个 step，其中大部分时间花在模型加载与 LIBERO
+初始化上。
+
+调整训练规模时，`env.train.total_num_envs`、`actor.global_batch_size` 与
+`actor.micro_batch_size` 要放在一起看，它们对应两条断言：
+
+- `global_batch_size % (micro_batch_size × actor_world_size) == 0`，在 `validate_cfg` 阶段
+  检查，启动即报；
+- 每个 rank 拿到的轨迹条数须能被 per-rank batch（`global_batch_size / world_size`）整除，
+  这条在首轮 rollout 完成之后才触发，失败时模型与环境都已经加载完了。
+
+所以只缩小 `total_num_envs` 而不动 batch，第一条能过、第二条会在后面炸。控制单步耗时应通过
+`max_episode_steps` 与 `max_steps_per_rollout_epoch`。
 
 ## 7. 查看训练进度
 
