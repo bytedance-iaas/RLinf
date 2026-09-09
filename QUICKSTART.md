@@ -533,6 +533,20 @@ runner.max_epochs=2 runner.max_steps=2 runner.save_interval=-1
 `runner.max_epochs` 与 `runner.max_steps` 需要同时设置。embodied runner 将每个 epoch 固定为
 一个 RL step，只设置 `max_steps` 无法突破较小的 `max_epochs` 限制。
 
+要把这次验证限制在一张卡上，把其余 GPU 留给正在跑的任务，再追加四行：
+
+```text
+"~cluster.component_placement" \
+"+cluster.component_placement={actor: 0-0, env: 0-0, rollout: 0-0}" \
+env.train.total_num_envs=16 \
+actor.global_batch_size=32
+```
+
+前两行须成对出现：Hydra 的 override 语法不接受键名中的逗号，改不动配置里的
+`actor,env,rollout`，只能删掉再按组件加回来。日志中出现
+`hardware ranks: [[0]]` 表示已生效，`CUDA_VISIBLE_DEVICES` 对此无效。后两行取 8 卡时单张卡
+的份额，不跟着缩会把八张卡的工作量压到一张卡上。
+
 调整训练规模时不要单独修改 `env.train.total_num_envs`。actor 侧有
 `total_num_envs % (global_batch_size / world_size) == 0` 的约束，只缩小环境数量会在模型加载
 与首轮 rollout 完成之后才触发断言失败。控制单步耗时应通过 `max_episode_steps` 与
