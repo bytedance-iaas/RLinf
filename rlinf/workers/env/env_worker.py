@@ -282,8 +282,12 @@ class EnvWorker(Worker):
         """
         from rlinf.utils.run_state import build_media_index
 
-        train_video = self.cfg.env.train.video_cfg.get("save_video", False)
-        eval_video = self.cfg.env.eval.video_cfg.get("save_video", False)
+        train_video = self.enable_train and OmegaConf.select(
+            self.cfg, "env.train.video_cfg.save_video", default=False
+        )
+        eval_video = self.enable_eval and OmegaConf.select(
+            self.cfg, "env.eval.video_cfg.save_video", default=False
+        )
         if not (train_video or eval_video):
             return
 
