@@ -173,7 +173,7 @@ class Placement:
     """Local rank of the node in the placement."""
 
     local_accelerator_rank: int
-    """Local GPU ID on the node."""
+    """Local rank of the worker's first accelerator among the node's accelerators, or -1 if the node has none."""
 
     accelerator_type: AcceleratorType
     """Type of accelerators on the node."""
@@ -185,7 +185,7 @@ class Placement:
     """Local world size (number of workers) on the node."""
 
     visible_accelerators: list[str]
-    """List of CUDA visible devices for the worker."""
+    """Device ids for the worker's visibility env var (e.g. ``CUDA_VISIBLE_DEVICES``): its local accelerator ranks mapped through the node's own visibility, see :meth:`NodeInfo.get_accelerator_device_ids`."""
 
     isolate_accelerator: bool
     """Flag to indicate if the local rank should be set to zero. This is useful for workers that require multiple GPUs."""

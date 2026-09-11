@@ -149,21 +149,18 @@ class NodePlacementStrategy(PlacementStrategy):
             resolved_group_labels.append(label)
 
         for rank, cluster_node_rank in enumerate(cluster_node_ranks):
-            visible_devices = list(
-                range(cluster.get_node_info(cluster_node_rank).num_accelerators)
-            )
-            visible_devices = [str(device) for device in visible_devices]
+            node_info = cluster.get_node_info(cluster_node_rank)
+            local_accel_ranks = list(range(node_info.num_accelerators))
+            visible_devices = node_info.get_accelerator_device_ids(local_accel_ranks)
             placements.append(
                 Placement(
                     rank=rank,
                     cluster_node_rank=cluster_node_rank,
                     placement_node_rank=-1,
-                    accelerator_type=cluster.get_node_info(
-                        cluster_node_rank
-                    ).accelerator_type,
+                    accelerator_type=node_info.accelerator_type,
                     local_accelerator_rank=-1
-                    if len(visible_devices) == 0
-                    else visible_devices[0],
+                    if len(local_accel_ranks) == 0
+                    else local_accel_ranks[0],
                     local_rank=-1,
                     local_world_size=0,
                     visible_accelerators=visible_devices,

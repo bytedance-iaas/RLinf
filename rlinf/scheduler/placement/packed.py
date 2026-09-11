@@ -252,18 +252,14 @@ class PackedPlacementStrategy(PlacementStrategy):
             for hw_rank in global_hw_ranks:
                 hw_usage_map[hw_rank] = True
 
+            node_info = cluster.get_node_info(cluster_node_rank)
             if isolate_accelerator and current_hw_type == Accelerator.HW_TYPE:
                 local_accel_ranks = local_hw_ranks
-                visible_accelerators = [
-                    str(accel_rank) for accel_rank in local_hw_ranks
-                ]
             else:
-                local_accel_ranks = list(
-                    range(cluster.get_node_info(cluster_node_rank).num_accelerators)
-                )
-                visible_accelerators = [
-                    str(accel_rank) for accel_rank in local_accel_ranks
-                ]
+                local_accel_ranks = list(range(node_info.num_accelerators))
+            visible_accelerators = node_info.get_accelerator_device_ids(
+                local_accel_ranks
+            )
 
             placements.append(
                 Placement(

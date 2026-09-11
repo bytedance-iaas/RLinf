@@ -27,6 +27,12 @@ from rlinf.scheduler import (
 from rlinf.scheduler.cluster.config import NodeGroupEnvConfig
 from rlinf.scheduler.cluster.node import NodeGroupInfo, NodeInfo
 from rlinf.scheduler.hardware import Accelerator, HardwareInfo, HardwareResource
+from rlinf.scheduler.hardware.accelerators import nvidia_gpu
+from rlinf.scheduler.hardware.accelerators.accelerator import (
+    AcceleratorManager,
+    AcceleratorType,
+    AcceleratorUtil,
+)
 from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
@@ -130,6 +136,13 @@ def create_fake_cluster(
         )
 
     nodes = [_make_node_info(i, accel_counts[i]) for i in range(num_nodes)]
+    return _fake_cluster_from_nodes(nodes, extra_group_mapping)
+
+
+def _fake_cluster_from_nodes(
+    nodes: list[NodeInfo],
+    extra_group_mapping: dict[str, list[int]] | None = None,
+) -> FakeCluster:
     node_groups: dict[str, NodeGroupInfo] = {}
 
     default_group = NodeGroupInfo(label=NodeGroupInfo.DEFAULT_GROUP_LABEL, nodes=nodes)
@@ -1097,6 +1110,188 @@ class TestHeteroMultiNodeGroupPlacement:
         )
         with pytest.raises(AssertionError):
             strategy.get_placement(cluster, isolate_accelerator=True)
+
+
+_VISIBILITY_ENV_VARS = {
+    AcceleratorType.NPU: "ASCEND_RT_VISIBLE_DEVICES",
+    AcceleratorType.NV_GPU: "CUDA_VISIBLE_DEVICES",
+}
+
+
+def _probe_node(
+    monkeypatch: pytest.MonkeyPatch,
+    node_rank: int,
+    accelerator_type: AcceleratorType,
+    num_devices: int,
+    visible_devices: str | None = None,
+) -> NodeInfo:
+    """Enumerate a mocked node's accelerators the way the node probe does.
+
+    ``num_devices`` is what the vendor runtime reports: ACL counts only the NPUs
+    in ``ASCEND_RT_VISIBLE_DEVICES``, whereas NVML counts every GPU on the host.
+    ``visible_devices`` is the node's visibility env var, set before Ray starts;
+    it is unset again afterwards, as it is in the driver that places workers.
+    """
+    with monkeypatch.context() as node:
+        for accel_type, manager in AcceleratorManager.manager_register.items():
+            count = num_devices if accel_type == accelerator_type else 0
+            node.setattr(manager, "get_num_devices", staticmethod(lambda n=count: n))
+            node.setattr(manager, "get_accelerator_model", staticmethod(lambda: "Mock"))
+        env_var = _VISIBILITY_ENV_VARS[accelerator_type]
+        if visible_devices is None:
+            node.delenv(env_var, raising=False)
+        else:
+            node.setenv(env_var, visible_devices)
+
+        node_info = _make_node_info(node_rank, num_accelerators=0)
+        node_info.hardware_resources = [Accelerator.enumerate(node_rank)]
+        node_info.accelerator_device_ids = Accelerator.get_device_ids(
+            node_info.accelerator_type, node_info.num_accelerators
+        )
+    return node_info
+
+
+def _worker_visibility(cluster: FakeCluster, placements: list) -> list[str]:
+    """Return each worker's visibility env var as WorkerGroup sets it."""
+    values = []
+    for placement in placements:
+        accel_type = cluster.get_node_info(placement.cluster_node_rank).accelerator_type
+        env_vars = AcceleratorUtil.get_accelerator_env_var(
+            accel_type, placement.visible_accelerators
+        )
+        values.append(env_vars[_VISIBILITY_ENV_VARS[AcceleratorType(accel_type)]])
+    return values
+
+
+class TestPresetDeviceVisibility:
+    """Workers on a node started with a device subset get devices from that subset."""
+
+    def test_unrestricted_node_uses_local_ranks(self, monkeypatch):
+        node = _probe_node(monkeypatch, 0, AcceleratorType.NPU, num_devices=2)
+        cluster = _fake_cluster_from_nodes([node])
+
+        placements = FlexiblePlacementStrategy([[0], [1]]).get_placement(cluster)
+
+        assert node.accelerator_device_ids == []
+        assert _worker_visibility(cluster, placements) == ["0", "1"]
+
+    def test_ascend_node_maps_local_ranks_to_visible_devices(self, monkeypatch):
+        node = _probe_node(
+            monkeypatch, 0, AcceleratorType.NPU, num_devices=2, visible_devices="14,15"
+        )
+        cluster = _fake_cluster_from_nodes([node])
+
+        placements = FlexiblePlacementStrategy([[0], [1]]).get_placement(cluster)
+
+        assert node.num_accelerators == 2
+        assert _worker_visibility(cluster, placements) == ["14", "15"]
+        assert [p.local_accelerator_rank for p in placements] == [0, 1]
+
+    def test_every_component_on_a_container_subset(self, monkeypatch):
+        # A container exposes three NPUs as 0-2 and is started with 1,2.
+        node = _probe_node(
+            monkeypatch, 0, AcceleratorType.NPU, num_devices=2, visible_devices="1,2"
+        )
+        cluster = _fake_cluster_from_nodes([node])
+        config = DictConfig(
+            {
+                "cluster": {
+                    "num_nodes": 1,
+                    "component_placement": {"actor,env,rollout": "0-1"},
+                }
+            }
+        )
+        component_placement = HybridComponentPlacement(config, cluster)
+
+        for component in ("actor", "env", "rollout"):
+            strategy = component_placement.get_strategy(component)
+            placements = strategy.get_placement(cluster)
+            assert _worker_visibility(cluster, placements) == ["1", "2"], component
+
+    def test_nvidia_node_maps_local_ranks_to_visible_devices(self, monkeypatch):
+        # NVML reports all 16 GPUs, so the count is capped by the visible ones.
+        node = _probe_node(
+            monkeypatch,
+            0,
+            AcceleratorType.NV_GPU,
+            num_devices=16,
+            visible_devices="14,15",
+        )
+        cluster = _fake_cluster_from_nodes([node])
+        # The EGL indices the host driver reports for CUDA devices 14 and 15.
+        monkeypatch.setattr(
+            nvidia_gpu, "_egl_index_by_cuda_device", lambda: {14: 3, 15: 1}
+        )
+        monkeypatch.delenv("MUJOCO_GL", raising=False)
+
+        placements = PackedPlacementStrategy(0, 1).get_placement(cluster)
+        env_vars = [
+            AcceleratorUtil.get_accelerator_env_var(
+                AcceleratorType.NV_GPU, p.visible_accelerators
+            )
+            for p in placements
+        ]
+
+        assert node.num_accelerators == 2
+        assert [e["CUDA_VISIBLE_DEVICES"] for e in env_vars] == ["14", "15"]
+        assert [e["MUJOCO_EGL_DEVICE_ID"] for e in env_vars] == ["3", "1"]
+
+    def test_each_node_maps_through_its_own_visibility(self, monkeypatch):
+        nodes = [
+            _probe_node(
+                monkeypatch,
+                0,
+                AcceleratorType.NPU,
+                num_devices=2,
+                visible_devices="14,15",
+            ),
+            _probe_node(
+                monkeypatch,
+                1,
+                AcceleratorType.NPU,
+                num_devices=2,
+                visible_devices="2,5",
+            ),
+        ]
+        cluster = _fake_cluster_from_nodes(nodes)
+
+        packed = PackedPlacementStrategy(0, 3).get_placement(cluster)
+        assert [p.cluster_node_rank for p in packed] == [0, 0, 1, 1]
+        assert _worker_visibility(cluster, packed) == ["14", "15", "2", "5"]
+
+        per_node = NodePlacementStrategy(
+            [0, 1], NodeGroupInfo.NODE_PLACEMENT_GROUP_LABEL
+        ).get_placement(cluster)
+        assert _worker_visibility(cluster, per_node) == ["14,15", "2,5"]
+        assert [p.local_accelerator_rank for p in per_node] == [0, 0]
+
+    def test_visibility_without_device_indices_uses_local_ranks(self, monkeypatch):
+        with pytest.warns(UserWarning, match="Invalid visible device IDs"):
+            node = _probe_node(
+                monkeypatch,
+                0,
+                AcceleratorType.NV_GPU,
+                num_devices=4,
+                visible_devices="GPU-aaaa,GPU-bbbb",
+            )
+        cluster = _fake_cluster_from_nodes([node])
+
+        placements = FlexiblePlacementStrategy([[3]]).get_placement(cluster)
+
+        assert node.num_accelerators == 4
+        assert placements[0].visible_accelerators == ["3"]
+
+    def test_worker_maps_its_devices_back_to_local_ranks(self, monkeypatch):
+        restricted = _probe_node(
+            monkeypatch, 0, AcceleratorType.NPU, num_devices=2, visible_devices="14,15"
+        )
+        unrestricted = _probe_node(monkeypatch, 1, AcceleratorType.NPU, num_devices=2)
+
+        assert restricted.get_accelerator_local_ranks([15]) == [1]
+        assert restricted.get_accelerator_local_ranks([14, 15]) == [0, 1]
+        assert unrestricted.get_accelerator_local_ranks([1]) == [1]
+        with pytest.raises(ValueError, match="not accelerators of node 0"):
+            restricted.get_accelerator_local_ranks([0])
 
 
 if __name__ == "__main__":

@@ -169,6 +169,8 @@ Both strategies produce a list of low-level :class:`rlinf.scheduler.placement.Pl
 * the selected hardware ranks and their local indices,
 * whether accelerators not allocated to the worker are hidden via ``CUDA_VISIBLE_DEVICES`` and related environment variables.
 
+Local accelerator ranks count only the accelerators a node exposes. If a node is started with a subset of its devices, for example with ``ASCEND_RT_VISIBLE_DEVICES=14,15`` set in the container before Ray starts, RLinf sees two accelerators on that node and writes devices 14 and 15, not 0 and 1, into the visibility variables of the workers placed on local ranks 0 and 1. Each node is translated through its own setting, so nodes of one cluster may expose different subsets.
+
 In typical user workflows, you only need to write the ``cluster`` section and ``component_placement`` correctly. 
 RLinf will then use these strategies to automatically realize the desired heterogeneous placement for you.
 

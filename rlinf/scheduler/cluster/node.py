@@ -17,7 +17,7 @@ import os
 import sys
 import warnings
 from dataclasses import asdict, dataclass, field
-from typing import ClassVar, Optional
+from typing import ClassVar, Optional, Sequence
 
 import ray
 import ray.actor
@@ -68,6 +68,9 @@ class NodeInfo:
     profiler_backends: list[str] = field(default_factory=list)
     """Profiling backends whose required tools are available on this node (e.g. ``["nsight"]``)."""
 
+    accelerator_device_ids: list[int] = field(default_factory=list)
+    """Device id of each local accelerator rank, taken from the visibility env var (e.g. ``ASCEND_RT_VISIBLE_DEVICES``) set on the node before Ray starts. Empty when the node sets none, in which case local ranks are device ids."""
+
     @property
     def num_accelerators(self) -> int:
         """Get the number of accelerators on the node."""
@@ -99,6 +102,53 @@ class NodeInfo:
             if resource.type == hw_type:
                 return resource.count
         return 0
+
+    def get_accelerator_device_ids(
+        self, local_accelerator_ranks: Sequence[int]
+    ) -> list[str]:
+        """Translate local accelerator ranks into device ids for a worker's visibility env var.
+
+        A worker's ``CUDA_VISIBLE_DEVICES`` (or its equivalent) replaces the
+        node's, so it must name devices as the node's runtime does rather than by
+        their position among the node's accelerators.
+
+        Args:
+            local_accelerator_ranks (Sequence[int]): Accelerator ranks within this node.
+
+        Returns:
+            list[str]: The device id of each rank. On a node started with
+            ``ASCEND_RT_VISIBLE_DEVICES=14,15``, ranks ``[0, 1]`` become
+            ``["14", "15"]``.
+        """
+        if not self.accelerator_device_ids:
+            return [str(rank) for rank in local_accelerator_ranks]
+        return [
+            str(self.accelerator_device_ids[rank]) for rank in local_accelerator_ranks
+        ]
+
+    def get_accelerator_local_ranks(self, device_ids: Sequence[int]) -> list[int]:
+        """Translate device ids from a worker's visibility env var back into local accelerator ranks.
+
+        This is the inverse of :meth:`get_accelerator_device_ids`.
+
+        Args:
+            device_ids (Sequence[int]): Device ids as they appear in the env var.
+
+        Returns:
+            list[int]: The local accelerator rank of each device.
+
+        Raises:
+            ValueError: If a device is not one of this node's accelerators.
+        """
+        if not self.accelerator_device_ids:
+            return list(device_ids)
+        unknown = [d for d in device_ids if d not in self.accelerator_device_ids]
+        if unknown:
+            raise ValueError(
+                f"Devices {unknown} are not accelerators of node {self.node_rank}, "
+                f"which exposes devices {self.accelerator_device_ids}."
+            )
+        return [self.accelerator_device_ids.index(d) for d in device_ids]
 
     def __str__(self) -> str:
         """String representation of the NodeInfo."""
@@ -578,6 +628,12 @@ class _RemoteNodeProbe:
             env_vars=os.environ.copy(),
             hardware_resources=hardware_resources,
             profiler_backends=profiler_backends,
+        )
+        # Workers overwrite the node's visibility env var with their own, so the
+        # device behind each local accelerator rank is recorded here, on the node,
+        # while the variable still holds the node's setting.
+        self._node_info.accelerator_device_ids = Accelerator.get_device_ids(
+            self._node_info.accelerator_type, self._node_info.num_accelerators
         )
 
     def get_node_info(self):

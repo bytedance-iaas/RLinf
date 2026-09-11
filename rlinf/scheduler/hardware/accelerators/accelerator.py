@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import contextlib
+import warnings
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar, Optional
@@ -313,6 +314,10 @@ class Accelerator(Hardware):
     ) -> Optional[HardwareResource]:
         """Enumerate the hardware resources on a node.
 
+        A node that restricts its accelerators before Ray starts, e.g. with
+        ``CUDA_VISIBLE_DEVICES=14,15``, exposes only the listed ones, which is
+        also how Ray counts the node's accelerator resources.
+
         Args:
             node_rank (Optional[int]): The rank of the node being enumerated.
             configs (Optional[list[HardwareConfig]]): The configurations for the hardware on a node.
@@ -324,6 +329,9 @@ class Accelerator(Hardware):
             manager = AcceleratorManager.manager_register[accel_type]
             num_devices = manager.get_num_devices()
             if num_devices > 0:
+                device_ids = cls._get_visible_device_ids(manager)
+                if device_ids:
+                    num_devices = min(num_devices, len(device_ids))
                 hardware_infos = [
                     HardwareInfo(
                         type=cls.HW_TYPE,
@@ -332,6 +340,45 @@ class Accelerator(Hardware):
                 ] * num_devices
                 return HardwareResource(type=cls.HW_TYPE, infos=hardware_infos)
         return None
+
+    @classmethod
+    def get_device_ids(
+        cls, accelerator_type: AcceleratorType | str, num_devices: int
+    ) -> list[int]:
+        """Return the device id behind each local accelerator rank of this node.
+
+        Local accelerator ranks number the accelerators the node exposes, so on a
+        node started with ``ASCEND_RT_VISIBLE_DEVICES=14,15`` local rank 1 is
+        device 15. Call this on the node itself, from a process that inherits the
+        node's environment, since workers overwrite the variable.
+
+        Args:
+            accelerator_type (AcceleratorType | str): The node's accelerator type.
+            num_devices (int): The number of accelerators enumerated on the node.
+
+        Returns:
+            list[int]: The device id of each local rank, or an empty list when the
+            node sets no visibility and local ranks are device ids.
+        """
+        if accelerator_type not in AcceleratorManager.manager_register:
+            return []
+        manager = AcceleratorManager.manager_register[accelerator_type]
+        return cls._get_visible_device_ids(manager)[:num_devices]
+
+    @staticmethod
+    def _get_visible_device_ids(manager: type[AcceleratorManager]) -> list[int]:
+        """Read the current process's visible device ids, tolerating other forms.
+
+        A visibility variable that does not list device indices, such as GPU
+        UUIDs, keeps the previous behaviour of treating local ranks as device ids.
+        """
+        try:
+            return manager.get_visible_devices()
+        except ValueError as exc:
+            warnings.warn(
+                f"{exc} Accelerators are assigned to workers by local rank instead."
+            )
+            return []
 
     @classmethod
     def get_accelerator_type_from_model(cls, model: str) -> str:

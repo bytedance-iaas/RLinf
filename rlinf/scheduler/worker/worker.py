@@ -1479,15 +1479,20 @@ class Worker(metaclass=WorkerMeta):
 
     def _setup_accelerator_info(self) -> int:
         cluster = Cluster()
+        # The visibility env var names devices as the node's runtime does, which
+        # differs from their local ranks when the node exposes a device subset.
         visible_devices = AcceleratorUtil.get_visible_devices(self._accelerator_type)
+        local_accel_ranks = cluster.get_node_info(
+            self._cluster_node_rank
+        ).get_accelerator_local_ranks(visible_devices)
         node_accelerator_ranks = cluster.accelerator_ranks[self._cluster_node_rank]
         self.global_accelerator_ids = [
-            node_accelerator_ranks[local_id] for local_id in visible_devices
+            node_accelerator_ranks[local_rank] for local_rank in local_accel_ranks
         ]
 
         if not self._is_ray_actor:
-            if len(visible_devices) > 0:
-                self._local_accelerator_rank = visible_devices[0]
+            if len(local_accel_ranks) > 0:
+                self._local_accelerator_rank = local_accel_ranks[0]
             else:
                 self._local_accelerator_rank = -1
 
