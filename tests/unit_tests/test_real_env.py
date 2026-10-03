@@ -4124,6 +4124,22 @@ def test_maniskill_offload_load_state_accepts_state_without_video_counter(
     assert not hasattr(core, "video_cnt")
 
 
+@pytest.mark.parametrize("backend", ["cpu", "physx_cpu", "CPU"])
+def test_maniskill_offload_rejects_cpu_sim_backend(monkeypatch, backend):
+    module = _load_maniskill_offload_module(monkeypatch)
+    cfg = OmegaConf.create({"init_params": {"sim_backend": backend}})
+
+    with pytest.raises(ValueError, match="enable_offload is not supported"):
+        module._reject_cpu_sim_backend(cfg)
+
+
+@pytest.mark.parametrize("cfg_dict", [{}, {"init_params": {"sim_backend": "gpu"}}])
+def test_maniskill_offload_allows_gpu_sim_backend(monkeypatch, cfg_dict):
+    module = _load_maniskill_offload_module(monkeypatch)
+
+    module._reject_cpu_sim_backend(OmegaConf.create(cfg_dict))
+
+
 def test_maniskill_offload_load_state_ignores_legacy_video_counter(monkeypatch):
     module = _load_maniskill_offload_module(monkeypatch)
     monkeypatch.setattr(

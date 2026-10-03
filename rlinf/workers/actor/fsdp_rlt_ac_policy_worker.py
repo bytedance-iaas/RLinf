@@ -29,7 +29,7 @@ from rlinf.utils.metric_utils import (
     compute_split_num,
     trajectory_has_bool_tensor,
 )
-from rlinf.utils.utils import clear_memory
+from rlinf.utils.utils import barrier, clear_memory
 from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
     AsyncEmbodiedSACFSDPPolicy,
 )
@@ -841,9 +841,9 @@ class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
         updates_to_run, schedule_metrics = self._rlt_updates_to_run()
         if updates_to_run <= 0:
             mean_metric_dict = self.process_train_metrics(schedule_metrics)
-            torch.cuda.synchronize()
-            torch.distributed.barrier()
-            torch.cuda.empty_cache()
+            self.torch_platform.synchronize()
+            barrier()
+            self.torch_platform.empty_cache()
             return mean_metric_dict
 
         assert (
@@ -883,9 +883,9 @@ class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
         self.transitions_since_train = 0
         self.episodes_since_train = 0
 
-        torch.cuda.synchronize()
-        torch.distributed.barrier()
-        torch.cuda.empty_cache()
+        self.torch_platform.synchronize()
+        barrier()
+        self.torch_platform.empty_cache()
         return mean_metric_dict
 
 
@@ -955,9 +955,9 @@ class AsyncRLTACFSDPPolicy(
         updates_to_run, schedule_metrics = self._rlt_updates_to_run()
         if updates_to_run <= 0:
             mean_metric_dict = self.process_train_metrics(schedule_metrics)
-            torch.cuda.synchronize()
-            torch.distributed.barrier()
-            torch.cuda.empty_cache()
+            self.torch_platform.synchronize()
+            barrier()
+            self.torch_platform.empty_cache()
             return mean_metric_dict
 
         assert (
@@ -971,7 +971,7 @@ class AsyncRLTACFSDPPolicy(
             // self._world_size
         )
 
-        torch.distributed.barrier()
+        barrier()
         self.model.train()
         metrics = {}
         critic_updates_run = 0
@@ -999,9 +999,9 @@ class AsyncRLTACFSDPPolicy(
         self.transitions_since_train = 0
         self.episodes_since_train = 0
 
-        torch.cuda.synchronize()
-        torch.distributed.barrier()
-        torch.cuda.empty_cache()
+        self.torch_platform.synchronize()
+        barrier()
+        self.torch_platform.empty_cache()
         replay_metrics = getattr(self, "_last_replay_metrics", {})
         if replay_metrics:
             mean_metric_dict = {**mean_metric_dict, **replay_metrics}

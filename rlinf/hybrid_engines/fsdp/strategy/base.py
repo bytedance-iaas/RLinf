@@ -37,7 +37,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     FSDPVersion,
 )
 from rlinf.scheduler import Worker
-from rlinf.utils.utils import clear_memory
+from rlinf.utils.utils import barrier, clear_memory
 
 if TYPE_CHECKING:
     from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
@@ -208,7 +208,7 @@ class FSDPStrategyBase(ABC):
             checkpoint_format (str): "dcp" or "local_shard".
         """
         clear_memory()
-        torch.distributed.barrier()
+        barrier()
         opts = StateDictOptions(full_state_dict=False, cpu_offload=True)
         try:
             training_state = Checkpoint(
@@ -245,7 +245,7 @@ class FSDPStrategyBase(ABC):
                 cls.logger.error(f"Failed to save checkpoint to {save_path}: {e}")
             traceback.print_exc()
             raise e
-        torch.distributed.barrier()
+        barrier()
 
         if save_full_model_weights:
             opts = StateDictOptions(full_state_dict=True, cpu_offload=True)
@@ -264,7 +264,7 @@ class FSDPStrategyBase(ABC):
                         model_state_dict, os.path.join(sd_save_path, "full_weights.pt")
                     )
 
-            torch.distributed.barrier()
+            barrier()
 
     @classmethod
     def load_checkpoint(
@@ -364,7 +364,7 @@ class FSDPStrategyBase(ABC):
             traceback.print_exc()
             raise e
 
-        torch.distributed.barrier()
+        barrier()
 
     def get_model_state_dict(
         self, model: Union[FSDP, FSDPModule], cpu_offload: bool, full_state_dict: bool

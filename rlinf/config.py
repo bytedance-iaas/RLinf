@@ -1256,7 +1256,11 @@ def validate_embodied_cfg(cfg):
             "Total number of parallel environments for evaluation must be greater than 0"
         )
         assert cfg.env.eval.total_num_envs % env_world_size == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
+            f"env.eval.total_num_envs ({cfg.env.eval.total_num_envs}) must be divisible by the "
+            f"number of environment processes ({env_world_size}). A benchmark fixes the episode "
+            f"count -- LIBERO evaluates 10 tasks x 50 initial states = 500 -- so place the env "
+            f"component on a process count that divides it (for 500: 1, 2, 4, 5, 10, 20, 25, 50, "
+            f"100, 125, 250 or 500) rather than changing the episode count."
         )
         assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
             "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
@@ -1445,7 +1449,11 @@ def validate_offline_cfg(cfg: DictConfig) -> DictConfig:
             "Total number of parallel environments for evaluation must be greater than 0"
         )
         assert cfg.env.eval.total_num_envs % env_world_size == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
+            f"env.eval.total_num_envs ({cfg.env.eval.total_num_envs}) must be divisible by the "
+            f"number of environment processes ({env_world_size}). A benchmark fixes the episode "
+            f"count -- LIBERO evaluates 10 tasks x 50 initial states = 500 -- so place the env "
+            f"component on a process count that divides it (for 500: 1, 2, 4, 5, 10, 20, 25, 50, "
+            f"100, 125, 250 or 500) rather than changing the episode count."
         )
         assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
             "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"

@@ -16,13 +16,12 @@ import asyncio
 import queue
 import threading
 
-import torch
-
 from rlinf.scheduler import Worker
 from rlinf.utils.metric_utils import (
     append_to_dict,
     compute_split_num,
 )
+from rlinf.utils.utils import barrier
 from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
 
 
@@ -100,7 +99,7 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
         min_buffer_size = self.cfg.algorithm.replay_buffer.get("min_buffer_size", 100)
         await self._wait_for_replay_buffer_ready(min_buffer_size)
 
-        torch.distributed.barrier()
+        barrier()
 
         assert (
             self.cfg.actor.global_batch_size
@@ -126,7 +125,7 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
         mean_metric_dict = self.process_train_metrics(metrics)
 
         Worker.torch_platform.synchronize()
-        torch.distributed.barrier()
+        barrier()
         Worker.torch_platform.empty_cache()
         return mean_metric_dict
 
