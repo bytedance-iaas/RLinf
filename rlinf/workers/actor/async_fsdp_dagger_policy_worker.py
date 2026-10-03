@@ -17,10 +17,9 @@ import queue
 import threading
 import time
 
-import torch
-
 from rlinf.scheduler import Worker
 from rlinf.utils.metric_utils import append_to_dict, compute_split_num
+from rlinf.utils.utils import barrier
 from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
 
 
@@ -147,9 +146,9 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             append_to_dict(metrics, metrics_data)
             self.update_step += 1
 
-        torch.cuda.synchronize()
-        torch.distributed.barrier()
-        torch.cuda.empty_cache()
+        self.torch_platform.synchronize()
+        barrier()
+        self.torch_platform.empty_cache()
         return self.process_train_metrics(metrics)
 
     async def stop(self):

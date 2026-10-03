@@ -47,6 +47,7 @@ from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager  # noq
 from rlinf.models import get_model  # noqa: E402
 from rlinf.scheduler import Worker  # noqa: E402
 from rlinf.utils.distributed import all_reduce_dict  # noqa: E402
+from rlinf.utils.utils import barrier  # noqa: E402
 
 
 class _PairDataLoaderImpl:
@@ -217,7 +218,7 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
             )
 
         if torch.distributed.is_available() and torch.distributed.is_initialized():
-            torch.distributed.barrier()
+            barrier()
 
     # ------------------------------------------------------------------
     # Dataloader

@@ -51,6 +51,7 @@ from rlinf.scheduler import Worker
 from rlinf.utils.attention import resolve_attn_implementation
 from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import (
+    barrier,
     collect_param_names_need_sync,
     warmup_optimizer_state,
 )
@@ -211,7 +212,7 @@ class FSDPModelManager:
             )
 
         if torch.distributed.is_initialized():
-            torch.distributed.barrier()
+            barrier()
 
         if cfg.fsdp_config.use_liger_kernel:
             self._optimize_with_liger_kernel(model)
@@ -720,6 +721,11 @@ class FSDPModelManager:
         """
         Build the gradient scaler based on the configuration.
 
+        The scaler keeps its scale and its found-inf flags on ``device``, which
+        upstream defaults to ``"cuda"``; left alone on another backend the
+        scaler silently does not scale. Name the worker's device instead of
+        relying on a vendor plugin to patch the default.
+
         Args:
             enabled (bool): Whether to enable gradient scaling.
             kwargs: Optional parameters for ShardedGradScaler.
@@ -727,6 +733,7 @@ class FSDPModelManager:
         Returns:
             ShardedGradScaler: The gradient scaler.
         """
+        kwargs.setdefault("device", Worker.torch_device_type)
         return ShardedGradScaler(enabled=enabled, **kwargs)
 
     def before_micro_batch(

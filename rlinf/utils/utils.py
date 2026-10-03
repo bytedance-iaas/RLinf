@@ -181,7 +181,17 @@ def tensors_record_stream(
 
 
 def seed_everything(seed: int) -> int:
-    """Seed Python, NumPy, and PyTorch RNGs."""
+    """Seed Python, NumPy, PyTorch and the worker's accelerator RNGs.
+
+    The accelerator is seeded through ``Worker.torch_platform`` rather than
+    ``torch.cuda``, so NPU and the other backends get seeded too.
+
+    Args:
+        seed (int): Base seed.
+
+    Returns:
+        int: The seed that was applied.
+    """
     normalized_seed = int(seed)
     numpy_seed = normalized_seed % _UINT32_MOD
 
@@ -189,11 +199,37 @@ def seed_everything(seed: int) -> int:
     np.random.seed(numpy_seed)
     torch.manual_seed(normalized_seed)
 
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(normalized_seed)
-        torch.cuda.manual_seed_all(normalized_seed)
+    platform = Worker.torch_platform
+    if platform is not None and platform.is_available():
+        platform.manual_seed(normalized_seed)
+        if hasattr(platform, "manual_seed_all"):
+            platform.manual_seed_all(normalized_seed)
 
     return normalized_seed
+
+
+def barrier(group=None) -> None:
+    """Synchronise ranks, naming this process' device when the backend needs it.
+
+    ``torch.distributed.barrier()`` with no ``device_ids`` guesses device 0 for
+    the collective it runs underneath. On NCCL that only costs a warning; on
+    HCCL it fails outright when a process can see more than one NPU, because
+    every rank then tries to bind the same card's socket
+    (``EI0020: ... port 16666 have already been bound``). Checked on an Ascend
+    950PR host: two ranks sharing both NPUs, the bare call raises and
+    ``device_ids=[current_device]`` succeeds. A gloo group must not be given
+    ``device_ids`` at all ("No backend type associated with device type npu").
+
+    Args:
+        group: Process group to synchronise; the default group when omitted.
+    """
+    backend = torch.distributed.get_backend(group)
+    platform = Worker.torch_platform
+    host_only = backend in ("gloo", "mpi")
+    if host_only or platform is None or not platform.is_available():
+        torch.distributed.barrier(group=group)
+        return
+    torch.distributed.barrier(group=group, device_ids=[platform.current_device()])
 
 
 def retrieve_model_state_dict_in_cpu(

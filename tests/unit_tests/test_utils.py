@@ -555,3 +555,65 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
 
     _flash_availability(monkeypatch)
     assert resolve_attn_implementation("eager") == "eager"
+
+
+class _FakePlatform:
+    def __init__(self, available=True, device=3):
+        self._available = available
+        self._device = device
+
+    def is_available(self):
+        return self._available
+
+    def current_device(self):
+        return self._device
+
+
+def _record_barrier(monkeypatch, backend, platform):
+    """Point rlinf.utils.utils.barrier at a recording torch.distributed."""
+    from rlinf.scheduler import Worker
+
+    calls = []
+    monkeypatch.setattr(
+        "rlinf.utils.utils.torch.distributed.get_backend", lambda group=None: backend
+    )
+    monkeypatch.setattr(
+        "rlinf.utils.utils.torch.distributed.barrier",
+        lambda group=None, **kwargs: calls.append((group, kwargs)),
+    )
+    monkeypatch.setattr(Worker, "torch_platform", platform)
+    return calls
+
+
+@pytest.mark.parametrize("backend", ["hccl", "nccl", "mccl"])
+def test_barrier_names_the_device_on_accelerator_backends(monkeypatch, backend):
+    from rlinf.utils.utils import barrier
+
+    calls = _record_barrier(monkeypatch, backend, _FakePlatform(device=3))
+
+    barrier()
+
+    assert calls == [(None, {"device_ids": [3]})]
+
+
+@pytest.mark.parametrize("backend", ["gloo", "mpi"])
+def test_barrier_omits_device_ids_on_host_backends(monkeypatch, backend):
+    # A gloo group rejects device_ids outright: "No backend type associated
+    # with device type npu".
+    from rlinf.utils.utils import barrier
+
+    calls = _record_barrier(monkeypatch, backend, _FakePlatform(device=3))
+
+    barrier(group="a-gloo-group")
+
+    assert calls == [("a-gloo-group", {})]
+
+
+def test_barrier_omits_device_ids_without_an_accelerator(monkeypatch):
+    from rlinf.utils.utils import barrier
+
+    calls = _record_barrier(monkeypatch, "hccl", _FakePlatform(available=False))
+
+    barrier()
+
+    assert calls == [(None, {})]
