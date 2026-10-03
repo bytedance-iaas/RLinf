@@ -65,6 +65,7 @@ from rlinf.utils.utils import (
     clear_memory,
     compute_entropy_from_logits,
     compute_logprobs_from_logits,
+    configure_determinism,
     cpu_weight_swap,
     get_loss_agg_func,
     masked_mean,
@@ -178,6 +179,7 @@ class FSDPActor(FSDPModelManager, Worker):
         If mode is disaggregated, setup which inference ranks it needs to sync weights to by
         doing a handshake with inference workers.
         """
+        configure_determinism(self.cfg, self._rank)
         self.setup_model_and_optimizer()
         if (
             self.kl_beta > 0 or self.reinpp_kl_beta > 0

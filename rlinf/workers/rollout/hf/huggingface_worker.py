@@ -43,6 +43,7 @@ from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.utils import configure_determinism
 
 
 class MultiStepRolloutWorker(Worker):
@@ -154,6 +155,7 @@ class MultiStepRolloutWorker(Worker):
         return self.collect_transitions and not self.enable_rlt
 
     def init_worker(self):
+        configure_determinism(self.cfg, self._rank)
         # Train uses actor.model as the architecture source; overlay rollout.model
         # (path, precision, and nested inference knobs). Eval-only is a no-op merge.
         rollout_model_config = OmegaConf.merge(self.model_cfg, self.cfg.rollout.model)

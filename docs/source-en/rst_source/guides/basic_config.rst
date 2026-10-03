@@ -128,6 +128,11 @@ runner
      - Checkpoint frequency in trainer steps.
    * - ``runner.seq_length``
      - Total sequence length (prompt + generated response) fed into models.
+   * - ``runner.deterministic``
+     - Ask torch for deterministic kernels where it has them
+       (``warn_only``, so an op without one warns instead of failing).
+       Default ``False``. Seeding happens either way, from ``actor.seed``;
+       this only removes the kernels' own run-to-run variation.
 
 algorithm
 ~~~~~~~~~~~~~~~
@@ -266,7 +271,10 @@ actor
    * - ``actor.model.megatron_checkpoint``
      - Path to a Megatron model checkpoint to load before training.
    * - ``actor.seed``
-     - Global seed for reproducibility.
+     - Global seed for reproducibility. Every embodied worker seeds Python,
+       NumPy, torch and the accelerator with this value plus its own rank,
+       so ranks still draw different noise while the run as a whole is
+       repeatable.
 
 reward
 ~~~~~~~~~~~~~~~

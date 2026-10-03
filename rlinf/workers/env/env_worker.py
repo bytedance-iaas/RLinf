@@ -41,6 +41,7 @@ from rlinf.utils.nested_dict_process import (
 )
 from rlinf.utils.obs_compression import compress_obs, is_compression_enabled
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.utils import configure_determinism
 
 
 class EnvWorker(Worker):
@@ -217,6 +218,9 @@ class EnvWorker(Worker):
                 setter(global_step)
 
     def init_worker(self):
+        # Seed before the envs exist: their resets and any sampling inside the
+        # simulator draw from these RNGs.
+        configure_determinism(self.cfg, self._rank)
         # This is a barrier to ensure all envs' initial setup upon import is done
         # Essential for RealWorld env to ensure initial ROS node setup is done
         self.broadcast(
