@@ -126,8 +126,8 @@ class SO101GrabRedCubeEnv(PickCubeEnv):
                 collection in a weak region. ``None`` uses the full range.
         """
         # so101 = built-in so100 with joint limits widened to the REAL servo
-        # calibration ranges (see rlinf/envs/maniskill/so101_agent.py).
-        from rlinf.envs.maniskill import so101_agent  # noqa: F401  (registers uid)
+        # calibration ranges (see rlinf/envs/sim/maniskill/so101_agent.py).
+        from rlinf.envs.sim.maniskill import so101_agent  # noqa: F401  (registers uid)
 
         if spawn_mode not in ("full_board", "legacy"):
             raise ValueError(
@@ -529,7 +529,7 @@ class SO101GrabRedCubeEnv(PickCubeEnv):
         # rollout transitions with zero closes). Reward closing WHEN AT THE CUBE
         # so there is a continuous uphill path hover-open -> closed -> grasped.
         # No open/far terms (the previous far-open term taught hovering).
-        from rlinf.envs.maniskill.so101_calib import (
+        from rlinf.envs.sim.maniskill.so101_calib import (
             GRIPPER_RAD_CLOSED,
             GRIPPER_RAD_OPEN,
         )

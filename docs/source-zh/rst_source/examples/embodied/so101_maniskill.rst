@@ -79,7 +79,7 @@ SO101 抓取摆放工作台，并在其上对 OpenPI π₀.₅ 策略做强化�
 
 单位：检查点使用 LeRobot **归一化电机单位**\ （手臂 ``[-100, 100]``，夹爪
 ``[0, 100]``），而 ManiSkill 使用\ **弧度**\ 。换算实现在
-``rlinf/envs/maniskill/so101_calib.py``，由从动舵机标定推导而来（Feetech，
+``rlinf/envs/sim/maniskill/so101_calib.py``，由从动舵机标定推导而来（Feetech，
 4096 tick/圈），并在环境边界处应用：动作在
 ``action_utils.prepare_actions_for_maniskill``，观测在
 ``ManiskillEnv._wrap_obs``\ （由 ``so101_state_norm: True``\ 开启）。
@@ -98,7 +98,7 @@ SO101 抓取摆放工作台，并在其上对 OpenPI π₀.₅ 策略做强化�
 +2.48 与 −2.38——在放宽限位之前，仿真机械臂根本够不到托盘。
 
 放宽后的 URDF 是\ **在 import 时从已安装的 ManiSkill URDF 派生**\ 的
-（``rlinf/envs/maniskill/so101_agent.py``），而不是作为资产随仓库分发。限位取自
+（``rlinf/envs/sim/maniskill/so101_agent.py``），而不是作为资产随仓库分发。限位取自
 ``so101_calib.JOINT_LIMITS_{LOW,HIGH}``——与动作换算裁剪所用的是同一张表——因此两者
 不可能产生漂移，且全新检出无需任何额外下载。
 

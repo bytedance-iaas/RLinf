@@ -37,7 +37,7 @@ normalized motor units on both sides of this transform. Two reasons:
 * This transform instance is shared by the SFT dataloader (which feeds LeRobot
   episodes, already normalized) and RL rollout. Converting here would be right
   for one caller and wrong for the other.
-* ``OpenPi0ForRLActionPrediction.output_transform`` applies output transforms in
+* ``OpenPIEnvIO.output_transform`` applies output transforms in
   a per-sample Python loop, so a conversion here costs one call per env per
   step. ``action_utils.prepare_actions_for_maniskill`` does it once per batch,
   vectorized, on the whole chunk.
@@ -55,9 +55,9 @@ from openpi import transforms
 from openpi.models import model as _model
 
 # SO101/SO100 active-joint dimension: 5 arm joints + 1 gripper. Duplicated as a
-# literal rather than imported from ``rlinf.envs.maniskill.so101_calib`` so that
+# literal rather than imported from ``rlinf.envs.sim.maniskill.so101_calib`` so that
 # importing these transforms never pulls in ``rlinf.envs`` (and with it the
-# simulator dependencies) in a training-only process. ``test_so101_policy.py``
+# simulator dependencies) in a training-only process. ``test_so101_maniskill.py``
 # asserts the two definitions agree.
 SO101_ACTION_DIM = 6
 

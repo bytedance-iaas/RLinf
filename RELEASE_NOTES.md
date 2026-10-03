@@ -1,5 +1,15 @@
 # Physical AI Kit -- RLinf Release Note
 
+## dev 同步说明（2026-10-03）
+
+`dev` 已 rebase 到上游 `main` 的 [`c70606f0`](https://github.com/RLinf/RLinf/commit/c70606f08cdca259b8dec03d4430926b5b8fac9d)。SO101 仿真环境迁入 `rlinf.envs.sim.maniskill`，示例文档改为 `so101_maniskill`，与上游真机 SO101 页面分别保留。OpenPI 的 fused prefix、rollout 编译和 LeRobot 导出已适配原生模型布局；异步 runner 的视频 step 更新与 trajectory 标识分开维护。
+
+转换模式随上游更名为 `jax_to_openpi`、`openpi_pytorch_to_openpi`、`sft_to_openpi` 和 `openpi_to_openpi_pytorch`，其余三个模式不变。旧 PyTorch checkpoint 由模型 loader 自动转换为原生布局，`sft_to_lerobot` 同时接受旧布局和原生布局。
+
+下文记录 rebase 前的发布版本，其性能数据和旧模式名称保留用于追溯；当前用法见 [QUICKSTART](QUICKSTART.md) 和[检查点转换器说明](rlinf/utils/ckpt_convertor/openpi/README.md)。本次尚未在 CUDA 或真机上验证训练、fused kernel 数值和性能。
+
+## 原发布版本
+
 本版本基于上游 `RLinf/RLinf` 的 `main` 分支提交
 [`a3816b59`](https://github.com/RLinf/RLinf/commit/a3816b596478dcd8a5c69a6ec1468c9519f77b5b)
 （`docs(openpi): add RoboTwin adjust_bottle resources`，#1486，2026-08-22）构建，完整继承该

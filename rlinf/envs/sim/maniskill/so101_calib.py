@@ -99,7 +99,7 @@ OFFSET = np.array([0.0, 0.0, 0.0, 0.6, 0.0, 0.0])
 # uncalibrated 0..4095 tick range). The articulation would clamp these anyway;
 # clipping the *commanded target* here keeps it well-defined.
 # Limits match the WIDENED so101 URDF (union of stock SO100 limits and the
-# real servo calibration ranges); see rlinf/envs/maniskill/so101_agent.py.
+# real servo calibration ranges); see rlinf/envs/sim/maniskill/so101_agent.py.
 JOINT_LIMITS_LOW = np.array([-2.0, -1.5708, -2.38, -3.01, -3.14159, -1.1])
 JOINT_LIMITS_HIGH = np.array([2.0, 2.48, 1.5708, 1.8, 3.14159, 1.1])
 

@@ -40,7 +40,7 @@ from mani_skill import PACKAGE_ASSET_DIR
 from mani_skill.agents.registration import register_agent
 from mani_skill.agents.robots.so100.so_100 import SO100
 
-from rlinf.envs.maniskill.so101_calib import (
+from rlinf.envs.sim.maniskill.so101_calib import (
     JOINT_LIMITS_HIGH,
     JOINT_LIMITS_LOW,
     SO101_JOINT_NAMES,

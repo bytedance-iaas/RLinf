@@ -382,8 +382,7 @@ rollout 使用落后一个版本的权重，本身就是 off-policy 训练的预
 
 ### 4.2 Fused Prefix Kernel
 
-将 π₀.₅ 中 PaliGemma 视觉语言模型侧的 decoder layer 替换为算子融合实现，包含融合的前向
-计算与手写的反向实现，用于加速 actor 训练。action expert 部分不受影响。
+π₀.₅ 的 PaliGemma prefix 在 CUDA 上使用融合的前向计算与手写反向实现，保留原有参数和 checkpoint key。当前 OpenPI 的 joint-expert、suffix 和 CPU 调用沿用原始实现；prefix 的 GELU 与上游保持一致。
 
 rollout 的模型配置由 actor 深拷贝而来，因此这个开关默认同时作用于 actor 与 rollout。需要
 rollout 单独关闭时，追加 `+rollout.model.openpi.enable_fused_prefix=false`。
@@ -401,6 +400,8 @@ rollout 单独关闭时，追加 `+rollout.model.openpi.enable_fused_prefix=fals
   `max-autotune-no-cudagraphs`，编译开销明显更高，得到的也不是第 5 节的数字。
 
 ## 5. 优化组合推荐与实测收益
+
+以下性能数据来自 rebase 前、基于上游 `a3816b59` 的版本。当前 `dev` 已适配上游 `c70606f0` 的 OpenPI 实现，GPU 性能和数值回归仍需在目标设备上重测，不能直接沿用这些收益。
 
 **推荐 split：actor 用 fused、rollout 用 compile。** 它是唯一同时拿到两侧收益的组合，在实测的
 全部 5 个场景中端到端都不劣于当场最优的单项优化。
@@ -676,7 +677,7 @@ runner.resume_dir="${RESUME_DIR}"
 
 工作台几何、相机内参、初始位姿与容差都由实测的真实回合与录制的 LeRobot 数据集导出。任务
 原理与单位标定细节见
-[SO101 示例文档](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/so101.html)。
+[SO101 示例文档](docs/source-zh/rst_source/examples/embodied/so101_maniskill.rst)。
 
 ### 9.1 准备
 
