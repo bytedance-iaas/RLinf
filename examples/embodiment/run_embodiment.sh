@@ -4,8 +4,17 @@ export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
 export SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
 
-export MUJOCO_GL=${MUJOCO_GL:-"egl"}
-export PYOPENGL_PLATFORM=${PYOPENGL_PLATFORM:-"egl"}
+# Hosts without a display GPU have no EGL, and MuJoCo then fails at import
+# rather than falling back. Ascend nodes are the case in the tree today, so
+# default them to software rendering; an explicit MUJOCO_GL still wins.
+_DEFAULT_GL="egl"
+if compgen -G "/dev/davinci[0-9]*" > /dev/null \
+    && [ ! -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json ]; then
+    _DEFAULT_GL="osmesa"
+fi
+export MUJOCO_GL=${MUJOCO_GL:-"$_DEFAULT_GL"}
+export PYOPENGL_PLATFORM=${PYOPENGL_PLATFORM:-"$_DEFAULT_GL"}
+unset _DEFAULT_GL
 export ROBOTWIN_PATH=${ROBOTWIN_PATH:-"/path/to/RoboTwin"}
 export PYTHONPATH=${REPO_PATH}:${ROBOTWIN_PATH}:$PYTHONPATH
 

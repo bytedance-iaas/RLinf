@@ -254,6 +254,30 @@ def _maniskill_worker_main(
         result_queue.close()
 
 
+def _reject_cpu_sim_backend(cfg):
+    """Refuse offload on a CPU PhysX backend, where snapshotting cannot work.
+
+    ``_ManiskillEnvCore.get_state`` reads ``scene.px.cuda_articulation_*``,
+    which only the GPU PhysX backend defines. With ``sim_backend: cpu`` the
+    run would otherwise die with an ``AttributeError`` from inside the worker
+    process, at the first offload rather than at startup.
+
+    Args:
+        cfg: The env config for this split.
+
+    Raises:
+        ValueError: When the backend is a CPU one.
+    """
+    backend = str(cfg.get("init_params", {}).get("sim_backend", "gpu")).lower()
+    if "cpu" in backend:
+        raise ValueError(
+            f"enable_offload is not supported with sim_backend={backend!r}: "
+            "offload snapshots PhysX state through scene.px.cuda_articulation_*, "
+            "which exists only on the GPU backend. Set enable_offload: False, "
+            "or run the simulator on a GPU backend."
+        )
+
+
 class ManiskillOffloadEnv(EnvOffloadMixin):
     """Proxy environment that runs ManiSkill core env in a spawned process.
 
@@ -305,6 +329,7 @@ class ManiskillOffloadEnv(EnvOffloadMixin):
         rpc_timeout_s: int = 120,
     ):
         del record_metrics
+        _reject_cpu_sim_backend(cfg)
         self.cfg = cfg
         self.num_envs = num_envs
         self.seed_offset = seed_offset
