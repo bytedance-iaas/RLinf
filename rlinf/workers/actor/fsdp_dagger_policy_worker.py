@@ -34,7 +34,7 @@ from rlinf.utils import drq
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict, compute_split_num
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
-from rlinf.utils.utils import clear_memory
+from rlinf.utils.utils import barrier, clear_memory
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -664,9 +664,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             append_to_dict(metrics, metrics_data)
             self.update_step += 1
 
-        torch.cuda.synchronize()
-        torch.distributed.barrier()
-        torch.cuda.empty_cache()
+        self.torch_platform.synchronize()
+        barrier()
+        self.torch_platform.empty_cache()
         return self.process_train_metrics(metrics)
 
     @Worker.timer("actor/compute_adv")

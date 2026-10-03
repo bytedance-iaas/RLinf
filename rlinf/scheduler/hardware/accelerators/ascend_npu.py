@@ -107,11 +107,14 @@ class AscendNPUManager(AcceleratorManager):
         """Get the PyTorch platform module."""
         import torch
 
-        # torch.cuda.ipc_collect() exists for inter-process CUDA tensor cleanup;
-        # torch_npu doesn't expose it (NPU has no equivalent IPC mechanism).
-        # Scheduler call sites (collective_group, utils.utils) invoke
-        # `Worker.torch_platform.ipc_collect()` unconditionally, so attach a
-        # no-op when missing instead of guarding every call site.
+        # NPU does have inter-process tensor sharing: torch_npu implements it in
+        # NPUIPCTypes and torch.multiprocessing's reduce_tensor produces a real
+        # NPU IPC payload (checked on CANN 9.1.0 / torch_npu 2.10.0.post4, where
+        # torch.npu.ipc_collect exists). Older torch_npu builds do not export
+        # ipc_collect, and the scheduler call sites (collective_group,
+        # utils.utils) invoke `Worker.torch_platform.ipc_collect()`
+        # unconditionally, so attach a no-op when it is missing instead of
+        # guarding every call site.
         if not hasattr(torch.npu, "ipc_collect"):
             torch.npu.ipc_collect = lambda: None
         return torch.npu

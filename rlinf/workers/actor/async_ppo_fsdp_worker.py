@@ -36,7 +36,7 @@ from rlinf.utils.metric_utils import (
     pop_critic_explained_variance_stats,
 )
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
-from rlinf.utils.utils import clear_memory
+from rlinf.utils.utils import barrier, clear_memory
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -163,7 +163,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
     async def construct_rollout_batch(self, max_trajectories: int | None = None):
         # from _recv_queue to rollout_batch
         await self._wait_for_rollout_store_ready()
-        torch.distributed.barrier()
+        barrier()
 
         rollout_batch = self.rollout_store.topn(self.rollout_store_size)
         version_metrics = self.rollout_store.get_metric()
@@ -441,7 +441,9 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
 
                     loss, metrics_data = policy_loss(**loss_kwargs)
 
-                    entropy_loss = torch.tensor(0.0, device=torch.cuda.current_device())
+                    entropy_loss = torch.tensor(
+                        0.0, device=self.torch_platform.current_device()
+                    )
                     if (
                         self.cfg.algorithm.entropy_bonus > 0
                         and not loss_kwargs["critic_warmup"]
@@ -465,7 +467,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                     metrics_data["actor/total_loss"] = float(loss.detach().item())
                     append_to_dict(metrics, metrics_data)
 
-                torch.cuda.empty_cache()
+                self.torch_platform.empty_cache()
 
                 grad_norm, lr_list = self.optimizer_step()
                 extra_metrics = {

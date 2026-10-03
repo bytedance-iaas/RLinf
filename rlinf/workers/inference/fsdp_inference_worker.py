@@ -25,6 +25,7 @@ from torch.distributed.tensor import DTensor
 
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.utils import (
+    barrier,
     retrieve_model_state_dict_in_cpu,
 )
 from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
@@ -132,7 +133,7 @@ class FSDPInference(FSDPActor):
                 )
 
         self.torch_platform.synchronize()
-        torch.distributed.barrier()
+        barrier()
 
     def sync_model_from_actor(self) -> None:
         """

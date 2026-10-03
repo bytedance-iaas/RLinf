@@ -38,6 +38,7 @@ from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.scheduler import Worker
+from rlinf.utils.utils import barrier
 
 try:  # Megatron-LM < 0.17
     # Import load itself: a checkout upgraded in place keeps the git-ignored
@@ -270,16 +271,16 @@ def _compile_dependencies(cfg: DictConfig):
         print("> compiling and loading fused kernels ...", flush=True)
         if load_fused_kernels is not None:
             load_fused_kernels(cfg)
-        torch.distributed.barrier()
+        barrier()
     else:
-        torch.distributed.barrier()
+        barrier()
         if load_fused_kernels is not None:
             load_fused_kernels(cfg)
     # Simple barrier to make sure all ranks have passed the
     # compilation phase successfully before moving on to the
     # rest of the program. We think this might ensure that
     # the lock is released.
-    torch.distributed.barrier()
+    barrier()
     if torch.distributed.get_rank() == 0:
         print(
             ">>> done with compiling and loading fused kernels. "

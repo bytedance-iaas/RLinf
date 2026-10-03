@@ -70,6 +70,7 @@ from rlinf.utils.train_utils import (
     set_train,
 )
 from rlinf.utils.utils import (
+    barrier,
     clear_memory,
     configure_batch_sizes,
     cpu_dict,
@@ -270,7 +271,7 @@ class MegatronWorker(MegatronModelManager, Worker):
         # offload weights and optimizers after initialization if offload is enabled
         # this is necessary if actor and critic are colocated
         self._offload_weight_and_optimizer()
-        torch.distributed.barrier()
+        barrier()
 
     def get_batch(
         self, channel: Channel, tag: Optional[str] = None
