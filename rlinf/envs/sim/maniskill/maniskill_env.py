@@ -202,7 +202,7 @@ class ManiskillEnv(gym.Env):
         # key ``so101_state_norm: True``. Stays on the GPU -- this runs once per
         # env per step.
         if getattr(self.cfg, "so101_state_norm", False):
-            from rlinf.envs.maniskill.so101_calib import rad_to_norm_torch
+            from rlinf.envs.sim.maniskill.so101_calib import rad_to_norm_torch
 
             proprioception = rad_to_norm_torch(proprioception)
         return {

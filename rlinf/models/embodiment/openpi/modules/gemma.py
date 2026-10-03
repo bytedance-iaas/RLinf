@@ -431,6 +431,7 @@ class Block(nn.Module):
     ):
         super().__init__()
         self.configs = configs
+        self.enable_fused_prefix = False
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 
         if isinstance(adarms, bool):
@@ -476,6 +477,23 @@ class Block(nn.Module):
         Returns:
             (outputs, new_kv_cache)
         """
+        if (
+            self.enable_fused_prefix
+            and xs[0] is not None
+            and xs[0].is_cuda
+            and all(x is None for x in xs[1:])
+            and kv_cache is None
+            and adarms_cond[0] is None
+        ):
+            from rlinf.models.embodiment.openpi.fused_prefix_layer import (
+                fused_block_prefix_forward,
+            )
+
+            prefix, cache = fused_block_prefix_forward(
+                self, xs[0], positions, attn_mask
+            )
+            return [prefix, *xs[1:]], cache
+
         # Pre-attention norm
         pre_attn = []
         gates = []

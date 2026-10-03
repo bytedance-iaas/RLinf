@@ -41,7 +41,7 @@ def prepare_actions_for_maniskill(
         # Done here, once per batch, rather than in SO101Outputs, which openpi
         # applies in a per-sample Python loop.
         # Imported lazily so non-ManiSkill callers never load the module.
-        from rlinf.envs.maniskill.so101_calib import norm_to_rad
+        from rlinf.envs.sim.maniskill.so101_calib import norm_to_rad
 
         return norm_to_rad(raw_chunk_actions)
     if "panda" in policy:

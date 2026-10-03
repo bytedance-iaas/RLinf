@@ -15,10 +15,9 @@
 """Tests for runner logging-thread teardown.
 
 Metric tables are rendered on a background thread fed by ``log_queue``.
-``_log_worker`` re-checks ``stop_logging`` between items, so teardown must drain
-the queue *before* raising the flag -- otherwise the loop exits with entries
-still pending, those entries never get their ``task_done()``, and the
-``log_queue.join()`` inside teardown blocks forever.
+Teardown enqueues a sentinel after pending entries, waits for the logging
+thread, and closes the metric backends. A blocked backend must not prevent
+the runner from finishing indefinitely.
 """
 
 import logging
@@ -67,7 +66,6 @@ def _make_stub(runner_cls):
 
         def __init__(self):
             self.metric_logger = _FakeMetricLogger()
-            self.stop_logging = False
             self.log_queue = queue.Queue()
             self.drained = []
             # The drain and the worker both log on the failure paths.
@@ -113,9 +111,8 @@ def test_finish_run_drains_pending_logs(runner_cls, pending):
 
     assert _finish_with_timeout(stub), (
         f"{runner_cls.__name__}._finish_run() hung with {pending} queued log(s); "
-        "the queue must be drained before stop_logging is set"
+        "the logging worker must consume pending entries before exiting"
     )
     assert stub.drained == list(range(pending)), "queued logs were dropped"
     assert stub.metric_logger.backend.finished, "metric logger was not closed"
-    assert stub.stop_logging, "logging thread was not asked to stop"
     assert not stub.log_thread.is_alive(), "logging thread did not exit"

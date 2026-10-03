@@ -260,7 +260,8 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     )
 
     apply_fused_prefix_layers(
-        model, enabled=bool(OmegaConf.select(model_cfg, "enable_fused_prefix", default=False))
+        model,
+        enabled=bool(OmegaConf.select(model_cfg, "enable_fused_prefix", default=False)),
     )
 
     n_params = sum(param.numel() for param in model.parameters())

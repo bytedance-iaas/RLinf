@@ -27,8 +27,8 @@ def main() -> int:
     import gymnasium as gym  # noqa: F401
     import torch
 
-    from rlinf.envs.maniskill import so101_agent
-    from rlinf.envs.maniskill.so101_calib import (
+    from rlinf.envs.sim.maniskill import so101_agent
+    from rlinf.envs.sim.maniskill.so101_calib import (
         SO101_ACTION_DIM,
         norm_to_rad,
         rad_to_norm,
@@ -75,7 +75,7 @@ def main() -> int:
     print("== env construction ==")
     import mani_skill.envs  # noqa: F401
 
-    from rlinf.envs.maniskill import import_all_tasks  # noqa: F401
+    from rlinf.envs.sim.maniskill import import_all_tasks  # noqa: F401
 
     env = gym.make(
         "SO101GrabRedCube-v1",

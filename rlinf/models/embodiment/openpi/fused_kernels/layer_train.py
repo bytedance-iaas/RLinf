@@ -243,7 +243,16 @@ def _gelu_mul_bwd_kernel(DY, G, U, DG, DU, n_elem, BLOCK: tl.constexpr):
     tl.store(DU + offs, (dy * gelu).to(DU.dtype.element_ty), mask=msk)
 
 
-def gelu_mul_backward(dy, g, u):
+def gelu_mul_backward(dy, g, u, approximate=True):
+    if not approximate:
+        gate = g.float()
+        cdf = 0.5 * (1.0 + torch.erf(gate * (2.0**-0.5)))
+        derivative = cdf + gate * torch.exp(-0.5 * gate.square()) * (
+            (2.0 * torch.pi) ** -0.5
+        )
+        return (dy.float() * u.float() * derivative).to(g.dtype), (
+            dy.float() * gate * cdf
+        ).to(u.dtype)
     dg = torch.empty_like(g)
     du = torch.empty_like(u)
     n = g.numel()
@@ -273,6 +282,7 @@ def prefix_train_forward(
     attention_mask=None,
     position_ids=None,
     use_cache=False,
+    approximate_gelu=True,
 ):
     """Fused forward that also hands back everything backward needs.
 
@@ -311,7 +321,9 @@ def prefix_train_forward(
     # ---- MLP ----
     gate = _mm(h2_2d, wg)
     up = _mm(h2_2d, wu)
-    act = gelu_mul(gate, up)
+    act = (
+        gelu_mul(gate, up) if approximate_gelu else torch.nn.functional.gelu(gate) * up
+    )
     m = _mm(act, wd).view(B, S, H)
     out = gated_add(res1, m)
 
@@ -338,6 +350,7 @@ def prefix_train_forward(
         "scale": scale,
         "eps": eps,
         "shape": (B, S, H),
+        "approximate_gelu": approximate_gelu,
     }
     if use_cache:
         saved["kv_cache"] = (k, v)
@@ -359,7 +372,9 @@ def prefix_train_backward(saved, grad_out, dk_cache=None, dv_cache=None):
     # ---- MLP ----
     dWd = torch.mm(dout_2d.t(), saved["act"])
     dact = torch.mm(dout_2d, wd)
-    dgate, dup = gelu_mul_backward(dact, saved["gate"], saved["up"])
+    dgate, dup = gelu_mul_backward(
+        dact, saved["gate"], saved["up"], saved["approximate_gelu"]
+    )
 
     h2_2d = saved["h2"].view(BS, H)
     dWg = torch.mm(dgate.t(), h2_2d)
@@ -413,7 +428,8 @@ def prefix_train_backward(saved, grad_out, dk_cache=None, dv_cache=None):
 
 class PrefixTrainFn(torch.autograd.Function):
     """``apply(x, w_ln, wq, wk, wv, wo, w_pln, wg, wu, wd, eps, meta,
-    attention_mask=None, position_ids=None, use_cache=False)``."""
+    attention_mask=None, position_ids=None, use_cache=False,
+    approximate_gelu=True)``."""
 
     @staticmethod
     def forward(
@@ -433,6 +449,7 @@ class PrefixTrainFn(torch.autograd.Function):
         attention_mask=None,
         position_ids=None,
         use_cache=False,
+        approximate_gelu=True,
     ):
         out, saved = prefix_train_forward(
             x,
@@ -450,6 +467,7 @@ class PrefixTrainFn(torch.autograd.Function):
             attention_mask=attention_mask,
             position_ids=position_ids,
             use_cache=use_cache,
+            approximate_gelu=approximate_gelu,
         )
         ctx.train_ctx = saved
         if use_cache:
@@ -462,5 +480,4 @@ class PrefixTrainFn(torch.autograd.Function):
         g = prefix_train_backward(
             ctx.train_ctx, grad_out, dk_cache=grad_k, dv_cache=grad_v
         )
-        # + eps, meta, attention_mask, position_ids, use_cache
-        return (*g, None, None, None, None, None)
+        return (*g, *(None for _ in range(len(ctx.needs_input_grad) - len(g))))

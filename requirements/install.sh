@@ -2885,7 +2885,7 @@ install_fastwam_model() {
 
 install_cosmos3_deps() {
     local cosmos_path
-    cosmos_path=$(clone_or_reuse_repo COSMOS_FRAMEWORK_PATH "$VENV_DIR/cosmos-framework" https://github.com/NVIDIA/cosmos-framework.git)
+    cosmos_path=$(clone_or_reuse_repo COSMOS_FRAMEWORK_PATH "$VENV_DIR/cosmos-framework" https://github.com/NVIDIA/cosmos-framework.git --full-clone)
     if [ -z "${COSMOS_FRAMEWORK_PATH:-}" ]; then
         # Revision the Cosmos3 examples are validated with.
         git -C "$cosmos_path" checkout "${COSMOS3_GIT_REF:-0460be81f16883aa380e716dc6f58c1189481172}" >&2

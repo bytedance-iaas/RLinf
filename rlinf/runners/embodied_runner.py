@@ -521,7 +521,7 @@ class EmbodiedRunner:
         the previous step. Dispatch failures are non-fatal to training.
         """
         try:
-            self.env.set_global_step(self.global_step)
+            self.env.set_media_global_step(self.global_step)
         except Exception as exc:  # noqa: BLE001 - a video label is never fatal
             self.logger.warning(
                 f"Could not set the env step for media indexing: {exc}. "

@@ -27,6 +27,41 @@ from rlinf.utils.ckpt_convertor.openpi import sft_to_lerobot as conv
 POLICY_KEYS = ("action_in_proj.weight", "paligemma_with_expert.layer.weight")
 
 
+@pytest.mark.parametrize("tied", [False, True])
+def test_native_openpi_sft_exports_transposed_mlp_weights(tmp_path, tied):
+    ckpt = tmp_path / "full_weights.pt"
+    gating = torch.arange(48, dtype=torch.float32).reshape(2, 4, 6)
+    linear = torch.arange(24, dtype=torch.float32).reshape(6, 4)
+    embedding = torch.arange(32, dtype=torch.float32).reshape(8, 4)
+    torch.save(
+        {
+            "llm.layers.0.mlps.0.w_gating": gating,
+            "llm.layers.0.mlps.0.w_linear": linear,
+            "llm.embedder.embedding.weight": embedding,
+        },
+        ckpt,
+    )
+    prefix = "model.paligemma_with_expert.paligemma.model.language_model.layers.0.mlp."
+    expected = {
+        prefix + "gate_proj.weight": gating[0].T.contiguous(),
+        prefix + "up_proj.weight": gating[1].T.contiguous(),
+        prefix + "down_proj.weight": linear.T.contiguous(),
+        "model.paligemma_with_expert.paligemma.lm_head.weight": embedding,
+    }
+    if tied:
+        expected["model." + conv.TIED_KEY] = embedding.clone()
+    template = tmp_path / "template"
+    template.mkdir()
+    save_file(expected, str(template / "model.safetensors"))
+
+    conv.convert_weights(ckpt, template, tmp_path / "output")
+
+    actual = load_file(str(tmp_path / "output/model.safetensors"))
+    assert actual.keys() == expected.keys()
+    for key in expected:
+        torch.testing.assert_close(actual[key], expected[key], rtol=0, atol=0)
+
+
 def _make_sft_ckpt(root, extra=None, wrappers=""):
     """An RLinf checkpoint: actor/model_state_dict/full_weights.pt."""
     d = root / "actor" / "model_state_dict"

@@ -16,14 +16,12 @@
 
 LeRobot fine-tuning is the most common way to produce a pi0.5 policy for a new
 robot -- most of the pi0.5 checkpoints published on the Hub are in its format --
-but RLinf cannot load one directly. Two things differ, and both fail silently:
+but its deployment layout differs from the RLinf checkpoint layout:
 
 1. **Weight key prefix.** LeRobot saves the policy wrapper, so every tensor is
-   named ``model.<...>``. ``OpenPi0ForRLActionPrediction`` inherits ``PI0Pytorch``
-   and expects bare names. ``rlinf/models/embodiment/openpi/__init__.py`` loads
-   with ``strict=False``, so a prefix mismatch drops *every* tensor without
-   raising and the policy then runs on its random initialization -- which looks
-   like a checkpoint that trains but never succeeds, not like a load error.
+   named ``model.<...>``. This mode removes that wrapper. RLinf's OpenPI loader
+   then translates the bare ``paligemma_with_expert.*`` keys into its native
+   ``llm.*`` and ``img.*`` layout.
 
 2. **Norm-stats format.** LeRobot writes per-feature tensors into a
    ``*_normalizer_processor.safetensors``; openpi wants a ``norm_stats.json``

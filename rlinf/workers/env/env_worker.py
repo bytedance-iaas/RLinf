@@ -204,8 +204,17 @@ class EnvWorker(Worker):
             )
 
     def set_global_step(self, global_step: int) -> None:
-        """Set the trajectory step used to correlate distributed events."""
+        """Set the step used by trajectory events and recorded media."""
         self._trajectory_step = global_step
+        self.set_media_global_step(global_step)
+
+    def set_media_global_step(self, global_step: int) -> None:
+        """Label recorded media without changing an in-flight trajectory's identity."""
+        self._global_step = global_step
+        for env in list(self.env_list) + list(self.eval_env_list):
+            setter = get_env_attr(env, "set_global_step")
+            if callable(setter):
+                setter(global_step)
 
     def init_worker(self):
         # This is a barrier to ensure all envs' initial setup upon import is done
@@ -284,18 +293,6 @@ class EnvWorker(Worker):
             setter = get_env_attr(env, "set_media_index")
             if callable(setter):
                 setter(media_index, self._rank)
-
-    def set_global_step(self, global_step: int):
-        """Tell the recording wrappers which step upcoming videos belong to.
-
-        Mirrors the existing ``set_global_step`` on the actor and rollout
-        workers, so the driver can call it the same way.
-        """
-        self._global_step = global_step
-        for env in list(self.env_list) + list(self.eval_env_list):
-            setter = get_env_attr(env, "set_global_step")
-            if callable(setter):
-                setter(global_step)
 
     def update_env_cfg(self):
         if self.enable_train:

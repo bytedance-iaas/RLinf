@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Drop-in fused replacement for the prefix-side (PaliGemma VLM) GemmaDecoderLayer.
+"""Fused prefix execution for native OpenPI and legacy Gemma decoder layers.
 
-Wraps the KernelAgent fused layer (`PrefixTrainFn`: fused fwd + hand-written
-grad-only bwd, honors an arbitrary additive attention mask) as an nn.Module with
-the same forward signature as `GemmaDecoderLayer`, so it drops into
-`paligemma.language_model.layers` without touching the model's forward dispatch.
+Native OpenPI blocks keep their parameters and checkpoint keys and dispatch
+CUDA prefix-only calls to ``PrefixTrainFn``. CPU, joint-expert, and suffix calls
+use the original implementation. Legacy ``GemmaDecoderLayer`` instances use
+a wrapper with the same forward signature and original submodules.
 
 Only for the standard-RMSNorm prefix side (``use_adarms=False``). The
 action-expert (adaRMS) layers are left untouched. Set
@@ -147,21 +147,82 @@ def _fused_bwd_hook(grad: torch.Tensor) -> torch.Tensor:
     return grad
 
 
-def apply_fused_prefix_layers(model: nn.Module, enabled: bool = False) -> int:
-    """Swap prefix VLM GemmaDecoderLayers for the fused version.
+def fused_block_prefix_forward(
+    layer: nn.Module,
+    hidden_states: torch.Tensor,
+    positions: torch.Tensor,
+    attention_mask: torch.Tensor,
+) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+    """Run the native OpenPI block's prefix and return its sequence-first cache.
 
-    Only ``paligemma.language_model`` is modified, so the action-expert adaRMS
-    layers remain unchanged.
+    Parameters stay registered on the original block. Transposed MLP views keep
+    checkpoint keys and FSDP ownership unchanged, including during backward.
+    """
+    from .fused_kernels.layer_train import PrefixTrainFn
+
+    cfg = layer.configs[0]
+    mlp = layer.mlps[0]
+    mask = torch.zeros_like(attention_mask, dtype=torch.float32).masked_fill_(
+        ~attention_mask.bool(), -2.3819763e38
+    )
+    out, k, v = PrefixTrainFn.apply(
+        hidden_states,
+        layer.pre_attention_norms[0].scale,
+        layer.attn.q_proj[0].weight,
+        layer.attn.k_proj[0].weight,
+        layer.attn.v_proj[0].weight,
+        layer.attn.o_proj[0].weight,
+        layer.pre_ffw_norms[0].scale,
+        mlp.w_gating[0].T,
+        mlp.w_gating[1].T,
+        mlp.w_linear.T,
+        1e-6,
+        (cfg.num_heads, cfg.num_kv_heads, cfg.head_dim),
+        mask,
+        positions,
+        True,
+        False,  # Native OpenPI uses exact GELU rather than the tanh approximation.
+    )
+    if os.environ.get("RLINF_FUSED_BACKWARD_COUNTER", "0") == "1":
+        _BackwardCounter.fwd += 1
+        if out.requires_grad:
+            out.register_hook(_fused_bwd_hook)
+    return out, (k.transpose(1, 2), v.transpose(1, 2))
+
+
+def apply_fused_prefix_layers(model: nn.Module, enabled: bool = False) -> int:
+    """Enable fused prefix execution on supported OpenPI decoder layers.
+
+    Native blocks retain their module structure; legacy decoder layers are
+    wrapped. Action-expert adaRMS layers remain unchanged.
 
     Args:
-        model: OpenPi policy containing ``paligemma_with_expert``.
-        enabled: Whether to replace eligible prefix decoder layers.
+        model: OpenPI policy containing ``llm`` or ``paligemma_with_expert``.
+        enabled: Whether to enable eligible prefix decoder layers.
 
     Returns:
-        The number of replaced layers.
+        The number of enabled layers.
     """
     if not enabled:
         return 0
+
+    llm = getattr(model, "llm", None)
+    if llm is not None:
+        from rlinf.models.embodiment.openpi.modules.gemma import Block
+
+        count = 0
+        for layer in llm.layers:
+            if (
+                isinstance(layer, Block)
+                and not layer.adarms[0]
+                and not layer.configs[0].lora_configs
+                and layer.attn.k_proj[0] is not None
+                and isinstance(layer.dropout, nn.Identity)
+            ):
+                layer.enable_fused_prefix = True
+                count += 1
+        _logger.info("[fused-prefix] enabled %d native OpenPI prefix blocks.", count)
+        return count
 
     pg = getattr(model, "paligemma_with_expert", None)
     if pg is None:

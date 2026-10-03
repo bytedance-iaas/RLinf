@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import importlib.util
 import sys
 import time
@@ -49,6 +50,71 @@ from rlinf.utils.env_helpers.delay_sampler import (
     GaussianDelaySampler,
     UniformDelaySampler,
 )
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_native_openpi_fused_prefix_preserves_outputs_cache_and_gradients(
+    device, request
+):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("Fused prefix parity requires a CUDA GPU and Triton.")
+    from rlinf.models.embodiment.openpi.fused_prefix_layer import (
+        apply_fused_prefix_layers,
+    )
+    from rlinf.models.embodiment.openpi.modules import gemma
+    from rlinf.models.embodiment.openpi.modules.utils import (
+        set_torch_compile,
+        torch_compile_enabled,
+    )
+
+    previous_compile = torch_compile_enabled()
+    request.addfinalizer(lambda: set_torch_compile(previous_compile))
+    set_torch_compile(False)
+    torch.manual_seed(7)
+    cfg = gemma.Config(64, 1, 128, 4, 2, 16)
+    reference = gemma.Block([cfg, cfg], adarms=[False, True]).to(device)
+    candidate = copy.deepcopy(reference)
+    model = SimpleNamespace(llm=SimpleNamespace(layers=[candidate]))
+    names = list(candidate.state_dict())
+    assert apply_fused_prefix_layers(model, enabled=True) == 1
+    assert list(candidate.state_dict()) == names
+
+    x = torch.randn(2, 7, 64, device=device, requires_grad=True)
+    fused_x = x.detach().clone().requires_grad_(True)
+    positions = torch.arange(7, device=device).expand(2, -1)
+    mask = torch.ones(2, 1, 7, 7, dtype=torch.bool, device=device)
+    mask[1, :, :, -2:] = False
+    out, cache = reference([x, None], None, positions, mask, [None, None])
+    fused_out, fused_cache = candidate(
+        [fused_x, None], None, positions, mask, [None, None]
+    )
+    torch.testing.assert_close(fused_out[0], out[0], atol=3e-3, rtol=3e-3)
+    for actual, expected in zip(fused_cache, cache, strict=True):
+        torch.testing.assert_close(actual, expected, atol=3e-3, rtol=3e-3)
+    (out[0].square().mean() + sum(t.square().mean() for t in cache)).backward()
+    (
+        fused_out[0].square().mean() + sum(t.square().mean() for t in fused_cache)
+    ).backward()
+    torch.testing.assert_close(fused_x.grad, x.grad, atol=3e-3, rtol=3e-3)
+    for actual, expected in zip(
+        candidate.parameters(), reference.parameters(), strict=True
+    ):
+        if expected.grad is not None:
+            torch.testing.assert_close(actual.grad, expected.grad, atol=3e-3, rtol=3e-3)
+
+
+def test_native_openpi_compile_keeps_checkpoint_keys_and_is_idempotent():
+    from rlinf.models.embodiment.openpi.pi0 import Pi0
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+
+    with torch.device("meta"):
+        model = Pi0(Pi0Config(paligemma_variant="dummy", action_expert_variant="dummy"))
+    keys = list(model.state_dict())
+    model.enable_torch_compile(mode="default")
+    suffix = model.run_suffix
+    model.enable_torch_compile(mode="default")
+    assert model.run_suffix is suffix
+    assert list(model.state_dict()) == keys
 
 
 class _DummyModel:

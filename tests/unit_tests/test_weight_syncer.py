@@ -16,6 +16,8 @@ import asyncio
 import copy
 import inspect
 import logging
+import queue
+import threading
 import unittest
 from collections import OrderedDict
 from types import MethodType
@@ -51,6 +53,7 @@ from rlinf.runners.async_ppo_embodied_runner import AsyncPPOEmbodiedRunner
 from rlinf.runners.async_weight_sync_mixin import AsyncWeightSyncMixin
 from rlinf.scheduler import AcceleratorType, Worker
 from rlinf.utils.env_helpers import SmoothInterveneController  # noqa: E402
+from rlinf.utils.run_state import build_reporter
 from rlinf.utils.utils import collect_param_names_need_sync
 from rlinf.workers.env.env_worker import EnvWorker  # noqa: E402
 from rlinf.workers.rollout.hf.async_huggingface_worker import (
@@ -1829,6 +1832,13 @@ def test_async_embodied_runner_startup_sync_is_blocking() -> None:
     runner.rollout_metric_channel = None
     runner.update_rollout_weights = MagicMock()
     runner.drain_pending_rollout_weight_sync = MagicMock()
+    runner.reporter = build_reporter(
+        OmegaConf.create({"runner": {"run_state": {"enable": False}}})
+    )
+    runner.metric_logger = MagicMock()
+    runner.log_queue = queue.Queue()
+    runner.log_thread = threading.Thread(target=runner._log_worker, daemon=True)
+    runner.log_thread.start()
 
     runner.run()
 

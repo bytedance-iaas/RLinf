@@ -21,11 +21,10 @@ which only reads the LeRobot layout. Converting lets a robot run the stock
 client -- with its action queue, early re-request and overlapping chunk
 aggregation -- instead of a hand-written control loop.
 
-The weights themselves need almost nothing done to them: RLinf's openpi backend
-*is* the LeRobot pi05 module tree, so the tensor half is pure key renaming and
-round-trips bit-identically. What needs care is the metadata travelling alongside
-them: the following can be *carried over wrong* rather than *converted wrong*,
-and each fails silently rather than loudly.
+Native RLinf checkpoints use ``llm.*`` and ``img.*`` keys. The export translates
+these keys and transposes packed projections into the LeRobot layout without
+changing tensor values. Older ``paligemma_with_expert.*`` checkpoints are also
+accepted. The export additionally checks the following metadata:
 
 * **RL-only tensors.** ``add_value_head`` and the flow-noise machinery add
   ``value_head.*`` / ``noise_head.*`` and friends, which the LeRobot model has no
@@ -148,6 +147,13 @@ def convert_weights(
     for key in dropped_extra:
         del state_dict[key]
 
+    if any(key.startswith(("llm.", "img.")) for key in state_dict):
+        from rlinf.utils.ckpt_convertor.openpi.openpi_to_openpi_pytorch import (
+            new_to_old_state_dict,
+        )
+
+        state_dict = new_to_old_state_dict(state_dict)
+
     if dtype != "keep":
         target = torch.float32 if dtype == "float32" else torch.bfloat16
         state_dict = {k: v.to(target) for k, v in state_dict.items()}
@@ -156,6 +162,14 @@ def convert_weights(
         want = set(f.keys())
         want_shapes = {k: tuple(f.get_slice(k).get_shape()) for k in want}
     prefix = _template_prefix(want)
+
+    lm_head_key = "paligemma_with_expert.paligemma.lm_head.weight"
+    if (
+        prefix + TIED_KEY in want
+        and TIED_KEY not in state_dict
+        and lm_head_key in state_dict
+    ):
+        state_dict[TIED_KEY] = state_dict[lm_head_key].clone()
 
     dropped_tied = False
     if prefix + TIED_KEY not in want and TIED_KEY in state_dict:

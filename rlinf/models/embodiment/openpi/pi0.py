@@ -518,6 +518,21 @@ class Pi0(model.BaseModel):
             if any(selector in name for selector in params_to_keep_float32):
                 param.data = param.data.to(dtype=torch.float32)
 
+    def enable_torch_compile(self, mode: str = "max-autotune-no-cudagraphs") -> None:
+        """Compile rollout vision, prefix, and suffix passes without changing weights.
+
+        Prefix and suffix share LLM parameters, so the prefix pass excludes CUDA
+        graphs. The selected mode applies to vision and suffix inference.
+        """
+        if getattr(self, "torch_compile_enabled", False):
+            return
+        self.img.forward = torch.compile(self.img.forward, mode=mode)
+        self.build_prefix_cache = torch.compile(
+            self.build_prefix_cache, mode="max-autotune-no-cudagraphs"
+        )
+        self.run_suffix = torch.compile(self.run_suffix, mode=mode)
+        self.torch_compile_enabled = True
+
     def sample_actions(
         self,
         observation: model.Observation,

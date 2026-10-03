@@ -81,7 +81,7 @@ Observation and Action
 
 Units: the checkpoint speaks LeRobot **normalized motor units** (arm ``[-100, 100]``,
 gripper ``[0, 100]``) while ManiSkill speaks **radians**. The conversion lives in
-``rlinf/envs/maniskill/so101_calib.py`` and is derived from the follower servo
+``rlinf/envs/sim/maniskill/so101_calib.py`` and is derived from the follower servo
 calibration (Feetech, 4096 ticks/revolution). It is applied at the env boundary:
 actions in ``action_utils.prepare_actions_for_maniskill``, observations in
 ``ManiskillEnv._wrap_obs`` (enabled by ``so101_state_norm: True``).
@@ -103,7 +103,7 @@ under-models the real hardware — it clamps ``shoulder_lift`` and ``elbow_flex`
 cannot reach the tray at all until the limits are widened.
 
 The widened URDF is **derived from the installed ManiSkill one at import time**
-(``rlinf/envs/maniskill/so101_agent.py``) rather than shipped as an asset. Limits come
+(``rlinf/envs/sim/maniskill/so101_agent.py``) rather than shipped as an asset. Limits come
 from ``so101_calib.JOINT_LIMITS_{LOW,HIGH}`` — the same table the action conversion
 clips against — so the two cannot drift apart, and a fresh checkout needs no
 out-of-band download.

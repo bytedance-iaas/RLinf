@@ -44,7 +44,6 @@ def _runner() -> EmbodiedRunner:
     """
     runner = object.__new__(EmbodiedRunner)
     runner.logger = logging.getLogger("test-runner")
-    runner.stop_logging = False
     runner.log_queue = queue.Queue()
     runner.log_thread = threading.Thread(target=runner._log_worker, daemon=True)
     runner.log_thread.start()
@@ -69,7 +68,8 @@ def test_a_raising_log_entry_still_marks_itself_done():
         "a log entry that raised never called task_done(), so the drain in "
         "_finish_run would wait on it forever"
     )
-    runner.stop_logging = True
+    runner.log_queue.put(None)
+    runner.log_thread.join(timeout=1.0)
 
 
 def test_the_drain_gives_up_on_a_backend_that_hangs():
@@ -97,7 +97,8 @@ def test_the_drain_gives_up_on_a_backend_that_hangs():
         "finishes anyway, not that the queue drained"
     )
     release.set()
-    runner.stop_logging = True
+    runner.log_queue.put(None)
+    runner.log_thread.join(timeout=1.0)
 
 
 def test_the_drain_waits_for_work_that_does_finish():
@@ -115,7 +116,8 @@ def test_the_drain_waits_for_work_that_does_finish():
 
     assert runner.log_queue.unfinished_tasks == 0
     assert elapsed >= 0.25, "returned before the queued work could have completed"
-    runner.stop_logging = True
+    runner.log_queue.put(None)
+    runner.log_thread.join(timeout=1.0)
 
 
 def test_the_runner_declares_a_bounded_drain_timeout():

@@ -2337,6 +2337,25 @@ def _terminal_env_output(reset_obs, terminal_obs, **transition):
     )
 
 
+def test_media_step_updates_preserve_inflight_trajectory_identity():
+    media_steps = []
+    worker = _publish_step_env(
+        env_list=[SimpleNamespace(set_global_step=media_steps.append)],
+        eval_env_list=[],
+    )
+    worker.set_global_step(7)
+    worker.set_media_global_step(11)
+    output = _terminal_env_output(torch.zeros(1, 4), torch.ones(1, 4))
+
+    worker._publish_step(Mock(), output, EnvTransition(), None, None, 0, 0, 0)
+    policy_input = worker._send_policy_input.call_args.args[1]
+    next_key = worker._send_policy_input.call_args.args[3]
+
+    assert policy_input.env_parts[0].sources[0].key.step_id == 7
+    assert next_key.step_id == 7
+    assert media_steps == [7, 11]
+
+
 def test_env_sends_terminal_observation_only_as_a_boundary_override():
     env = _publish_step_env()
     reset_obs = torch.zeros(1, 4)

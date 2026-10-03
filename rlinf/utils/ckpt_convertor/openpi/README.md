@@ -19,8 +19,8 @@ Three checkpoint layouts are referenced throughout:
   `config.json`, and a norm-stats asset under
   `physical-intelligence/behavior/norm_stats.json`.
 - **OpenPI PyTorch** — the upstream PyTorch / BEHAVIOR-eval layout, with keys under
-  `paligemma_with_expert.*` in `model.safetensors`. Convert these weights to
-  OpenPI before loading them with the current RLinf OpenPI model.
+  `paligemma_with_expert.*` in `model.safetensors`. The RLinf OpenPI loader
+  translates these weights into the native layout when loading them.
 - **LeRobot** — what `policy_class.from_pretrained()` reads: `config.json`,
   `model.safetensors` with a `model.` wrapper prefix, and processor JSONs whose
   companion safetensors carry the dataset statistics.
