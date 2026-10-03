@@ -22,8 +22,13 @@ from typing import TYPE_CHECKING, Union
 
 from omegaconf.dictconfig import DictConfig
 
+from rlinf.data.schema.embodied_trajectory import (
+    select_trajectory_collector,
+    select_trajectory_dispatcher,
+)
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
+from rlinf.utils.checkpoint import parse_global_step_from_checkpoint_path
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
@@ -94,7 +99,16 @@ class EmbodiedRunner:
         # Data channels
         self.env_channel = Channel.create("Env")
         self.rollout_channel = Channel.create("Rollout")
-        self.actor_channel = Channel.create("Actor")
+        # Trajectory assembly runs on the channel worker, so neither the env
+        # nor the rollout worker has to hold partial trajectory state.
+        self.actor_channel = Channel.create(
+            "Actor",
+            collector=select_trajectory_collector(self.cfg),
+            dispatcher=select_trajectory_dispatcher(self.cfg),
+            cfg=self.cfg,
+            producers=[self.rollout],
+            consumers=[self.actor],
+        )
         if self.reward is not None:
             self.reward_channel = Channel.create("Reward")
         else:
@@ -123,7 +137,6 @@ class EmbodiedRunner:
         self.reporter = attach_reporter(self, cfg)
 
         # Async logging setup
-        self.stop_logging = False
         self.log_queue = queue.Queue()
         self.log_thread = threading.Thread(target=self._log_worker, daemon=True)
         self.log_thread.start()
@@ -196,12 +209,12 @@ class EmbodiedRunner:
             return
 
         self.logger.info(f"Resuming training from checkpoint directory {resume_dir}.")
+        self.global_step = parse_global_step_from_checkpoint_path(resume_dir)
         actor_checkpoint_path = os.path.join(resume_dir, "actor")
         assert os.path.exists(actor_checkpoint_path), (
             f"resume_dir {actor_checkpoint_path} does not exist."
         )
         self.actor.load_checkpoint(actor_checkpoint_path).wait()
-        self.global_step = int(resume_dir.split("global_step_")[-1])
 
     def update_rollout_weights(self):
         rollout_handle: Handle = self.rollout.sync_model_from_actor()
@@ -588,11 +601,11 @@ class EmbodiedRunner:
                         input_channel=self.env_channel,
                         rollout_channel=self.rollout_channel,
                         reward_channel=self.reward_channel,
-                        actor_channel=self.actor_channel,
                     )
                     rollout_handle: Handle = self.rollout.generate(
                         input_channel=self.rollout_channel,
                         output_channel=self.env_channel,
+                        actor_channel=self.actor_channel,
                     )
                     reward_handle = None
                     if self.reward is not None:
@@ -619,7 +632,7 @@ class EmbodiedRunner:
                     env_bootstrap_handle: Handle | None = None
                     if self.overlap_env_bootstrap and _step + 1 < self.max_steps:
                         env_bootstrap_handle = self.env.prefetch_train_bootstrap(
-                            rollout_channel=self.rollout_channel
+                            rollout_channel=self.rollout_channel,
                         )
 
                     actor_training_metrics = actor_training_handle.wait()
@@ -686,11 +699,11 @@ class EmbodiedRunner:
                     input_channel=self.env_channel,
                     rollout_channel=self.rollout_channel,
                     reward_channel=self.reward_channel,
-                    actor_channel=self.actor_channel,
                 )
                 rollout_handle: Handle = self.rollout.generate(
                     input_channel=self.rollout_channel,
                     output_channel=self.env_channel,
+                    actor_channel=self.actor_channel,
                 )
                 reward_handle = None
                 if self.reward is not None:
@@ -718,7 +731,7 @@ class EmbodiedRunner:
                 env_bootstrap_handle: Handle | None = None
                 if self.overlap_env_bootstrap and _step + 1 < self.max_steps:
                     env_bootstrap_handle = self.env.prefetch_train_bootstrap(
-                        rollout_channel=self.rollout_channel
+                        rollout_channel=self.rollout_channel,
                     )
 
                 actor_results = actor_training_handle.wait()

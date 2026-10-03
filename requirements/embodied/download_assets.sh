@@ -208,10 +208,15 @@ download_maniskill_assets() {
 	# through resumes instead of reporting everything as present.
 	export MS_ASSET_DIR="${root_dir}/.maniskill"
 	mkdir -p "$MS_ASSET_DIR"
-	# Ensure mani_skill is installed
-	if ! python -c "import mani_skill" &> /dev/null; then
-		echo "mani_skill is not installed. Please install it first." >&2
-		exit 1
+	# The download goes through mani_skill, and so through torch, which needs
+	# driver libraries the container runtime only injects at run time. Skip
+	# rather than fail so image builds still succeed.
+	local ms_import_err
+	if ! ms_import_err=$(python -c "import mani_skill" 2>&1); then
+		echo "[download_assets] mani_skill is not importable; skipping the ManiSkill assets." >&2
+		echo "[download_assets] Re-run 'download_assets --assets maniskill' once it is." >&2
+		echo "$ms_import_err" >&2
+		return 0
 	fi
 	download_bridge_v2_real2sim
 	download_widowx250s

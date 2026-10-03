@@ -18,7 +18,7 @@ import pytest
 
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
 from rlinf.runners.async_ppo_embodied_runner import AsyncPPOEmbodiedRunner
-from rlinf.runners.async_weight_sync import AsyncWeightSyncMixin
+from rlinf.runners.async_weight_sync_mixin import AsyncWeightSyncMixin
 
 # Both async runners must pick the overlap up from the mixin, not from their own
 # copy of it.

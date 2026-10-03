@@ -55,7 +55,7 @@ from openpi import transforms
 from openpi.models import model as _model
 
 # SO101/SO100 active-joint dimension: 5 arm joints + 1 gripper. Duplicated as a
-# literal rather than imported from ``rlinf.envs.maniskill.so101_calib`` so that
+# literal rather than imported from ``rlinf.envs.sim.maniskill.so101_calib`` so that
 # importing these transforms never pulls in ``rlinf.envs`` (and with it the
 # simulator dependencies) in a training-only process. ``test_so101_policy.py``
 # asserts the two definitions agree.

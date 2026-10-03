@@ -21,6 +21,7 @@ from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
+from rlinf.utils.checkpoint import parse_global_step_from_checkpoint_path
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.run_state import attach_reporter
@@ -71,12 +72,12 @@ class SFTRunner:
         if resume_dir is None:
             return
 
+        self.global_step = parse_global_step_from_checkpoint_path(resume_dir)
         actor_checkpoint_path = os.path.join(resume_dir, "actor")
         assert os.path.exists(actor_checkpoint_path), (
             f"resume_dir {actor_checkpoint_path} does not exist."
         )
         self.actor.load_checkpoint(actor_checkpoint_path).wait()
-        self.global_step = int(resume_dir.split("global_step_")[-1])
 
     def run(self) -> None:
         """Run training, always recording a terminal run state.

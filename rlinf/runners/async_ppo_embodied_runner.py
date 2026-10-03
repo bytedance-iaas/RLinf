@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from omegaconf.omegaconf import DictConfig
 
-from rlinf.runners.async_weight_sync import AsyncWeightSyncMixin
+from rlinf.runners.async_weight_sync_mixin import AsyncWeightSyncMixin
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
@@ -123,12 +123,12 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
             input_channel=self.env_channel,
             rollout_channel=self.rollout_channel,
             reward_channel=self.reward_channel,
-            actor_channel=self.actor_channel,
             metric_channel=self.env_metric_channel,
         )
         rollout_handle: Handle = self.rollout.generate(
             input_channel=self.rollout_channel,
             output_channel=self.env_channel,
+            actor_channel=self.actor_channel,
             metric_channel=self.rollout_metric_channel,
         )
 
@@ -171,7 +171,10 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
                 self.actor.set_global_step(self.global_step).wait()
                 with self.timer("update_rollout_weights"):
                     self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
-                self.rollout.set_global_step(self.global_step).wait()
+                # No rollout.set_global_step here: applying the weights already
+                # sets it from the version they carry, which is this same step.
+                # Setting it from the runner would claim the new step before a
+                # non-blocking sync has landed.
                 self._advance_env_step()
                 # Report after weight sync so the duration covers the full
                 # iteration while still excluding eval and checkpoint work.

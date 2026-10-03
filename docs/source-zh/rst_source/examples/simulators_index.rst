@@ -3,7 +3,7 @@
 
 本类示例以 **模拟器（基准）** 为主线，展示如何在某个仿真平台上运行 RLinf —— 包括环境安装、资产路径、观测/动作空间，以及一个参考 RL 训练配方（通常为 PPO 或 GRPO + VLA 策略）。
 
-如果你的出发点是 "我想在基准 *X* 上训练"，那这里就是合适的入口。若以模型为主线（pi₀、GR00T 等）请参考 :doc:`vla_wam_index`\ ；包括 Franka 在内的真机部署请参考 :doc:`real_world_index`\ 。如需在 AMD ROCm 或 Ascend CANN 加速器上运行 LIBERO，请参阅 :doc:`支持的加速器 <../guides/index>` 教程章节。
+如果你的出发点是 "我想在基准 *X* 上训练"，那这里就是合适的入口。若以模型为主线（pi₀、GR00T 等）请参考 :doc:`vla_wam_index`\ ；包括 Franka 在内的真机部署请参考 :doc:`real_world_index`\ 。如需使用 AMD、华为昇腾或摩尔线程，请在 :ref:`硬件支持表 <model-hardware-support>` 中选择模型与环境组合。
 
 .. raw:: html
 
@@ -181,10 +181,10 @@
      </div>
 
      <div style="flex: 0 0 32%; box-sizing: border-box;">
-       <a href="embodied/so101.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/embody.jpg"
+       <a href="embodied/so101_real2sim.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/embody.jpg"
          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/so101.html" style="text-decoration: underline; color: blue;">
+         <a href="embodied/so101_real2sim.html" style="text-decoration: underline; color: blue;">
            <b>基于 SO101 机械臂的强化学习（Real2Sim）</b>
          </a><br>
          依实测几何在 ManiSkill 中重建真实 SO101 工作台，并用 &#960;&#8320;.&#8325; 做强化学习微调
@@ -198,7 +198,7 @@
    :maxdepth: 2
 
    ManiSkill <embodied/maniskill>
-   SO101（Real2Sim） <embodied/so101>
+   SO101（Real2Sim） <embodied/so101_real2sim>
    LIBERO <embodied/libero>
    Behavior <embodied/behavior>
    MetaWorld <embodied/metaworld>

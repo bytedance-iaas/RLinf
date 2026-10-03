@@ -74,8 +74,8 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
-    def _build_openpi_rlinf(cfg: DictConfig, torch_dtype):
-        from rlinf.models.embodiment.openpi_rlinf import get_model
+    def _build_pi0_fast(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.pi0_fast import get_model
 
         return get_model(cfg, torch_dtype)
 
@@ -136,6 +136,16 @@ def _register_builtin_models():
 
     def _build_dreamzero(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.dreamzero import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    def _build_fastwam(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.fastwam import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    def _build_cosmos3(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.cosmos3 import get_model
 
         return get_model(cfg, torch_dtype)
 
@@ -204,8 +214,8 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
-        SupportedModel.OPENPI_RLINF.value,
-        _build_openpi_rlinf,
+        SupportedModel.PI0_FAST.value,
+        _build_pi0_fast,
         category="embodied",
         force=True,
     )
@@ -282,6 +292,18 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
+        SupportedModel.FASTWAM.value,
+        _build_fastwam,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.COSMOS3.value,
+        _build_cosmos3,
+        category="embodied",
+        force=True,
+    )
+    register_model(
         SupportedModel.CFG_MODEL.value,
         _build_openpi_cfg,
         category="embodied",
@@ -351,14 +373,17 @@ def get_model(cfg: DictConfig):
         model = model.to(Worker.torch_device_type)
 
     if cfg.is_lora:
-        from peft import LoraConfig, PeftModel, get_peft_model
+        from peft import (
+            LoraConfig,
+            PeftModel,
+            get_peft_model,
+            inject_adapter_in_model,
+        )
 
         if not hasattr(cfg, "lora_path") or cfg.lora_path is None:
-            lora_config = LoraConfig(
-                r=cfg.lora_rank,
-                lora_alpha=cfg.lora_rank,
-                lora_dropout=0.0,
-                target_modules=[
+            target_scope = cfg.get("lora_target_scope")
+            if target_scope is None:
+                target_modules = [
                     "proj",
                     "qkv",
                     "fc1",
@@ -375,13 +400,23 @@ def get_model(cfg: DictConfig):
                     "up_proj",
                     "down_proj",
                     "lm_head",  # llm
-                ],
+                ]
+            elif str(target_scope).lower().replace("-", "_") == "all_linear":
+                target_modules = "all-linear"
+            else:
+                raise ValueError(f"Unsupported lora_target_scope: {target_scope!r}")
+            lora_config = LoraConfig(
+                r=cfg.lora_rank,
+                lora_alpha=cfg.lora_rank,
+                lora_dropout=0.0,
+                target_modules=target_modules,
                 init_lora_weights="gaussian",
             )
-            if SupportedModel(model_type) in (
-                SupportedModel.OPENPI,
-                SupportedModel.CFG_MODEL,
-            ):
+            if target_modules == "all-linear":
+                for param in model.parameters():
+                    param.requires_grad_(False)
+                model = inject_adapter_in_model(lora_config, model)
+            elif SupportedModel(model_type) == SupportedModel.CFG_MODEL:
                 module_to_lora = model.paligemma_with_expert.paligemma
                 module_to_lora = get_peft_model(module_to_lora, lora_config)
                 tag_vlm_subtree(model, False)

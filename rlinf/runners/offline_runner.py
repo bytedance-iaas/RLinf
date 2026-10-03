@@ -23,6 +23,7 @@ from omegaconf.dictconfig import DictConfig
 
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
+from rlinf.utils.checkpoint import parse_global_step_from_checkpoint_path
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
@@ -65,7 +66,6 @@ class OfflineRunner:
         self.reporter = attach_reporter(self, cfg)
 
         # Async logging setup
-        self.stop_logging = False
         self.log_queue = queue.Queue()
         self.log_thread = threading.Thread(target=self._log_worker, daemon=True)
         self.log_thread.start()
@@ -141,12 +141,12 @@ class OfflineRunner:
             return
 
         self.logger.info(f"Resuming training from checkpoint directory {resume_dir}.")
+        self.global_step = parse_global_step_from_checkpoint_path(resume_dir)
         actor_checkpoint_path = os.path.join(resume_dir, "actor")
         assert os.path.exists(actor_checkpoint_path), (
             f"resume_dir {actor_checkpoint_path} does not exist."
         )
         self.actor.load_checkpoint(actor_checkpoint_path).wait()
-        self.global_step = int(resume_dir.split("global_step_")[-1])
 
     def update_rollout_weights(self):
         if self.rollout is None:

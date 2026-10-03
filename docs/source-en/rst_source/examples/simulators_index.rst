@@ -3,7 +3,7 @@ RL with Embodied Simulators
 
 This category groups examples in which the **simulator (or benchmark)** is the headline. They show how to bring up RLinf on a specific simulation platform — environment installation, asset paths, observation/action spaces, and a reference RL recipe (typically PPO or GRPO with a VLA policy).
 
-If you are starting from "I want to train on benchmark *X*", this is the right entry point. For model-centric examples (pi₀, GR00T, …) see :doc:`vla_wam_index`. For real-robot setups, including Franka, see :doc:`real_world_index`. For LIBERO setup on AMD ROCm or Ascend CANN accelerators, see the :doc:`Supported Accelerators <../guides/index>` tutorial.
+If you are starting from "I want to train on benchmark *X*", this is the right entry point. For model-centric examples (pi₀, GR00T, …) see :doc:`vla_wam_index`. For real-robot setups, including Franka, see :doc:`real_world_index`. For AMD, Huawei Ascend, and Moore Threads, choose a model/environment combination in :ref:`the hardware support table <model-hardware-support>`.
 
 .. raw:: html
 
@@ -181,10 +181,10 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
      </div>
 
      <div style="flex: 0 0 32%; box-sizing: border-box;">
-       <a href="embodied/so101.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/embody.jpg"
+       <a href="embodied/so101_real2sim.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/embody.jpg"
          style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/so101.html" style="text-decoration: underline; color: blue;">
+         <a href="embodied/so101_real2sim.html" style="text-decoration: underline; color: blue;">
            <b>RL with the SO101 Arm (Real2Sim)</b>
          </a><br>
          A measured real SO101 workcell rebuilt in ManiSkill, RL-finetuned with &#960;&#8320;.&#8325;
@@ -198,7 +198,7 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
    :maxdepth: 2
 
    ManiSkill <embodied/maniskill>
-   SO101 (Real2Sim) <embodied/so101>
+   SO101 (Real2Sim) <embodied/so101_real2sim>
    LIBERO <embodied/libero>
    Behavior <embodied/behavior>
    MetaWorld <embodied/metaworld>

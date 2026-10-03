@@ -29,7 +29,7 @@ _REPO = pathlib.Path(__file__).resolve().parents[2]
 
 def _load_calib():
     """Import so101_calib directly, without executing ``rlinf.envs.__init__``."""
-    path = _REPO / "rlinf" / "envs" / "maniskill" / "so101_calib.py"
+    path = _REPO / "rlinf" / "envs" / "sim" / "maniskill" / "so101_calib.py"
     spec = importlib.util.spec_from_file_location("so101_calib_under_test", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -190,7 +190,7 @@ def test_action_utils_converts_before_the_generic_seven_dof_path():
 
 def test_wrist_camera_is_optional_in_the_default_wrap():
     """Tasks without a wrist_camera must still get None, not a KeyError."""
-    text = (_REPO / "rlinf/envs/maniskill/maniskill_env.py").read_text()
+    text = (_REPO / "rlinf/envs/sim/maniskill/maniskill_env.py").read_text()
     assert '"wrist_camera" in sensor_data' in text
     assert '"wrist_images": wrist_image' in text
 
