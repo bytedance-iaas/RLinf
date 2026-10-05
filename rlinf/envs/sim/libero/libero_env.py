@@ -183,6 +183,9 @@ class LiberoEnv(gym.Env):
         self.skip_intermediate_renders = bool(
             OmegaConf.select(cfg, "skip_intermediate_renders", default=False)
         )
+        self.skip_reset_renders = bool(
+            OmegaConf.select(cfg, "skip_reset_renders", default=False)
+        )
 
     def _log_evaluation_mode(self):
         """Log the LIBERO evaluation mode banner (rank 0 env worker only)."""
@@ -849,13 +852,27 @@ class LiberoEnv(gym.Env):
         # Preserve LIBERO's existing 15-step settling behavior unless a model
         # explicitly requests a different reset wait (FastWAM uses 30).
         num_steps_wait = int(self.cfg.get("num_steps_wait", 15))
-        for _ in range(num_steps_wait):
-            zero_actions = np.zeros((len(env_idx), 7))
-            if self.cfg.reset_gripper_open:
-                zero_actions[:, -1] = -1
-            raw_obs, _reward, terminations, info_lists = self.env.step(
-                zero_actions, env_idx
-            )
+        # The settling steps only let the scene come to rest; nothing reads
+        # their frames, and the caller sees the last one. On a CPU-only
+        # simulator each frame is a full OSMesa software pass, so rendering is
+        # held off until the step whose observation is returned.
+        renders_held_off = self.skip_reset_renders and num_steps_wait > 1
+        try:
+            if renders_held_off:
+                self.env.set_camera_rendering(False, id=env_idx)
+            for step in range(num_steps_wait):
+                if renders_held_off and step == num_steps_wait - 1:
+                    self.env.set_camera_rendering(True, id=env_idx)
+                    renders_held_off = False
+                zero_actions = np.zeros((len(env_idx), 7))
+                if self.cfg.reset_gripper_open:
+                    zero_actions[:, -1] = -1
+                raw_obs, _reward, terminations, info_lists = self.env.step(
+                    zero_actions, env_idx
+                )
+        finally:
+            if renders_held_off:
+                self.env.set_camera_rendering(True, id=env_idx)
         if self.current_raw_obs is None:
             self.current_raw_obs = [None] * self.num_envs
         for i, idx in enumerate(env_idx):
