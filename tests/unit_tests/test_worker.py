@@ -868,3 +868,87 @@ def test_clear_stub_import_preserves_real_flash_attn_module():
     Patcher.clear_stub_import("flash_attn")
 
     assert sys.modules["flash_attn"] is real_flash_attn
+
+
+def test_npu_profiling_env_vars_carry_the_capture_settings():
+    from rlinf.scheduler.hardware.accelerators.ascend_npu import (
+        AscendNPUManager,
+        AscendNPUProfileConfig,
+    )
+
+    cfg = AscendNPUProfileConfig(worker_groups=["actor"], with_stack=True)
+    env = AscendNPUManager.get_profiling_env_vars(cfg, "/traces/rlinf_profile_actor_%p")
+
+    settings = json.loads(env["RLINF_NPU_PROFILING"])
+    assert settings["output_prefix"] == "/traces/rlinf_profile_actor_%p"
+    assert settings["with_stack"] is True
+    assert settings["record_shapes"] is False
+    assert settings["profile_memory"] is False
+
+
+def test_npu_profiling_does_nothing_in_a_worker_that_was_not_selected(monkeypatch):
+    """Only the selected groups get the env var, so its absence is the gate.
+
+    A worker without it must not open a window even when the runner reaches a
+    profiled step, and closing a window that was never opened must be safe --
+    the runner stops unconditionally once it has started a step.
+    """
+    from rlinf.scheduler.hardware.accelerators import ascend_npu
+
+    monkeypatch.delenv("RLINF_NPU_PROFILING", raising=False)
+    monkeypatch.setattr(ascend_npu, "_capture", None, raising=False)
+
+    ascend_npu.AscendNPUManager.start_profiling(step_idx=1)
+    assert ascend_npu.AscendNPUManager.is_profiling_active() is False
+
+    ascend_npu.AscendNPUManager.stop_profiling()
+    assert ascend_npu.AscendNPUManager.is_profiling_active() is False
+
+    with ascend_npu.AscendNPUManager.profiling_range("step"):
+        pass
+
+
+def test_npu_profiling_writes_a_trace_with_device_kernels(monkeypatch, tmp_path):
+    """One start/stop pair must leave a trace that actually names NPU kernels.
+
+    This is the property the backend exists for: a capture that only recorded
+    host time would look identical from the runner's side.
+    """
+    import torch
+
+    npu = getattr(torch, "npu", None)
+    if npu is None or not npu.is_available():
+        pytest.skip("torch_npu profiling requires an Ascend NPU.")
+
+    from rlinf.scheduler.hardware.accelerators import ascend_npu
+
+    monkeypatch.setattr(ascend_npu, "_capture", None, raising=False)
+    monkeypatch.setenv(
+        "RLINF_NPU_PROFILING",
+        json.dumps(
+            {
+                "output_prefix": str(tmp_path / "rlinf_profile_actor_%p"),
+                "record_shapes": False,
+                "profile_memory": False,
+                "with_stack": False,
+            }
+        ),
+    )
+
+    ascend_npu.AscendNPUManager.start_profiling(step_idx=1)
+    assert ascend_npu.AscendNPUManager.is_profiling_active() is True
+    # A second start must not replace the handle and leak the first capture.
+    ascend_npu.AscendNPUManager.start_profiling(step_idx=1)
+
+    with ascend_npu.AscendNPUManager.profiling_range("matmul"):
+        x = torch.randn(256, 256, device="npu", dtype=torch.bfloat16)
+        (x @ x).sum().item()
+
+    ascend_npu.AscendNPUManager.stop_profiling()
+    assert ascend_npu.AscendNPUManager.is_profiling_active() is False
+
+    expected = tmp_path / f"rlinf_profile_actor_{os.getpid()}" / "step_1"
+    assert expected.is_dir(), "the pid placeholder was not expanded"
+    kernels = list(expected.rglob("kernel_details.csv"))
+    assert kernels, f"no device kernel report under {expected}"
+    assert "MatMul" in kernels[0].read_text()

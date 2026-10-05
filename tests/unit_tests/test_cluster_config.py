@@ -1262,3 +1262,35 @@ def test_process_that_built_a_cluster_keeps_its_exit_code():
     )
 
     assert result.returncode == 3, result.stderr
+
+
+def test_cluster_config_parses_torch_npu_profiling_settings():
+    from rlinf.scheduler.hardware.accelerators.ascend_npu import (
+        AscendNPUProfileConfig,
+    )
+
+    config = DictConfig(
+        {
+            "num_nodes": 1,
+            "component_placement": {},
+            "profiling": {
+                "backend": "torch_npu",
+                "worker_groups": ["actor"],
+                "steps": [1],
+                "record_shapes": True,
+            },
+        }
+    )
+
+    cluster_cfg = ClusterConfig.from_dict_cfg(config)
+
+    assert isinstance(cluster_cfg.profiling, AscendNPUProfileConfig)
+    assert cluster_cfg.profiling.worker_groups == ["actor"]
+    assert cluster_cfg.profiling.steps == [1]
+    assert cluster_cfg.profiling.record_shapes is True
+    # Selection is per group and per step: a rollout rank, or step 2 of the
+    # selected group, must not open a window.
+    assert cluster_cfg.profiling.profiles_worker_group("actor") is True
+    assert cluster_cfg.profiling.profiles_worker_group("rollout") is False
+    assert cluster_cfg.profiling.should_profile_step(1) is True
+    assert cluster_cfg.profiling.should_profile_step(2) is False
