@@ -203,6 +203,12 @@ class Embedder(nn.Module):
         return F.linear(x, self.embedding.weight)
 
 
+def _concat_experts(parts: list[torch.Tensor | None]) -> torch.Tensor:
+    """Join the per-expert sequences, without copying when only one is active."""
+    present = [part for part in parts if part is not None]
+    return present[0] if len(present) == 1 else torch.cat(present, dim=1)
+
+
 # TODO: try use sdpa_attn
 class Attention(nn.Module):
     """Multi-expert Grouped Query Attention with RoPE and LoRA."""
@@ -324,10 +330,14 @@ class Attention(nn.Module):
             k_parts.append(k)
             v_parts.append(v)
 
-        # Concatenate along sequence dimension (dim=1) — matching JAX jnp.concatenate(axis=1)
-        q = torch.cat([q for q in q_parts if q is not None], dim=1)
-        k = torch.cat([k for k in k_parts if k is not None], dim=1)
-        v = torch.cat([v for v in v_parts if v is not None], dim=1)
+        # Concatenate along sequence dimension (dim=1) — matching JAX jnp.concatenate(axis=1).
+        # ``torch.cat`` always allocates, so a single active expert would pay a
+        # full copy of q, k and v per layer for nothing. Every rollout pass has
+        # exactly one: the prefix pass sees only the VLM, and each denoising
+        # pass sees only the action expert with the prefix in the KV cache.
+        q = _concat_experts(q_parts)
+        k = _concat_experts(k_parts)
+        v = _concat_experts(v_parts)
 
         # Apply RoPE
         q = _apply_rope(q, positions=positions)
@@ -360,15 +370,13 @@ class Attention(nn.Module):
         # einsum "BTKGH,BSKH->BKGTS"
         logits = torch.einsum("BTKGH,BSKH->BKGTS", q_r.float(), k_r.float())
 
-        # Align mask to logits shape: logits is (B, K, G, T, S), mask is (B, 1, T, S)
-        # We need mask to be (B, 1, 1, T, S) so it broadcasts to (B, K, G, T, S)
+        # logits is (B, K, G, T, S) and the mask is (B, 1, T, S); inserting
+        # one axis lets it broadcast, which costs nothing, where expanding
+        # it to the full logits shape makes the comparison allocate. The
+        # fill stays a Python scalar for the same reason: a per-call
+        # device tensor would be another host-to-device copy per layer.
         big_neg = -2.3819763e38
-        mask_for_logits = attn_mask[:, :, None, :, :].expand_as(logits).bool()
-        masked_logits = torch.where(
-            mask_for_logits,
-            logits,
-            torch.tensor(big_neg, dtype=logits.dtype, device=logits.device),
-        )
+        masked_logits = torch.where(attn_mask[:, :, None, :, :], logits, big_neg)
 
         probs = F.softmax(masked_logits, dim=-1).to(dtype)
 

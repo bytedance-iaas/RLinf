@@ -1656,3 +1656,72 @@ def test_sac_temperature_keeps_the_alpha_loss_in_fp32():
     alpha_loss.backward()
     assert temp.base_alpha.grad is not None
     assert temp.base_alpha.grad.dtype is torch.float32
+
+
+def test_openpi_attention_leaves_a_fully_masked_row_as_a_uniform_mixture(request):
+    """A query that may attend nowhere must still return a value average.
+
+    Gemma fills masked logits with a large finite negative number instead of
+    ``-inf``, so softmax over an entirely masked row is uniform and the output
+    is the mean of the values. Any replacement kernel has to reproduce that;
+    one that masks with ``-inf`` returns zeros and silently changes the model.
+    """
+    from rlinf.models.embodiment.openpi.modules import gemma
+    from rlinf.models.embodiment.openpi.modules.utils import (
+        set_torch_compile,
+        torch_compile_enabled,
+    )
+
+    previous_compile = torch_compile_enabled()
+    request.addfinalizer(lambda: set_torch_compile(previous_compile))
+    set_torch_compile(False)
+    torch.manual_seed(0)
+    cfg = gemma.Config(64, 1, 128, 4, 2, 16)
+    attn = gemma.Attention([cfg]).to(torch.float32)
+
+    batch, seq = 2, 5
+    x = torch.randn(batch, seq, cfg.width)
+    positions = torch.arange(seq).expand(batch, seq)
+    mask = torch.ones(batch, 1, seq, seq, dtype=torch.bool)
+    mask[0, 0, 0, :] = False  # first query of the first sample attends nowhere
+
+    (out,), _ = attn([x], positions, mask)
+
+    masked_row = out[0, 0]
+    assert torch.isfinite(masked_row).all()
+    assert masked_row.abs().max() > 0.0, "a fully masked row must not be zeroed"
+
+    # Uniform attention is the mean of v over the sequence, shared by every
+    # query head in a KV group and then projected. Comparing against that pins
+    # the behaviour instead of the implementation. RoPE rotates q and k only,
+    # so v needs no adjustment here.
+    groups = cfg.num_heads // cfg.num_kv_heads
+    v_mean = (
+        attn.v_proj[0](x[0]).reshape(seq, cfg.num_kv_heads, cfg.head_dim).mean(dim=0)
+    )
+    expected = attn.o_proj[0](
+        v_mean[:, None, :].expand(cfg.num_kv_heads, groups, cfg.head_dim).reshape(-1)
+    )
+    torch.testing.assert_close(masked_row, expected, rtol=1e-4, atol=1e-5)
+
+
+def test_openpi_expert_concat_matches_cat_and_avoids_a_single_expert_copy():
+    """One active expert must be passed through, not copied.
+
+    ``torch.cat`` allocates even for a one-element list, and every Pi0.5
+    rollout pass has exactly one active expert, so the copy would be a full
+    q/k/v duplicate per layer. Passing the tensor through has to stay
+    equivalent to the concatenation for every other arity.
+    """
+    from rlinf.models.embodiment.openpi.modules.gemma import _concat_experts
+
+    torch.manual_seed(0)
+    first = torch.randn(2, 5, 4, 8)
+    second = torch.randn(2, 3, 4, 8)
+
+    only = _concat_experts([first, None])
+    assert only is first, "a single active expert should not be copied"
+
+    both = _concat_experts([first, second])
+    torch.testing.assert_close(both, torch.cat([first, second], dim=1))
+    assert _concat_experts([None, second]) is second
