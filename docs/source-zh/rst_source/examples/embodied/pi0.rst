@@ -475,7 +475,7 @@ ROCm 使用 PyTorch 的 CUDA 兼容 API，因此 OpenPI 可直接使用共用的
 
 .. include:: _ascend_torch.rst
 
-Gemma 结构里有两处可以换成 CANN 融合算子，替代可移植实现中展开成多个算子的写法。两个开关默认都关闭：可移植实现是所有数值对照的基准，而融合算子值多少取决于具体任务跑在什么序列长度上。
+Gemma 结构里有三处可以换成 CANN 融合算子，替代可移植实现中展开成多个算子的写法。三个开关默认都关闭：可移植实现是所有数值对照的基准，而融合算子值多少取决于具体任务跑在什么序列长度上。
 
 ``actor.model.openpi.npu_fused_attention`` 把 attention 换成 ``npu_fusion_attention``。可移植实现用 float32 算 attention logits，再与 mask 比较并做 softmax，过程中会物化若干个形状为 ``(batch, kv_heads, groups, queries, keys)`` 的张量；融合算子一个都不物化，并且直接读 grouped-query 布局，不需要把 KV head 扩展到 query head 的数量。
 
@@ -483,18 +483,22 @@ Gemma 结构里有两处可以换成 CANN 融合算子，替代可移植实现�
 
 ``actor.model.openpi.npu_fused_rope`` 把 RoPE 的旋转换成 ``npu_rotary_mul``。只有旋转走融合，cos/sin 表仍然每次调用重建——Pi0.5 的 position 来自对 validity mask 的累加和，所以表取决于一个 batch 带多少 padding。这也是它只对长 prefix 有效、对短 suffix 无效的原因：后者的开销全部在建表上。
 
-两个开关都从 actor 的 model 配置读取，并通过承载 ``actor.model`` 其余字段的同一次 merge 传到 rollout worker，因此一处 override 覆盖两个 worker：
+``actor.model.openpi.skip_masked_images`` 不是融合算子开关，也不限于 Ascend。一个任务填充的图像槽位少于配置的 ``num_images_in_input`` 时，没填的那个槽位仍然会过一遍视觉 encoder，而它的输出随后会被乘掉。在 encoder 冻结、且已经有一个同形状的槽位被编码过的情况下，这个开关改为直接给出零嵌入：prefix 逐位一致，encoder 少调一次。它需要 encoder 冻结，所以默认关闭。
+
+四个开关都从 actor 的 model 配置读取，并通过承载 ``actor.model`` 其余字段的同一次 merge 传到 rollout worker，因此一处 override 覆盖两个 worker：
 
 .. code-block:: bash
 
    python examples/embodiment/train_embodied_agent.py \
       --config-name libero_spatial_ppo_openpi_pi05 \
       actor.model.openpi.npu_fused_attention=true \
-      actor.model.openpi.npu_fused_rms_norm=true
+      actor.model.openpi.npu_fused_rms_norm=true \
+      actor.model.openpi.npu_fused_rope=true \
+      actor.model.openpi.skip_masked_images=true
 
 两条 attention 路径可能产生分歧的地方，是一个完全无处可看的 query 行。可移植实现给被屏蔽的 logits 填的是一个有限负数而不是 ``-inf``，所以这样的行 softmax 之后是均匀分布，返回的是 value 的均值而不是零。``npu_fusion_attention`` 复现了这个行为，这也是这里选它作为融合实现的原因；``F.scaled_dot_product_attention`` 对同样的输入返回零。
 
-两个开关都不是 bit-exact，打开之前值得知道它们与可移植路径差多少。在固定的 LIBERO observation 上、固定全部随机流之后，两个融合算子同时开启时采样 action 的相对 L2 为 3.5e-3、value 为 7.5e-3、全部可训练参数的梯度为 1.1e-2，而 log-probability 停在 1.5e-7——也就是说采样链没有变，差异就是这两个 kernel 自身的舍入。非 adaptive norm 的差异是其输出量级上的一个 bfloat16 ULP。
+三个融合算子开关都不是 bit-exact，打开之前值得知道它们与可移植路径差多少。在固定的 LIBERO observation 上、固定全部随机流之后，attention 与 norm 两个算子同时开启时采样 action 的相对 L2 为 3.5e-3、value 为 7.5e-3、全部可训练参数的梯度为 1.1e-2，而 log-probability 停在 1.5e-7——也就是说采样链没有变，差异就是这两个 kernel 自身的舍入。非 adaptive norm 的差异是其输出量级上的一个 bfloat16 ULP。
 
 摩尔线程 MUSA
 ~~~~~~~~~~~~~

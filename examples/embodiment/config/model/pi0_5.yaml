@@ -50,3 +50,7 @@ openpi:
   # from a cumulative sum over the validity mask, so the tables depend on the
   # padding. It therefore helps the long prefix and not the short suffix.
   npu_fused_rope: False
+
+  # Skip the vision encoder for an IMAGE_KEYS slot a task does not fill. Needs
+  # a frozen encoder, and is platform-independent rather than Ascend-only.
+  skip_masked_images: False

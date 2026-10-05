@@ -1928,3 +1928,84 @@ def test_openpi_npu_fused_rope_matches_the_explicit_rotation(request):
         / reference_grad.float().norm()
     ).item()
     assert grad_relative < 1e-2, f"gradient relative L2 {grad_relative:.3e}"
+
+
+def test_openpi_skipping_a_masked_image_preserves_the_prefix():
+    """A slot the task does not fill must not change the prefix it produces.
+
+    Pi0.5 embeds all three IMAGE_KEYS slots, and LIBERO fills two, so the third
+    carries a padded image that the mask excludes everywhere. Emitting zeros
+    for it instead of running SigLIP has to leave the prefix tokens, the
+    validity mask and the autoregressive mask exactly as they were, and has to
+    actually call the encoder one time fewer -- the gain is the skipped call,
+    so a test that only checked the output would pass on a no-op.
+    """
+    from rlinf.models.embodiment.openpi.modules import model as openpi_model
+    from rlinf.models.embodiment.openpi.modules.utils import (
+        set_torch_compile,
+        torch_compile_enabled,
+    )
+    from rlinf.models.embodiment.openpi.pi0 import Pi0
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+
+    previous_compile = torch_compile_enabled()
+    set_torch_compile(False)
+    try:
+
+        def build(skip):
+            torch.manual_seed(0)
+            pi0 = Pi0(
+                Pi0Config(
+                    paligemma_variant="dummy",
+                    action_expert_variant="dummy",
+                    skip_masked_images=skip,
+                )
+            ).eval()
+            for parameter in pi0.img.parameters():
+                parameter.requires_grad_(False)
+            calls = []
+            original = pi0.img.forward
+
+            def counting(*args, **kwargs):
+                calls.append(1)
+                return original(*args, **kwargs)
+
+            pi0.img.forward = counting
+            return pi0, calls
+
+        batch = 2
+        names = list(openpi_model.IMAGE_KEYS)
+        images = {
+            name: torch.rand(batch, *openpi_model.IMAGE_RESOLUTION, 3) for name in names
+        }
+        masks = {name: torch.ones(batch, dtype=torch.bool) for name in names}
+        # The slot the task does not fill: present, padded, masked out.
+        masks[names[-1]] = torch.zeros(batch, dtype=torch.bool)
+        observation = openpi_model.Observation(
+            images=images,
+            image_masks=masks,
+            state=torch.zeros(batch, 32),
+            tokenized_prompt=torch.ones(batch, 48, dtype=torch.long),
+            tokenized_prompt_mask=torch.ones(batch, 48, dtype=torch.bool),
+        )
+
+        with torch.no_grad():
+            reference_model, reference_calls = build(False)
+            reference = reference_model.embed_prefix(observation)
+            candidate_model, candidate_calls = build(True)
+            candidate = candidate_model.embed_prefix(observation)
+
+        assert len(reference_calls) == len(names)
+        assert len(candidate_calls) == len(names) - 1, (
+            "the masked slot was still sent through the encoder"
+        )
+
+        for expected, actual in zip(reference, candidate, strict=True):
+            if expected is None:
+                assert actual is None
+            elif isinstance(expected, torch.Tensor):
+                torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+            else:
+                assert actual == expected
+    finally:
+        set_torch_compile(previous_compile)

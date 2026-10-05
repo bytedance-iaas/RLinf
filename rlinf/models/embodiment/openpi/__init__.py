@@ -208,6 +208,9 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         "action_expert_variant": str(model_cfg.action_expert_variant),
         "dtype": _pi0_dtype_name(embed_dtype),
         "pcd": False,
+        "skip_masked_images": bool(
+            OmegaConf.select(model_cfg, "skip_masked_images", default=False)
+        ),
     }
     discrete_state_input = OmegaConf.select(
         model_cfg, "discrete_state_input", default=None
