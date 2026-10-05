@@ -46,3 +46,7 @@ openpi:
   # expert's adaptive norms keep the explicit float32 affine.
   npu_fused_attention: False
   npu_fused_rms_norm: False
+  # npu_fused_rope covers the rotation, not the cos/sin tables: positions come
+  # from a cumulative sum over the validity mask, so the tables depend on the
+  # padding. It therefore helps the long prefix and not the short suffix.
+  npu_fused_rope: False

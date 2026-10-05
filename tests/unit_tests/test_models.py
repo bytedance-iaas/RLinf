@@ -1662,22 +1662,28 @@ def test_openpi_cann_kernels_are_npu_only_and_off_by_default(monkeypatch):
     from rlinf.models.embodiment.openpi import (
         resolve_npu_fused_attention,
         resolve_npu_fused_rms_norm,
+        resolve_npu_fused_rope,
     )
     from rlinf.scheduler import Worker
 
-    monkeypatch.setattr(Worker, "torch_device_type", "npu", raising=False)
-    assert resolve_npu_fused_attention(_openpi_cfg(npu_fused_attention=True)) is True
-    assert resolve_npu_fused_rms_norm(_openpi_cfg(npu_fused_rms_norm=True)) is True
-    # The shared pi0_5 template declares both as False, and a config that omits
-    # them entirely must behave the same way.
-    assert resolve_npu_fused_attention(_openpi_cfg(task="rl")) is False
-    assert resolve_npu_fused_rms_norm(_openpi_cfg(task="rl")) is False
+    resolvers = {
+        "npu_fused_attention": resolve_npu_fused_attention,
+        "npu_fused_rms_norm": resolve_npu_fused_rms_norm,
+        "npu_fused_rope": resolve_npu_fused_rope,
+    }
 
-    # Neither kernel exists off Ascend, so a config that asks for one elsewhere
-    # falls back rather than failing at the first forward.
+    monkeypatch.setattr(Worker, "torch_device_type", "npu", raising=False)
+    for field, resolve in resolvers.items():
+        assert resolve(_openpi_cfg(**{field: True})) is True
+        # The shared pi0_5 template declares every switch as False, and a config
+        # that omits them entirely must behave the same way.
+        assert resolve(_openpi_cfg(task="rl")) is False
+
+    # None of these kernels exists off Ascend, so a config that asks for one
+    # elsewhere falls back rather than failing at the first forward.
     monkeypatch.setattr(Worker, "torch_device_type", "cuda", raising=False)
-    assert resolve_npu_fused_attention(_openpi_cfg(npu_fused_attention=True)) is False
-    assert resolve_npu_fused_rms_norm(_openpi_cfg(npu_fused_rms_norm=True)) is False
+    for field, resolve in resolvers.items():
+        assert resolve(_openpi_cfg(**{field: True})) is False
 
 
 def test_openpi_attention_leaves_a_fully_masked_row_as_a_uniform_mixture(request):
@@ -1862,3 +1868,63 @@ def test_openpi_fused_rms_norm_keeps_the_float32_scale(request):
         f"relative L2 {relative_l2:.3e} suggests the scale was rounded to "
         "bfloat16 before the multiply"
     )
+
+
+def test_openpi_npu_fused_rope_matches_the_explicit_rotation(request):
+    """The fused rotation must agree with the explicit one, forward and back.
+
+    `npu_rotary_mul` broadcasts cos and sin over the head axis, which is what
+    lets the tables stay at (B, T, 1, head_dim) instead of being materialised
+    at the query head count. This checks the agreement at Pi0.5's prefix shape
+    and that the gradient still reaches the input, since RoPE sits inside the
+    actor's backward pass.
+    """
+    npu = getattr(torch, "npu", None)
+    if npu is None or not npu.is_available():
+        pytest.skip("npu_rotary_mul requires an Ascend NPU.")
+
+    from rlinf.models.embodiment.openpi.modules import gemma
+    from rlinf.models.embodiment.openpi.modules.utils import (
+        npu_fused_rope_enabled,
+        set_npu_fused_rope,
+        set_torch_compile,
+        torch_compile_enabled,
+    )
+
+    previous_compile = torch_compile_enabled()
+    previous_rope = npu_fused_rope_enabled()
+    request.addfinalizer(lambda: set_torch_compile(previous_compile))
+    request.addfinalizer(lambda: set_npu_fused_rope(previous_rope))
+    set_torch_compile(False)
+
+    torch.manual_seed(0)
+    batch, seq, heads, head_dim = 2, 712, 8, 256
+    # Positions as Pi0.5 builds them, from a cumulative sum over the validity
+    # mask, so a padded tail repeats the last position rather than counting on.
+    valid = torch.ones(batch, seq, device="npu", dtype=torch.bool)
+    valid[:, -7:] = False
+    positions = torch.cumsum(valid.int(), dim=1) - 1
+
+    def run(fused):
+        set_npu_fused_rope(fused)
+        # Reseed so both paths see the same input rather than consecutive draws.
+        torch.manual_seed(1)
+        x = torch.randn(
+            batch, seq, heads, head_dim, device="npu", dtype=torch.bfloat16
+        ).requires_grad_(True)
+        out = gemma._apply_rope(x, positions=positions)
+        out.float().square().mean().backward()
+        return out.detach(), x.grad.detach()
+
+    reference, reference_grad = run(False)
+    candidate, candidate_grad = run(True)
+
+    relative = (
+        (candidate.float() - reference.float()).norm() / reference.float().norm()
+    ).item()
+    assert relative < 1e-2, f"relative L2 {relative:.3e} is larger than rounding"
+    grad_relative = (
+        (candidate_grad.float() - reference_grad.float()).norm()
+        / reference_grad.float().norm()
+    ).item()
+    assert grad_relative < 1e-2, f"gradient relative L2 {grad_relative:.3e}"

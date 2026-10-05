@@ -481,6 +481,8 @@ Gemma 结构里有两处可以换成 CANN 融合算子，替代可移植实现�
 
 ``actor.model.openpi.npu_fused_rms_norm`` 把非 adaptive 的 norm 换成 ``npu_rms_norm``。action expert 的 adaptive norm 保持可移植实现：它在归一化之后用 float32 施加 scale 与 shift，而融合算子返回输入 dtype，走融合路径会在 affine 之前就先舍入。
 
+``actor.model.openpi.npu_fused_rope`` 把 RoPE 的旋转换成 ``npu_rotary_mul``。只有旋转走融合，cos/sin 表仍然每次调用重建——Pi0.5 的 position 来自对 validity mask 的累加和，所以表取决于一个 batch 带多少 padding。这也是它只对长 prefix 有效、对短 suffix 无效的原因：后者的开销全部在建表上。
+
 两个开关都从 actor 的 model 配置读取，并通过承载 ``actor.model`` 其余字段的同一次 merge 传到 rollout worker，因此一处 override 覆盖两个 worker：
 
 .. code-block:: bash

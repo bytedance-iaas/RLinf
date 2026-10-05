@@ -539,6 +539,13 @@ they apply their scale and shift in float32 after normalising, and the fused
 kernel returns the input dtype, so routing them through it would round before
 the affine.
 
+``actor.model.openpi.npu_fused_rope`` routes the RoPE rotation through
+``npu_rotary_mul``. Only the rotation moves; the cos and sin tables are still
+built per call, because Pi0.5 derives its positions from a cumulative sum over
+the validity mask and they therefore depend on how much padding a batch
+carries. That is why this one helps the long prefix and not the short suffix,
+where building the tables is the whole cost.
+
 Both are read from the actor's model config and reach the rollout worker
 through the same merge that carries the rest of ``actor.model``, so one
 override covers both workers:

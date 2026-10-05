@@ -41,6 +41,7 @@ from .utils import (
     gelu_glu,
     npu_fused_attention_enabled,
     npu_fused_rms_norm_enabled,
+    npu_fused_rope_enabled,
     torch_compile_enabled,
 )
 
@@ -792,9 +793,45 @@ def _apply_rope_eager(
 _apply_rope_compiled = torch.compile(_apply_rope_eager)
 
 
+def _apply_rope_npu(
+    x: torch.Tensor, *, positions: torch.Tensor, max_wavelength: float = 10000.0
+) -> torch.Tensor:
+    """Apply RoPE with the rotation in ``npu_rotary_mul``.
+
+    The kernel wants cos and sin at the input's dtype and full ``head_dim``,
+    with the two halves duplicated, and it broadcasts them over the head axis.
+    That broadcast is worth keeping: materialising the tables at the query head
+    count costs about 47 MB each over a 712-token prefix at batch 16, and
+    measured slower than letting the kernel broadcast.
+
+    Only the rotation moves. The tables are still built per call because
+    Pi0.5 derives ``positions`` from a cumulative sum over the validity mask,
+    so they depend on how much padding a batch carries rather than on the
+    sequence length alone. That is also why this helps the 712-token prefix
+    (2.7x at batch 8, 4.9x at batch 16) and not the 6-token suffix, where
+    building the tables is the whole cost.
+    """
+    import torch_npu
+
+    head_dim = x.shape[-1]
+    freq_exponents = (2.0 / head_dim) * torch.arange(
+        head_dim // 2, dtype=torch.float32, device=x.device
+    )
+    timescale = max_wavelength**freq_exponents
+    radians = positions[..., None].float() / timescale[None, None, :]
+    radians = radians[..., None, :]  # (B, T, 1, head_dim // 2)
+
+    sin, cos = torch.sin(radians), torch.cos(radians)
+    cos_full = torch.cat([cos, cos], dim=-1).to(x.dtype)
+    sin_full = torch.cat([sin, sin], dim=-1).to(x.dtype)
+    return torch_npu.npu_rotary_mul(x, cos_full, sin_full)
+
+
 def _apply_rope(
     x: torch.Tensor, *, positions: torch.Tensor, max_wavelength: float = 10000.0
 ) -> torch.Tensor:
+    if npu_fused_rope_enabled():
+        return _apply_rope_npu(x, positions=positions, max_wavelength=max_wavelength)
     fn = _apply_rope_compiled if torch_compile_enabled() else _apply_rope_eager
     return fn(x, positions=positions, max_wavelength=max_wavelength)
 

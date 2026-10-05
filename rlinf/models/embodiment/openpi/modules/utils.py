@@ -64,6 +64,23 @@ def npu_fused_rms_norm_enabled() -> bool:
     return _npu_fused_rms_norm_enabled
 
 
+# RoPE's rotation runs through ``npu_rotary_mul`` only when a caller turns this
+# on. It covers the rotation, not the cos/sin tables: Pi0.5's positions come
+# from a cumulative sum over the validity mask, so the tables depend on the
+# padding and are still rebuilt per call.
+_npu_fused_rope_enabled = False
+
+
+def set_npu_fused_rope(enabled: bool) -> None:
+    """Route the Gemma RoPE rotation through ``npu_rotary_mul`` for this process."""
+    global _npu_fused_rope_enabled
+    _npu_fused_rope_enabled = bool(enabled)
+
+
+def npu_fused_rope_enabled() -> bool:
+    return _npu_fused_rope_enabled
+
+
 def _gelu_glu_eager(
     gate_input: torch.Tensor, value_input: torch.Tensor
 ) -> torch.Tensor:
