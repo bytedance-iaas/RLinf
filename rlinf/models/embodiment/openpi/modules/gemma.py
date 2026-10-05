@@ -40,6 +40,7 @@ from .utils import (
     _str_to_dtype,
     gelu_glu,
     npu_fused_attention_enabled,
+    npu_fused_rms_norm_enabled,
     torch_compile_enabled,
 )
 
@@ -164,6 +165,25 @@ class RMSNorm(nn.Module):
             (normalized_output, gate) where gate is None for regular RMSNorm
         """
         dtype = x.dtype
+
+        if not self.adaptive and npu_fused_rms_norm_enabled():
+            import torch_npu
+
+            # The kernel's gamma multiplies the normalised value, which is what
+            # ``1 + scale`` does here, and it normalises in float32 internally,
+            # so the explicit upcast of ``x`` is not needed.
+            #
+            # Gamma stays float32. OpenPI deliberately keeps the norm scales in
+            # float32 while the Gemma weights are bfloat16, and the kernel
+            # accepts a float32 gamma against a bfloat16 input while still
+            # returning the input dtype. Rounding gamma down first costs two
+            # orders of magnitude of accuracy: against the explicit path the
+            # relative L2 is 1.2e-5 with float32 gamma and 2.9e-3 without.
+            return (
+                torch_npu.npu_rms_norm(x, 1.0 + self.scale.float(), epsilon=1e-6)[0],
+                None,
+            )
+
         x_float = x.float()
         var = torch.mean(x_float**2, dim=-1, keepdim=True)
         normed = x_float * torch.rsqrt(var + 1e-6)

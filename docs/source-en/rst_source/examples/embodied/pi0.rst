@@ -521,8 +521,8 @@ the common NPU worker and collective paths.
 
 .. include:: _ascend_torch.rst
 
-Parts of the Gemma stack have CANN kernels that replace what the portable path
-spells out across several operators. Each switch is off by default: the
+Two parts of the Gemma stack have CANN kernels that replace what the portable
+path spells out across several operators. Both switches are off by default: the
 portable path is the reference every comparison is checked against, and what a
 kernel is worth depends on the sequence length a workload runs at.
 
@@ -533,15 +533,22 @@ several tensors shaped ``(batch, kv_heads, groups, queries, keys)``; the fused
 kernel materialises none of them, and it reads the grouped-query layout
 directly, so the KV heads are never expanded to the query head count.
 
-The switch is read from the actor's model config and reaches the rollout
-worker through the same merge that carries the rest of ``actor.model``, so one
+``actor.model.openpi.npu_fused_rms_norm`` routes the non-adaptive norms through
+``npu_rms_norm``. The action expert's adaptive norms keep the portable path:
+they apply their scale and shift in float32 after normalising, and the fused
+kernel returns the input dtype, so routing them through it would round before
+the affine.
+
+Both are read from the actor's model config and reach the rollout worker
+through the same merge that carries the rest of ``actor.model``, so one
 override covers both workers:
 
 .. code-block:: bash
 
    python examples/embodiment/train_embodied_agent.py \
       --config-name libero_spatial_ppo_openpi_pi05 \
-      actor.model.openpi.npu_fused_attention=true
+      actor.model.openpi.npu_fused_attention=true \
+      actor.model.openpi.npu_fused_rms_norm=true
 
 A query row that may attend nowhere is where the two attention paths could
 diverge. The portable path fills masked logits with a large finite negative
@@ -550,11 +557,13 @@ and returns the mean of the values instead of zeros. ``npu_fusion_attention``
 reproduces that behaviour, which is why it is the fused option here;
 ``F.scaled_dot_product_attention`` returns zeros for the same input.
 
-The switch is not bit-exact, so what it agrees to is worth knowing before
-flipping it. Over a fixed LIBERO observation with every random draw held fixed,
-the fused kernel moves the sampled actions by a relative L2 of 8.6e-3 and the
-values by 6.3e-3, while the log-probabilities stay at 1.5e-7 -- that is, the
-sampled chain is unchanged and the difference is the kernel's own rounding.
+Neither switch is bit-exact, so what they agree to is worth knowing before
+flipping one. Over a fixed LIBERO observation with every random draw held
+fixed, both kernels together move the sampled actions by a relative L2 of
+3.5e-3, the values by 7.5e-3 and the gradients of every trainable parameter by
+1.1e-2, while the log-probabilities stay at 1.5e-7 -- that is, the sampled
+chain is unchanged and the differences are the kernels' own rounding. The
+non-adaptive norm's agreement is a single bfloat16 ULP of its output.
 
 Moore Threads MUSA
 ~~~~~~~~~~~~~~~~~~

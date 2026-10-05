@@ -26,6 +26,7 @@ from rlinf.models.embodiment.openpi.checkpoint import (
 )
 from rlinf.models.embodiment.openpi.modules.utils import (
     set_npu_fused_attention,
+    set_npu_fused_rms_norm,
     set_torch_compile,
 )
 from rlinf.models.embodiment.openpi.rlt_config import build_rlt_config
@@ -108,6 +109,18 @@ def resolve_npu_fused_attention(model_cfg: Any) -> bool:
     return _resolve_npu_kernel(model_cfg, "npu_fused_attention", "npu_fusion_attention")
 
 
+def resolve_npu_fused_rms_norm(model_cfg: Any) -> bool:
+    """Whether non-adaptive Gemma RMSNorm runs through ``npu_rms_norm``.
+
+    Args:
+        model_cfg (Any): The ``openpi`` config node of the model.
+
+    Returns:
+        bool: True to route non-adaptive RMSNorm through the fused kernel.
+    """
+    return _resolve_npu_kernel(model_cfg, "npu_fused_rms_norm", "npu_rms_norm")
+
+
 def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     """Build an OpenPI PyTorch Pi0/Pi0.5 model from ``actor.model`` config.
 
@@ -131,6 +144,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     model_cfg = cfg.openpi
     set_torch_compile(resolve_torch_compile(model_cfg))
     set_npu_fused_attention(resolve_npu_fused_attention(model_cfg))
+    set_npu_fused_rms_norm(resolve_npu_fused_rms_norm(model_cfg))
     # Existing Pi0.5 templates predate the explicit switch, so preserve their
     # behavior by default. Pi0 templates set this field to False explicitly.
     pi05 = bool(OmegaConf.select(cfg, "pi05", default=True))

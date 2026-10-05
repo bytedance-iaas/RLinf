@@ -42,5 +42,7 @@ openpi:
 
   # CANN fused kernels for the Gemma stack. Ascend only, ignored elsewhere,
   # and each stays off until a workload has compared it against the portable
-  # path.
+  # path. npu_fused_rms_norm covers the non-adaptive norms only; the action
+  # expert's adaptive norms keep the explicit float32 affine.
   npu_fused_attention: False
+  npu_fused_rms_norm: False

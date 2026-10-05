@@ -1658,6 +1658,28 @@ def test_sac_temperature_keeps_the_alpha_loss_in_fp32():
     assert temp.base_alpha.grad.dtype is torch.float32
 
 
+def test_openpi_cann_kernels_are_npu_only_and_off_by_default(monkeypatch):
+    from rlinf.models.embodiment.openpi import (
+        resolve_npu_fused_attention,
+        resolve_npu_fused_rms_norm,
+    )
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(Worker, "torch_device_type", "npu", raising=False)
+    assert resolve_npu_fused_attention(_openpi_cfg(npu_fused_attention=True)) is True
+    assert resolve_npu_fused_rms_norm(_openpi_cfg(npu_fused_rms_norm=True)) is True
+    # The shared pi0_5 template declares both as False, and a config that omits
+    # them entirely must behave the same way.
+    assert resolve_npu_fused_attention(_openpi_cfg(task="rl")) is False
+    assert resolve_npu_fused_rms_norm(_openpi_cfg(task="rl")) is False
+
+    # Neither kernel exists off Ascend, so a config that asks for one elsewhere
+    # falls back rather than failing at the first forward.
+    monkeypatch.setattr(Worker, "torch_device_type", "cuda", raising=False)
+    assert resolve_npu_fused_attention(_openpi_cfg(npu_fused_attention=True)) is False
+    assert resolve_npu_fused_rms_norm(_openpi_cfg(npu_fused_rms_norm=True)) is False
+
+
 def test_openpi_attention_leaves_a_fully_masked_row_as_a_uniform_mixture(request):
     """A query that may attend nowhere must still return a value average.
 
@@ -1703,44 +1725,6 @@ def test_openpi_attention_leaves_a_fully_masked_row_as_a_uniform_mixture(request
         v_mean[:, None, :].expand(cfg.num_kv_heads, groups, cfg.head_dim).reshape(-1)
     )
     torch.testing.assert_close(masked_row, expected, rtol=1e-4, atol=1e-5)
-
-
-def test_openpi_expert_concat_matches_cat_and_avoids_a_single_expert_copy():
-    """One active expert must be passed through, not copied.
-
-    ``torch.cat`` allocates even for a one-element list, and every Pi0.5
-    rollout pass has exactly one active expert, so the copy would be a full
-    q/k/v duplicate per layer. Passing the tensor through has to stay
-    equivalent to the concatenation for every other arity.
-    """
-    from rlinf.models.embodiment.openpi.modules.gemma import _concat_experts
-
-    torch.manual_seed(0)
-    first = torch.randn(2, 5, 4, 8)
-    second = torch.randn(2, 3, 4, 8)
-
-    only = _concat_experts([first, None])
-    assert only is first, "a single active expert should not be copied"
-
-    both = _concat_experts([first, second])
-    torch.testing.assert_close(both, torch.cat([first, second], dim=1))
-    assert _concat_experts([None, second]) is second
-
-
-def test_openpi_cann_kernels_are_npu_only_and_off_by_default(monkeypatch):
-    from rlinf.models.embodiment.openpi import resolve_npu_fused_attention
-    from rlinf.scheduler import Worker
-
-    monkeypatch.setattr(Worker, "torch_device_type", "npu", raising=False)
-    assert resolve_npu_fused_attention(_openpi_cfg(npu_fused_attention=True)) is True
-    # The shared pi0_5 template declares it as False, and a config that omits
-    # it entirely must behave the same way.
-    assert resolve_npu_fused_attention(_openpi_cfg(task="rl")) is False
-
-    # The kernel does not exist off Ascend, so a config that asks for it
-    # elsewhere falls back rather than failing at the first forward.
-    monkeypatch.setattr(Worker, "torch_device_type", "cuda", raising=False)
-    assert resolve_npu_fused_attention(_openpi_cfg(npu_fused_attention=True)) is False
 
 
 def test_openpi_npu_fused_attention_matches_the_einsum_path(request):
@@ -1812,3 +1796,69 @@ def test_openpi_npu_fused_attention_matches_the_einsum_path(request):
         torch.testing.assert_close(
             candidate_grads[name], expected, rtol=5e-2, atol=5e-2, msg=name
         )
+
+
+def test_openpi_expert_concat_matches_cat_and_avoids_a_single_expert_copy():
+    """One active expert must be passed through, not copied.
+
+    ``torch.cat`` allocates even for a one-element list, and every Pi0.5
+    rollout pass has exactly one active expert, so the copy would be a full
+    q/k/v duplicate per layer. Passing the tensor through has to stay
+    equivalent to the concatenation for every other arity.
+    """
+    from rlinf.models.embodiment.openpi.modules.gemma import _concat_experts
+
+    torch.manual_seed(0)
+    first = torch.randn(2, 5, 4, 8)
+    second = torch.randn(2, 3, 4, 8)
+
+    only = _concat_experts([first, None])
+    assert only is first, "a single active expert should not be copied"
+
+    both = _concat_experts([first, second])
+    torch.testing.assert_close(both, torch.cat([first, second], dim=1))
+    assert _concat_experts([None, second]) is second
+
+
+def test_openpi_fused_rms_norm_keeps_the_float32_scale(request):
+    """The fused norm must not round the scale down before multiplying.
+
+    OpenPI keeps the RMSNorm scales in float32 while the Gemma weights are
+    bfloat16, and `_apply_openpi_param_dtypes` calls that deliberate: casting
+    those islands raises PPO KL. `npu_rms_norm` accepts a float32 gamma against
+    a bfloat16 input, so the agreement with the explicit path should be a
+    single bfloat16 ULP of the output rather than the scale's own rounding.
+    """
+    npu = getattr(torch, "npu", None)
+    if npu is None or not npu.is_available():
+        pytest.skip("npu_rms_norm requires an Ascend NPU.")
+
+    from rlinf.models.embodiment.openpi.modules import gemma
+    from rlinf.models.embodiment.openpi.modules.utils import (
+        npu_fused_rms_norm_enabled,
+        set_npu_fused_rms_norm,
+    )
+
+    previous = npu_fused_rms_norm_enabled()
+    request.addfinalizer(lambda: set_npu_fused_rms_norm(previous))
+
+    torch.manual_seed(0)
+    norm = gemma.RMSNorm(2048, adaptive=False).to("npu")
+    with torch.no_grad():
+        norm.scale.copy_(torch.randn(2048, device="npu") * 0.02)
+    assert norm.scale.dtype == torch.float32
+    x = torch.randn(4, 712, 2048, device="npu", dtype=torch.bfloat16)
+
+    set_npu_fused_rms_norm(False)
+    reference, _ = norm(x)
+    set_npu_fused_rms_norm(True)
+    candidate, _ = norm(x)
+
+    assert candidate.dtype == reference.dtype
+    relative_l2 = (
+        (candidate.float() - reference.float()).norm() / reference.float().norm()
+    ).item()
+    assert relative_l2 < 1e-4, (
+        f"relative L2 {relative_l2:.3e} suggests the scale was rounded to "
+        "bfloat16 before the multiply"
+    )
