@@ -227,18 +227,30 @@ def build_adamw(
     weight_decay: float,
     use_fp32_master_params: bool = False,
     fused: bool = False,
+    foreach: bool | None = None,
 ) -> Optimizer:
     """Build the configured AdamW implementation.
 
-    ``fused`` is ignored for ``FP32MasterAdamW``. Native AdamW first tries
-    ``fused=`` and falls back if the build or parameter set does not support it.
+    ``fused`` and ``foreach`` are ignored for ``FP32MasterAdamW``, and are
+    mutually exclusive for native AdamW, so ``fused`` wins when both are asked
+    for. Native AdamW first tries the requested implementation and falls back
+    to torch's own choice if the build or the parameter set does not support
+    it.
+
+    Leaving both unset is not the same as ``foreach=False``: torch then picks
+    per device, and on a device it does not recognise that choice is the
+    single-tensor loop.
     """
     if use_fp32_master_params:
         return FP32MasterAdamW(params, eps=eps, weight_decay=weight_decay)
 
+    kwargs: dict[str, Any] = {"eps": eps, "weight_decay": weight_decay}
+    if fused:
+        kwargs["fused"] = True
+    elif foreach is not None:
+        kwargs["foreach"] = foreach
+
     try:
-        return torch.optim.AdamW(
-            params, eps=eps, weight_decay=weight_decay, fused=fused
-        )
+        return torch.optim.AdamW(params, **kwargs)
     except (RuntimeError, TypeError):
         return torch.optim.AdamW(params, eps=eps, weight_decay=weight_decay)

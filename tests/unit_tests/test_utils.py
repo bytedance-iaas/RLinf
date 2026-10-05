@@ -676,3 +676,83 @@ def test_barrier_omits_device_ids_without_an_accelerator(monkeypatch):
     barrier()
 
     assert calls == [(None, {})]
+
+
+def test_build_adamw_selects_the_requested_implementation():
+    """``fused`` wins over ``foreach``, and neither is forced when unset.
+
+    Leaving both unset has to stay distinct from asking for ``foreach=False``:
+    torch then picks per device, and the FSDP manager relies on that
+    difference to opt Ascend into the multi-tensor path without changing what
+    any other device gets.
+    """
+    from rlinf.hybrid_engines.fsdp.optim import build_adamw
+
+    params = [torch.zeros(4, requires_grad=True)]
+
+    default = build_adamw(params, eps=1e-8, weight_decay=0.0)
+    assert default.param_groups[0]["foreach"] is None
+    assert default.param_groups[0]["fused"] is None
+
+    multi = build_adamw(params, eps=1e-8, weight_decay=0.0, foreach=True)
+    assert multi.param_groups[0]["foreach"] is True
+    assert multi.param_groups[0]["fused"] is None
+
+    # The two are mutually exclusive in torch, so asking for both must not
+    # raise; fused is the one the caller gets.
+    both = build_adamw(params, eps=1e-8, weight_decay=0.0, fused=True, foreach=True)
+    assert both.param_groups[0]["foreach"] is None
+
+
+def test_adamw_foreach_matches_the_single_tensor_update_exactly():
+    """The multi-tensor path must not change the result, only the launches.
+
+    This is what makes selecting it on Ascend a free change rather than a
+    precision trade: AdamW's foreach path batches independent tensors and
+    never reduces across them, so each parameter sees the same arithmetic.
+    Two parameter groups with different learning rates, a scalar parameter and
+    a parameter that receives no gradient are all in scope because the FSDP
+    manager builds optimizers that way.
+    """
+    from rlinf.hybrid_engines.fsdp.optim import build_adamw
+
+    def run(foreach):
+        torch.manual_seed(0)
+        tensors = [
+            torch.randn(8, 8, requires_grad=True),
+            torch.randn(16, requires_grad=True),
+            torch.zeros((), requires_grad=True),
+            torch.randn(4, requires_grad=True),
+        ]
+        groups = [
+            {"params": tensors[:2], "lr": 1e-3, "betas": (0.9, 0.95)},
+            {"params": tensors[2:], "lr": 1e-4, "betas": (0.9, 0.95)},
+        ]
+        optimizer = build_adamw(groups, eps=1e-8, weight_decay=0.01, foreach=foreach)
+        for step in range(5):
+            for index, tensor in enumerate(tensors):
+                # The last parameter never gets a gradient.
+                tensor.grad = (
+                    None
+                    if index == len(tensors) - 1
+                    else torch.full_like(tensor, 0.01 * (step + 1) * (index + 1))
+                )
+            optimizer.step()
+        state = [
+            (optimizer.state[t].get("exp_avg"), optimizer.state[t].get("exp_avg_sq"))
+            for t in tensors
+        ]
+        return tensors, state
+
+    single_params, single_state = run(False)
+    multi_params, multi_state = run(True)
+
+    for expected, actual in zip(single_params, multi_params, strict=True):
+        assert torch.equal(expected, actual)
+    for (avg, avg_sq), (other_avg, other_avg_sq) in zip(
+        single_state, multi_state, strict=True
+    ):
+        assert (avg is None) == (other_avg is None)
+        if avg is not None:
+            assert torch.equal(avg, other_avg)
+            assert torch.equal(avg_sq, other_avg_sq)
