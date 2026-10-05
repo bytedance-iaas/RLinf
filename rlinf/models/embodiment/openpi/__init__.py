@@ -525,12 +525,17 @@ def _resolve_data_kwargs(cfg):
 
 
 def _install_transforms(model, cfg, config_name: str):
+    from omegaconf import OmegaConf
+
     from rlinf.models.embodiment.openpi.transforms.pipeline import (
         build_openpi_transforms,
     )
 
     input_transforms, output_transforms = build_openpi_transforms(
-        cfg.model_path, config_name, data_kwargs=_resolve_data_kwargs(cfg)
+        cfg.model_path,
+        config_name,
+        data_kwargs=_resolve_data_kwargs(cfg),
+        max_token_len=OmegaConf.select(cfg, "openpi.max_token_len", default=None),
     )
     model.setup_transforms(input_transforms, output_transforms)
     return model

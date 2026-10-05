@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import importlib.util
+import os
 import sys
 import time
 from pathlib import Path
@@ -2009,3 +2010,44 @@ def test_openpi_skipping_a_masked_image_preserves_the_prefix():
                 assert actual == expected
     finally:
         set_torch_compile(previous_compile)
+
+
+def test_openpi_max_token_len_reaches_the_tokenizer():
+    """``openpi.max_token_len`` has to set the tokenizer's padding length.
+
+    The named OpenPI TrainConfig carries its own value, so without the override
+    the model config and the tokenizer disagree: ``Pi0Config`` takes the YAML
+    value while the prompt keeps being padded to whatever the named config says.
+    Needs the real data config and its assets, so it runs where those exist.
+    """
+    model_path = os.environ.get("RLINF_TEST_PI05_MODEL_PATH")
+    if not model_path or not os.path.isdir(model_path):
+        pytest.skip("needs a Pi0.5 checkpoint; set RLINF_TEST_PI05_MODEL_PATH")
+
+    from rlinf.models.embodiment.openpi.transforms.pipeline import (
+        build_openpi_transforms,
+    )
+
+    def tokenized_length(max_token_len):
+        inputs, _ = build_openpi_transforms(
+            model_path, "pi05_libero", max_token_len=max_token_len
+        )
+        import openpi.transforms as transforms
+
+        sample = {
+            "observation/image": np.zeros((224, 224, 3), dtype=np.uint8),
+            "observation/wrist_image": np.zeros((224, 224, 3), dtype=np.uint8),
+            "observation/state": np.zeros(8, dtype=np.float32),
+            "prompt": "pick up the black bowl and place it on the plate",
+        }
+        out = transforms.compose(inputs)(sample)
+        return int(np.asarray(out["tokenized_prompt"]).shape[-1])
+
+    default_length = tokenized_length(None)
+    assert tokenized_length(96) == 96
+    assert tokenized_length(48) == 48
+    # Omitting it must keep the named config's length rather than a hard-coded one.
+    assert tokenized_length(None) == default_length
+
+    with pytest.raises(ValueError, match="must be positive"):
+        build_openpi_transforms(model_path, "pi05_libero", max_token_len=0)

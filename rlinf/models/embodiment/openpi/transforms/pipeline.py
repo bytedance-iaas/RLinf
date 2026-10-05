@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, Sequence
 
 from rlinf.utils.logging import get_logger
@@ -64,6 +65,8 @@ def build_openpi_transforms(
     model_path: str,
     config_name: str,
     data_kwargs: dict[str, Any] | None = None,
+    *,
+    max_token_len: int | None = None,
 ) -> tuple[Sequence, Sequence]:
     """Build ``(input_transforms, output_transforms)`` for ``config_name``.
 
@@ -76,6 +79,13 @@ def build_openpi_transforms(
     to pin the stats file. When it is empty, OpenPI loads
     ``{assets_dir}/{asset_id}/norm_stats.json`` from the TrainConfig (after
     ``model_path`` is applied) and missing files skip normalization.
+
+    ``max_token_len`` sets the tokenizer's padding and truncation length. The
+    named TrainConfig carries its own value, so without this the model's
+    ``openpi.max_token_len`` reaches ``Pi0Config`` while the tokenizer keeps
+    padding to whatever the named config says -- the two then disagree. It
+    changes padding only; the dataset's state-tokenization convention comes
+    from the named config either way.
     """
     import openpi.transforms as transforms
 
@@ -85,6 +95,14 @@ def build_openpi_transforms(
         config_name, model_path=str(model_path), data_kwargs=data_kwargs
     )
     upstream_model_config = train_config.model
+    if max_token_len is not None:
+        if int(max_token_len) <= 0:
+            raise ValueError(
+                f"openpi.max_token_len must be positive, got {max_token_len}"
+            )
+        upstream_model_config = dataclasses.replace(
+            upstream_model_config, max_token_len=int(max_token_len)
+        )
     data_config = train_config.data.create(
         train_config.assets_dirs, upstream_model_config
     )
