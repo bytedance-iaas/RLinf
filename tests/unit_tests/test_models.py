@@ -1725,3 +1725,90 @@ def test_openpi_expert_concat_matches_cat_and_avoids_a_single_expert_copy():
     both = _concat_experts([first, second])
     torch.testing.assert_close(both, torch.cat([first, second], dim=1))
     assert _concat_experts([None, second]) is second
+
+
+def test_openpi_cann_kernels_are_npu_only_and_off_by_default(monkeypatch):
+    from rlinf.models.embodiment.openpi import resolve_npu_fused_attention
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(Worker, "torch_device_type", "npu", raising=False)
+    assert resolve_npu_fused_attention(_openpi_cfg(npu_fused_attention=True)) is True
+    # The shared pi0_5 template declares it as False, and a config that omits
+    # it entirely must behave the same way.
+    assert resolve_npu_fused_attention(_openpi_cfg(task="rl")) is False
+
+    # The kernel does not exist off Ascend, so a config that asks for it
+    # elsewhere falls back rather than failing at the first forward.
+    monkeypatch.setattr(Worker, "torch_device_type", "cuda", raising=False)
+    assert resolve_npu_fused_attention(_openpi_cfg(npu_fused_attention=True)) is False
+
+
+def test_openpi_npu_fused_attention_matches_the_einsum_path(request):
+    """The fused kernel must agree with the einsum path, masked rows included.
+
+    Runs both implementations over the same inputs on an Ascend NPU. The
+    tolerance is the bf16 rounding the kernel introduces; the fully masked row
+    is checked separately because that is where a kernel masking with ``-inf``
+    would diverge without affecting the rest of the output.
+    """
+    npu = getattr(torch, "npu", None)
+    if npu is None or not npu.is_available():
+        pytest.skip("npu_fusion_attention requires an Ascend NPU.")
+
+    from rlinf.models.embodiment.openpi.modules import gemma
+    from rlinf.models.embodiment.openpi.modules.utils import (
+        npu_fused_attention_enabled,
+        set_npu_fused_attention,
+        set_torch_compile,
+        torch_compile_enabled,
+    )
+
+    previous_compile = torch_compile_enabled()
+    previous_fused = npu_fused_attention_enabled()
+    request.addfinalizer(lambda: set_torch_compile(previous_compile))
+    request.addfinalizer(lambda: set_npu_fused_attention(previous_fused))
+    set_torch_compile(False)
+
+    torch.manual_seed(0)
+    cfg = gemma.Config(512, 1, 1024, 8, 1, 64)
+    attn = gemma.Attention([cfg]).to("npu").to(torch.bfloat16)
+
+    batch, seq = 2, 48
+    x = torch.randn(batch, seq, cfg.width, device="npu", dtype=torch.bfloat16)
+    positions = torch.arange(seq, device="npu").expand(batch, seq)
+    mask = torch.ones(batch, 1, seq, seq, dtype=torch.bool, device="npu")
+    mask[:, :, :, -5:] = False  # padded tail, as a shortened prompt produces
+    mask[0, 0, 0, :] = False  # and one query that may attend nowhere
+
+    def run(fused):
+        set_npu_fused_attention(fused)
+        for parameter in attn.parameters():
+            parameter.grad = None
+        inp = x.detach().clone().requires_grad_(True)
+        (out,), _ = attn([inp], positions, mask)
+        out.float().square().mean().backward()
+        grads = {
+            name: parameter.grad.detach().float().clone()
+            for name, parameter in attn.named_parameters()
+            if parameter.grad is not None
+        }
+        return out.detach(), inp.grad.detach().float(), grads
+
+    reference, reference_input_grad, reference_grads = run(False)
+    candidate, candidate_input_grad, candidate_grads = run(True)
+
+    torch.testing.assert_close(candidate, reference, rtol=2e-2, atol=2e-2)
+    masked_row = candidate[0, 0]
+    assert masked_row.abs().max() > 0.0, "the fused kernel zeroed a fully masked row"
+    torch.testing.assert_close(masked_row, reference[0, 0], rtol=2e-2, atol=2e-2)
+
+    # Training is the reason the switch exists, so the backward pass has to
+    # agree too -- including that it reaches the same set of parameters.
+    assert set(candidate_grads) == set(reference_grads)
+    torch.testing.assert_close(
+        candidate_input_grad, reference_input_grad, rtol=5e-2, atol=5e-2
+    )
+    for name, expected in reference_grads.items():
+        torch.testing.assert_close(
+            candidate_grads[name], expected, rtol=5e-2, atol=5e-2, msg=name
+        )

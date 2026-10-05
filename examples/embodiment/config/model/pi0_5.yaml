@@ -39,3 +39,8 @@ openpi:
   # Fused RoPE / GELU kernels. Isaac Sim jobs set this false: their bundled
   # torch cannot compile against the venv Triton.
   torch_compile: True
+
+  # CANN fused kernels for the Gemma stack. Ascend only, ignored elsewhere,
+  # and each stays off until a workload has compared it against the portable
+  # path.
+  npu_fused_attention: False

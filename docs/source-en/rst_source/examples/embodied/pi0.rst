@@ -521,6 +521,41 @@ the common NPU worker and collective paths.
 
 .. include:: _ascend_torch.rst
 
+Parts of the Gemma stack have CANN kernels that replace what the portable path
+spells out across several operators. Each switch is off by default: the
+portable path is the reference every comparison is checked against, and what a
+kernel is worth depends on the sequence length a workload runs at.
+
+``actor.model.openpi.npu_fused_attention`` routes attention through
+``npu_fusion_attention``. The portable path computes the attention logits in
+float32, compares them against the mask and softmaxes, which materialises
+several tensors shaped ``(batch, kv_heads, groups, queries, keys)``; the fused
+kernel materialises none of them, and it reads the grouped-query layout
+directly, so the KV heads are never expanded to the query head count.
+
+The switch is read from the actor's model config and reaches the rollout
+worker through the same merge that carries the rest of ``actor.model``, so one
+override covers both workers:
+
+.. code-block:: bash
+
+   python examples/embodiment/train_embodied_agent.py \
+      --config-name libero_spatial_ppo_openpi_pi05 \
+      actor.model.openpi.npu_fused_attention=true
+
+A query row that may attend nowhere is where the two attention paths could
+diverge. The portable path fills masked logits with a large finite negative
+number rather than ``-inf``, so such a row softmaxes to a uniform distribution
+and returns the mean of the values instead of zeros. ``npu_fusion_attention``
+reproduces that behaviour, which is why it is the fused option here;
+``F.scaled_dot_product_attention`` returns zeros for the same input.
+
+The switch is not bit-exact, so what it agrees to is worth knowing before
+flipping it. Over a fixed LIBERO observation with every random draw held fixed,
+the fused kernel moves the sampled actions by a relative L2 of 8.6e-3 and the
+values by 6.3e-3, while the log-probabilities stay at 1.5e-7 -- that is, the
+sampled chain is unchanged and the difference is the kernel's own rounding.
+
 Moore Threads MUSA
 ~~~~~~~~~~~~~~~~~~
 

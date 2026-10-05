@@ -36,7 +36,12 @@ import torch.utils.checkpoint
 
 from . import lora
 from .lora import FeedForward as LoRAFeedForward
-from .utils import _str_to_dtype, gelu_glu, torch_compile_enabled
+from .utils import (
+    _str_to_dtype,
+    gelu_glu,
+    npu_fused_attention_enabled,
+    torch_compile_enabled,
+)
 
 PALIGEMMA_VOCAB_SIZE = 257_152
 
@@ -209,7 +214,46 @@ def _concat_experts(parts: list[torch.Tensor | None]) -> torch.Tensor:
     return present[0] if len(present) == 1 else torch.cat(present, dim=1)
 
 
-# TODO: try use sdpa_attn
+def _npu_fused_attention(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    attn_mask: torch.Tensor,
+    *,
+    num_heads: int,
+    head_dim: int,
+) -> torch.Tensor:
+    """Grouped-query attention through CANN's FlashAttentionScore.
+
+    Takes what the einsum path takes -- ``q`` as (B, T, num_heads, head_dim),
+    ``k`` and ``v`` as (B, S, num_kv_heads, head_dim), and ``attn_mask`` as
+    (B, 1, T, S) true where a query may attend -- and returns
+    (B, T, num_heads, head_dim). The kernel reads the grouped layout directly,
+    so the KV heads are never expanded to the query head count.
+
+    Two contracts differ from the einsum path and are converted here. CANN's
+    ``atten_mask`` marks the positions to drop, the complement of ``attn_mask``.
+    And ``scale`` applies the ``head_dim ** -0.5`` factor inside the kernel, so
+    the caller must not also pre-scale ``q``.
+
+    The kernel masks with a large finite negative value rather than ``-inf``,
+    which is what keeps a fully masked row equivalent to the einsum path: both
+    leave such a row as a uniform distribution over the values instead of
+    zeros. ``F.scaled_dot_product_attention`` does not share that behaviour.
+    """
+    import torch_npu
+
+    return torch_npu.npu_fusion_attention(
+        q.contiguous(),
+        k.contiguous(),
+        v.contiguous(),
+        num_heads,
+        "BSND",
+        atten_mask=~attn_mask,
+        scale=head_dim**-0.5,
+    )[0]
+
+
 class Attention(nn.Module):
     """Multi-expert Grouped Query Attention with RoPE and LoRA."""
 
@@ -355,36 +399,41 @@ class Attention(nn.Module):
         if attn_mask.dim() == 4:
             attn_mask = attn_mask[:, 0:1, :, :]  # (B, 1, T, S)
 
-        # GQA einsum pattern matching JAX:
-        q = q * (self.head_dim**-0.5)
-
         # q: (B, T, num_heads, H) -> rearrange to (B, T, K, G, H)
         # k: (B, S, num_kv_heads, H) -> stays (B, S, K, H)
         K = self.num_kv_heads
         G = self.num_heads // K
 
-        q_r = q.reshape(q.shape[0], q.shape[1], K, G, self.head_dim)
-        k_r = k.reshape(k.shape[0], k.shape[1], K, self.head_dim)
-        v_r = v.reshape(v.shape[0], v.shape[1], K, self.head_dim)
+        if npu_fused_attention_enabled():
+            encoded = _npu_fused_attention(
+                q, k, v, attn_mask, num_heads=self.num_heads, head_dim=self.head_dim
+            )
+        else:
+            # GQA einsum pattern matching JAX:
+            q = q * (self.head_dim**-0.5)
 
-        # einsum "BTKGH,BSKH->BKGTS"
-        logits = torch.einsum("BTKGH,BSKH->BKGTS", q_r.float(), k_r.float())
+            q_r = q.reshape(q.shape[0], q.shape[1], K, G, self.head_dim)
+            k_r = k.reshape(k.shape[0], k.shape[1], K, self.head_dim)
+            v_r = v.reshape(v.shape[0], v.shape[1], K, self.head_dim)
 
-        # logits is (B, K, G, T, S) and the mask is (B, 1, T, S); inserting
-        # one axis lets it broadcast, which costs nothing, where expanding
-        # it to the full logits shape makes the comparison allocate. The
-        # fill stays a Python scalar for the same reason: a per-call
-        # device tensor would be another host-to-device copy per layer.
-        big_neg = -2.3819763e38
-        masked_logits = torch.where(attn_mask[:, :, None, :, :], logits, big_neg)
+            # einsum "BTKGH,BSKH->BKGTS"
+            logits = torch.einsum("BTKGH,BSKH->BKGTS", q_r.float(), k_r.float())
 
-        probs = F.softmax(masked_logits, dim=-1).to(dtype)
+            # logits is (B, K, G, T, S) and the mask is (B, 1, T, S); inserting
+            # one axis lets it broadcast, which costs nothing, where expanding
+            # it to the full logits shape makes the comparison allocate. The
+            # fill stays a Python scalar for the same reason: a per-call
+            # device tensor would be another host-to-device copy per layer.
+            big_neg = -2.3819763e38
+            masked_logits = torch.where(attn_mask[:, :, None, :, :], logits, big_neg)
 
-        # einsum "BKGTS,BSKH->BTKGH"
-        encoded = torch.einsum("BKGTS,BSKH->BTKGH", probs, v_r.to(dtype))
-        encoded = encoded.reshape(
-            encoded.shape[0], encoded.shape[1], K * G, self.head_dim
-        )
+            probs = F.softmax(masked_logits, dim=-1).to(dtype)
+
+            # einsum "BKGTS,BSKH->BTKGH"
+            encoded = torch.einsum("BKGTS,BSKH->BTKGH", probs, v_r.to(dtype))
+            encoded = encoded.reshape(
+                encoded.shape[0], encoded.shape[1], K * G, self.head_dim
+            )
         # encoded: (B, T_total, num_heads, head_dim)
 
         # Split back to per-expert outputs

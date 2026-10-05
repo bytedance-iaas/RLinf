@@ -24,7 +24,10 @@ from rlinf.models.embodiment.openpi.checkpoint import (
     resolve_full_weights,
     resolve_model_safetensors,
 )
-from rlinf.models.embodiment.openpi.modules.utils import set_torch_compile
+from rlinf.models.embodiment.openpi.modules.utils import (
+    set_npu_fused_attention,
+    set_torch_compile,
+)
 from rlinf.models.embodiment.openpi.rlt_config import build_rlt_config
 from rlinf.utils.logging import get_logger
 
@@ -61,6 +64,50 @@ def resolve_torch_compile(model_cfg: Any) -> bool:
     return configured
 
 
+def _resolve_npu_kernel(model_cfg: Any, field: str, kernel: str) -> bool:
+    """Read one ``openpi`` fused-kernel switch, which only applies on Ascend.
+
+    A config that asks for a CANN kernel on another platform gets a warning and
+    the portable path rather than a failure at the first forward. Every switch
+    defaults to off, so a workload opts in after comparing the two.
+
+    Args:
+        model_cfg (Any): The ``openpi`` config node of the model.
+        field (str): The config field holding the switch.
+        kernel (str): The ``torch_npu`` function the switch selects, for the
+            warning text.
+
+    Returns:
+        bool: True to use the fused kernel.
+    """
+    from omegaconf import OmegaConf
+
+    from rlinf.scheduler import Worker
+
+    configured = bool(OmegaConf.select(model_cfg, field, default=False))
+    if configured and Worker.torch_device_type != "npu":
+        logger.warning(
+            "openpi.%s is set, but %s needs an Ascend NPU; using the portable "
+            "path instead.",
+            field,
+            kernel,
+        )
+        return False
+    return configured
+
+
+def resolve_npu_fused_attention(model_cfg: Any) -> bool:
+    """Whether Gemma attention runs through CANN's FlashAttentionScore.
+
+    Args:
+        model_cfg (Any): The ``openpi`` config node of the model.
+
+    Returns:
+        bool: True to route attention through ``npu_fusion_attention``.
+    """
+    return _resolve_npu_kernel(model_cfg, "npu_fused_attention", "npu_fusion_attention")
+
+
 def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     """Build an OpenPI PyTorch Pi0/Pi0.5 model from ``actor.model`` config.
 
@@ -83,6 +130,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
 
     model_cfg = cfg.openpi
     set_torch_compile(resolve_torch_compile(model_cfg))
+    set_npu_fused_attention(resolve_npu_fused_attention(model_cfg))
     # Existing Pi0.5 templates predate the explicit switch, so preserve their
     # behavior by default. Pi0 templates set this field to False explicitly.
     pi05 = bool(OmegaConf.select(cfg, "pi05", default=True))

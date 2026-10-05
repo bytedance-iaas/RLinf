@@ -475,6 +475,22 @@ ROCm 使用 PyTorch 的 CUDA 兼容 API，因此 OpenPI 可直接使用共用的
 
 .. include:: _ascend_torch.rst
 
+Gemma 结构里有若干处可以换成 CANN 融合算子，替代可移植实现中展开成多个算子的写法。开关默认都关闭：可移植实现是所有数值对照的基准，而融合算子值多少取决于具体任务跑在什么序列长度上。
+
+``actor.model.openpi.npu_fused_attention`` 把 attention 换成 ``npu_fusion_attention``。可移植实现用 float32 算 attention logits，再与 mask 比较并做 softmax，过程中会物化若干个形状为 ``(batch, kv_heads, groups, queries, keys)`` 的张量；融合算子一个都不物化，并且直接读 grouped-query 布局，不需要把 KV head 扩展到 query head 的数量。
+
+这个开关从 actor 的 model 配置读取，并通过承载 ``actor.model`` 其余字段的同一次 merge 传到 rollout worker，因此一处 override 覆盖两个 worker：
+
+.. code-block:: bash
+
+   python examples/embodiment/train_embodied_agent.py \
+      --config-name libero_spatial_ppo_openpi_pi05 \
+      actor.model.openpi.npu_fused_attention=true
+
+两条 attention 路径可能产生分歧的地方，是一个完全无处可看的 query 行。可移植实现给被屏蔽的 logits 填的是一个有限负数而不是 ``-inf``，所以这样的行 softmax 之后是均匀分布，返回的是 value 的均值而不是零。``npu_fusion_attention`` 复现了这个行为，这也是这里选它作为融合实现的原因；``F.scaled_dot_product_attention`` 对同样的输入返回零。
+
+这个开关不是 bit-exact，打开之前值得知道它与可移植路径差多少。在固定的 LIBERO observation 上、固定全部随机流之后，融合算子让采样 action 的相对 L2 为 8.6e-3、value 为 6.3e-3，而 log-probability 停在 1.5e-7——也就是说采样链没有变，差异就是 kernel 自身的舍入。
+
 摩尔线程 MUSA
 ~~~~~~~~~~~~~
 
