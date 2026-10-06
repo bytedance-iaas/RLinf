@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import asyncio
-import os
 import queue
 import threading
 from typing import Any, Optional
@@ -346,10 +345,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                 self.optimizer.zero_grad()
 
                 for mb_idx, data in enumerate(micro_batch_iter):
-                    data = put_tensor_device(
-                        data,
-                        f"cuda:{int(os.environ['LOCAL_RANK'])}",
-                    )
+                    data = put_tensor_device(data, self.device)
                     backward_ctx = self.before_micro_batch(
                         self.model,
                         is_last_micro_batch=(mb_idx + 1) == self.gradient_accumulation,
