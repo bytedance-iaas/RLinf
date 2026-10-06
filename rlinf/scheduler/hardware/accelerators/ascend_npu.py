@@ -27,6 +27,8 @@ from ray._private.accelerators.npu import NPUAcceleratorManager
 from .accelerator import AcceleratorManager, AcceleratorType, ProfileConfig
 
 if TYPE_CHECKING:
+    import torch
+
     from ...collective import CollectiveGroupOptions
 
 logger = logging.getLogger(__name__)
@@ -234,6 +236,26 @@ class AscendNPUManager(AcceleratorManager):
     def get_ccl_backend():
         """Get the CCL backend."""
         return "hccl"
+
+    @staticmethod
+    def collective_dtype(dtype: "torch.dtype") -> "torch.dtype":
+        """Map a dtype HCCL cannot reduce onto one it can.
+
+        HCCL rejects float64 ("Unsupported data type at::kDouble"), which NCCL
+        accepts, so a float64 reduction only fails once it reaches an Ascend
+        node. Callers that accumulate in float64 reduce in float32 here; the
+        local accumulation keeps its width and only the cross-rank combination
+        narrows.
+
+        Args:
+            dtype (torch.dtype): The dtype the caller holds.
+
+        Returns:
+            torch.dtype: The dtype to reduce in.
+        """
+        import torch
+
+        return torch.float32 if dtype is torch.float64 else dtype
 
     @staticmethod
     def get_ccl_socket_ifname_env_var() -> str:

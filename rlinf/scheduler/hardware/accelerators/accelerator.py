@@ -206,6 +206,23 @@ class AcceleratorManager:
         raise NotImplementedError
 
     @staticmethod
+    def collective_dtype(dtype: torch.dtype) -> torch.dtype:
+        """The dtype a collective must use to carry values of ``dtype``.
+
+        Backends do not all implement the same dtypes. A caller that accumulates
+        locally in a wider type asks here what the reduction itself can carry,
+        and converts around the collective. The default answer is the dtype
+        itself; a backend overrides this only for what it cannot reduce.
+
+        Args:
+            dtype (torch.dtype): The dtype the caller holds.
+
+        Returns:
+            torch.dtype: The dtype to reduce in.
+        """
+        return dtype
+
+    @staticmethod
     def get_ccl_socket_ifname_env_var() -> str:
         """Get the network socket interface name environment variable.
 
@@ -392,6 +409,25 @@ class AcceleratorUtil:
             manager = AcceleratorManager.manager_register[accelerator_type]
             env_vars = manager.get_accelerator_env_var(visible_accelerators)
         return env_vars
+
+    @staticmethod
+    def collective_dtype(
+        accelerator_type: AcceleratorType, dtype: torch.dtype
+    ) -> torch.dtype:
+        """The dtype a collective must use to carry values of ``dtype``.
+
+        Args:
+            accelerator_type (AcceleratorType): The type of the accelerator.
+            dtype (torch.dtype): The dtype the caller holds.
+
+        Returns:
+            torch.dtype: The dtype to reduce in, which is ``dtype`` unless the
+                backend cannot carry it.
+        """
+        if accelerator_type in AcceleratorManager.manager_register:
+            manager = AcceleratorManager.manager_register[accelerator_type]
+            return manager.collective_dtype(dtype)
+        return dtype
 
     @staticmethod
     def get_visible_devices(accelerator_type: AcceleratorType) -> list[int]:

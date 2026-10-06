@@ -789,3 +789,60 @@ def test_masked_normalization_follows_the_worker_platform(monkeypatch):
     padded_mask = torch.tensor([[1.0, 1.0, 1.0, 1.0, 0.0]])
     partial = masked_normalization(padded, padded_mask, dim=(0, 1), all_reduce=False)
     assert torch.allclose(partial[0, :4], out[0, :4], atol=1e-5)
+
+
+def test_all_reduce_wide_narrows_only_what_the_backend_cannot_carry(monkeypatch):
+    """A float64 statistic must still reduce on a backend without float64.
+
+    HCCL rejects float64 where NCCL accepts it, so a float64 reduction passes
+    every CUDA test and fails on the first Ascend node. The platform decides the
+    wire dtype; the caller keeps its width.
+    """
+    from rlinf.utils.distributed import all_reduce_wide
+
+    calls = []
+
+    def fake_all_reduce(tensor, op=None, group=None):
+        calls.append(tensor.dtype)
+        return None
+
+    monkeypatch.setattr(torch.distributed, "all_reduce", fake_all_reduce)
+
+    from rlinf.scheduler.hardware.accelerators.accelerator import AcceleratorUtil
+
+    # A platform that cannot reduce float64 gets a float32 collective, and the
+    # caller's tensor keeps its dtype.
+    monkeypatch.setattr(
+        AcceleratorUtil,
+        "collective_dtype",
+        staticmethod(
+            lambda accel, dtype: torch.float32 if dtype is torch.float64 else dtype
+        ),
+    )
+    wide = torch.tensor([1.0, 2.0], dtype=torch.float64)
+    out = all_reduce_wide(wide)
+    assert calls == [torch.float32]
+    assert out.dtype is torch.float64
+    assert out is wide
+
+    # A platform that can carry float64 reduces in place, with no copy.
+    calls.clear()
+    monkeypatch.setattr(
+        AcceleratorUtil, "collective_dtype", staticmethod(lambda accel, dtype: dtype)
+    )
+    out = all_reduce_wide(torch.tensor([1.0], dtype=torch.float64))
+    assert calls == [torch.float64]
+    assert out.dtype is torch.float64
+
+
+def test_ascend_reduces_float64_as_float32():
+    """The Ascend manager is the only platform that narrows a reduction."""
+    from rlinf.scheduler.hardware.accelerators.accelerator import AcceleratorManager
+    from rlinf.scheduler.hardware.accelerators.ascend_npu import AscendNPUManager
+
+    assert AscendNPUManager.collective_dtype(torch.float64) is torch.float32
+    # Everything else passes through, including the dtypes training uses.
+    for dtype in (torch.float32, torch.bfloat16, torch.float16, torch.int64):
+        assert AscendNPUManager.collective_dtype(dtype) is dtype
+    # The default answer is the dtype itself, so a backend opts in explicitly.
+    assert AcceleratorManager.collective_dtype(torch.float64) is torch.float64
