@@ -756,3 +756,36 @@ def test_adamw_foreach_matches_the_single_tensor_update_exactly():
         if avg is not None:
             assert torch.equal(avg, other_avg)
             assert torch.equal(avg_sq, other_avg_sq)
+
+
+def test_masked_normalization_follows_the_worker_platform(monkeypatch):
+    """Advantage normalization must run on the platform's device, not on CUDA.
+
+    The asynchronous actor is the only caller, which is why a CUDA-only path
+    here survived: a synchronous run never reaches it. On a host without CUDA
+    the hard-coded call raised "Torch not compiled with CUDA enabled" before
+    this test existed.
+    """
+    from rlinf.scheduler import Worker
+    from rlinf.utils.distributed import masked_normalization
+
+    monkeypatch.setattr(
+        Worker,
+        "torch_platform",
+        SimpleNamespace(current_device=lambda: torch.device("cpu")),
+        raising=False,
+    )
+
+    x = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+    mask = torch.ones_like(x)
+    out = masked_normalization(x, mask, dim=(0, 1), all_reduce=False)
+
+    assert out.device.type == "cpu"
+    # Mean zero, unit variance over the four values, within float32 tolerance.
+    assert out.mean().abs().item() < 1e-5
+    assert abs(out.std(unbiased=False).item() - 1.0) < 1e-4
+    # A masked-out position must not influence the statistics.
+    padded = torch.tensor([[1.0, 2.0, 3.0, 4.0, 1e6]])
+    padded_mask = torch.tensor([[1.0, 1.0, 1.0, 1.0, 0.0]])
+    partial = masked_normalization(padded, padded_mask, dim=(0, 1), all_reduce=False)
+    assert torch.allclose(partial[0, :4], out[0, :4], atol=1e-5)

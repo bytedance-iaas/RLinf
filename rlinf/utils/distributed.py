@@ -76,7 +76,7 @@ def compute_rollout_metrics_dynamic(
     Returns:
         Tuple of (rollout_metrics dict, total_prompt_lengths tensor, total_decode_lengths tensor)
     """
-    device = torch.device(f"cuda:{torch.cuda.current_device()}")
+    device = Worker.torch_platform.current_device()
 
     # Extract basic tensors
     advantages = rollout_batch["advantages"].to(device=device)
@@ -302,7 +302,7 @@ def compute_rollout_metrics(
         min_value = torch.min(values).detach().item()
         reduce_value_tensor = torch.as_tensor(
             [-min_value, max_value],
-            device=torch.cuda.current_device(),
+            device=Worker.torch_platform.current_device(),
             dtype=torch.float32,
         )
         torch.distributed.all_reduce(
@@ -924,7 +924,8 @@ def masked_normalization(
             Normalized x, with the same shape as x.
     """
     dtype = torch.float64 if high_precision else torch.float32
-    x = x.to(dtype=dtype).cuda()
+    device = Worker.torch_platform.current_device()
+    x = x.to(dtype=dtype, device=device)
     if not inplace:
         x = x.clone()
     if dim is None:
@@ -934,7 +935,7 @@ def masked_normalization(
             np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
         )
     else:
-        mask = mask.to(dtype=dtype).cuda()
+        mask = mask.to(dtype=dtype, device=device)
         assert len(mask.shape) == len(x.shape), (mask.shape, x.shape, dim)
         for i in range(len(x.shape)):
             if i in dim:
