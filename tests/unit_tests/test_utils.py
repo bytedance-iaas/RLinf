@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import math
 import os
@@ -349,6 +350,24 @@ class _StubRunner:
     _is_complete_checkpoint = ReasoningRunner._is_complete_checkpoint
 
 
+class _StubReporter:
+    """The run-state surface ``_save_checkpoint`` touches, recording nothing.
+
+    The runner wraps the save in ``reporter.phase`` and appends to the
+    checkpoint index afterwards, so a stub runner needs both to get through it.
+    """
+
+    def __init__(self):
+        self.checkpoints = []
+
+    @contextlib.contextmanager
+    def phase(self, _name: str):
+        yield
+
+    def record_checkpoint(self, **kwargs):
+        self.checkpoints.append(kwargs)
+
+
 class _ImmediateHandle:
     def wait(self):
         return None
@@ -405,6 +424,7 @@ def _saving_runner(tmp_path: Path) -> _StubRunner:
     runner.global_steps = 8
     runner.actor = _Actor()
     runner.train_dataloader = _Dataloader()
+    runner.reporter = _StubReporter()
     return runner
 
 
