@@ -1632,3 +1632,27 @@ def test_openpi_never_compiles_fused_kernels_on_npu(monkeypatch):
     # the shared pi0_5 template sets torch_compile for every platform.
     assert resolve_torch_compile(_openpi_cfg(task="rl")) is False
     assert resolve_torch_compile(_openpi_cfg(torch_compile=True)) is False
+
+
+def test_sac_temperature_keeps_the_alpha_loss_in_fp32():
+    """SAC's temperature is fp32 so a bf16 policy cannot pull softplus into bf16.
+
+    ``forward_alpha`` multiplies the temperature by log-probs that carry the
+    model's dtype. With a bf16 temperature the product -- and so the gradient
+    reaching ``softplus`` -- is bf16, which CANN has no backward kernel for
+    ("Tensor gradOutput not implemented for DT_BFLOAT16").
+    """
+    import torch
+
+    from rlinf.models.embodiment.modules.entropy_tunning import EntropyTemperature
+
+    temp = EntropyTemperature(initial_alpha=1.0, alpha_type="softplus")
+    assert temp.base_alpha.dtype is torch.float32
+
+    log_pi = torch.zeros(4, 1, dtype=torch.bfloat16)
+    alpha_loss = -temp.compute_alpha() * (log_pi.mean() + -16.0)
+
+    assert alpha_loss.dtype is torch.float32
+    alpha_loss.backward()
+    assert temp.base_alpha.grad is not None
+    assert temp.base_alpha.grad.dtype is torch.float32
