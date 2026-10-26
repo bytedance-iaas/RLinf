@@ -93,6 +93,12 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
 FROM base-image-$BUILD_TARGET AS base-image
 ARG PLATFORM
 ENV RLINF_PLATFORM=${PLATFORM}
+# install.sh picks the Ascend torch line from the chip, which it normally reads
+# from npu-smi. A build has no devices and no npu-smi, so without this the
+# Ascend 950 image would be built against the 910B stack (torch 2.6) and would
+# not run on a 950 at all. Empty elsewhere, where install.sh ignores it.
+ARG ASCEND_CHIP=
+ENV ASCEND_CHIP=${ASCEND_CHIP}
 
 
 ##################################################################################################
