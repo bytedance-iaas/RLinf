@@ -22,10 +22,16 @@
 # Which one is fastest moves around between networks and over time, and a
 # mirror that has gone slow is the usual reason an install or a CI job stalls,
 # so the prefix is measured rather than hardcoded.
+#
+# ghfast.top is deliberately absent. It serves the probe artifact below with a
+# 206 and then answers 403 for the python-build-standalone release uv installs
+# the interpreter from, so it wins the race and fails the build several minutes
+# later, in a step that has nothing to do with mirrors. Reproduced from two
+# networks. Do not add it back without checking it against a release other than
+# the probe's.
 GITHUB_PREFIX_CANDIDATES=(
     "https://gh-proxy.com/"
     "https://gh-proxy.org/"
-    "https://ghfast.top/"
     "https://ghproxy.net/"
 )
 # Throughput, not latency, is what this ranks. What install.sh pulls from GitHub

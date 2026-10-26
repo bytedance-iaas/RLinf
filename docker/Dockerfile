@@ -211,7 +211,7 @@ COPY ./requirements $UV_PATH/requirements
 # download_assets and the clone below all read it from.
 #
 # The answer is baked into this layer, so a cached layer keeps yesterday's
-# mirror. Pass --build-arg GITHUB_PREFIX=https://ghfast.top/ to pin one instead,
+# mirror. Pass --build-arg GITHUB_PREFIX=https://gh-proxy.com/ to pin one instead,
 # which is also the way to route around a mirror that has gone bad.
 ARG GITHUB_PREFIX
 ENV GITHUB_PREFIX_FILE=/etc/rlinf/github-prefix
