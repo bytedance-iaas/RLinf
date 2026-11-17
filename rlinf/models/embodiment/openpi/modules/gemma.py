@@ -36,7 +36,14 @@ import torch.utils.checkpoint
 
 from . import lora
 from .lora import FeedForward as LoRAFeedForward
-from .utils import _str_to_dtype, gelu_glu, torch_compile_enabled
+from .utils import (
+    _str_to_dtype,
+    gelu_glu,
+    npu_fused_attention_enabled,
+    npu_fused_rms_norm_enabled,
+    npu_fused_rope_enabled,
+    torch_compile_enabled,
+)
 
 PALIGEMMA_VOCAB_SIZE = 257_152
 
@@ -159,6 +166,25 @@ class RMSNorm(nn.Module):
             (normalized_output, gate) where gate is None for regular RMSNorm
         """
         dtype = x.dtype
+
+        if not self.adaptive and npu_fused_rms_norm_enabled():
+            import torch_npu
+
+            # The kernel's gamma multiplies the normalised value, which is what
+            # ``1 + scale`` does here, and it normalises in float32 internally,
+            # so the explicit upcast of ``x`` is not needed.
+            #
+            # Gamma stays float32. OpenPI deliberately keeps the norm scales in
+            # float32 while the Gemma weights are bfloat16, and the kernel
+            # accepts a float32 gamma against a bfloat16 input while still
+            # returning the input dtype. Rounding gamma down first costs two
+            # orders of magnitude of accuracy: against the explicit path the
+            # relative L2 is 1.2e-5 with float32 gamma and 2.9e-3 without.
+            return (
+                torch_npu.npu_rms_norm(x, 1.0 + self.scale.float(), epsilon=1e-6)[0],
+                None,
+            )
+
         x_float = x.float()
         var = torch.mean(x_float**2, dim=-1, keepdim=True)
         normed = x_float * torch.rsqrt(var + 1e-6)
@@ -203,7 +229,52 @@ class Embedder(nn.Module):
         return F.linear(x, self.embedding.weight)
 
 
-# TODO: try use sdpa_attn
+def _concat_experts(parts: list[torch.Tensor | None]) -> torch.Tensor:
+    """Join the per-expert sequences, without copying when only one is active."""
+    present = [part for part in parts if part is not None]
+    return present[0] if len(present) == 1 else torch.cat(present, dim=1)
+
+
+def _npu_fused_attention(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    attn_mask: torch.Tensor,
+    *,
+    num_heads: int,
+    head_dim: int,
+) -> torch.Tensor:
+    """Grouped-query attention through CANN's FlashAttentionScore.
+
+    Takes what the einsum path takes -- ``q`` as (B, T, num_heads, head_dim),
+    ``k`` and ``v`` as (B, S, num_kv_heads, head_dim), and ``attn_mask`` as
+    (B, 1, T, S) true where a query may attend -- and returns
+    (B, T, num_heads, head_dim). The kernel reads the grouped layout directly,
+    so the KV heads are never expanded to the query head count.
+
+    Two contracts differ from the einsum path and are converted here. CANN's
+    ``atten_mask`` marks the positions to drop, the complement of ``attn_mask``.
+    And ``scale`` applies the ``head_dim ** -0.5`` factor inside the kernel, so
+    the caller must not also pre-scale ``q``.
+
+    The kernel masks with a large finite negative value rather than ``-inf``,
+    which is what keeps a fully masked row equivalent to the einsum path: both
+    leave such a row as a uniform distribution over the values instead of
+    zeros. ``F.scaled_dot_product_attention`` does not share that behaviour.
+    """
+    import torch_npu
+
+    return torch_npu.npu_fusion_attention(
+        q.contiguous(),
+        k.contiguous(),
+        v.contiguous(),
+        num_heads,
+        "BSND",
+        atten_mask=~attn_mask,
+        scale=head_dim**-0.5,
+    )[0]
+
+
 class Attention(nn.Module):
     """Multi-expert Grouped Query Attention with RoPE and LoRA."""
 
@@ -326,10 +397,14 @@ class Attention(nn.Module):
             k_parts.append(k)
             v_parts.append(v)
 
-        # Concatenate along sequence dimension (dim=1) — matching JAX jnp.concatenate(axis=1)
-        q = torch.cat([q for q in q_parts if q is not None], dim=1)
-        k = torch.cat([k for k in k_parts if k is not None], dim=1)
-        v = torch.cat([v for v in v_parts if v is not None], dim=1)
+        # Concatenate along sequence dimension (dim=1) — matching JAX jnp.concatenate(axis=1).
+        # ``torch.cat`` always allocates, so a single active expert would pay a
+        # full copy of q, k and v per layer for nothing. Every rollout pass has
+        # exactly one: the prefix pass sees only the VLM, and each denoising
+        # pass sees only the action expert with the prefix in the KV cache.
+        q = _concat_experts(q_parts)
+        k = _concat_experts(k_parts)
+        v = _concat_experts(v_parts)
 
         # Apply RoPE
         rope = _apply_rope_pytorch if self.pytorch_numerics else _apply_rope
@@ -348,6 +423,11 @@ class Attention(nn.Module):
         if attn_mask.dim() == 4:
             attn_mask = attn_mask[:, 0:1, :, :]  # (B, 1, T, S)
 
+        # q: (B, T, num_heads, H) -> rearrange to (B, T, K, G, H)
+        # k: (B, S, num_kv_heads, H) -> stays (B, S, K, H)
+        K = self.num_kv_heads
+        G = self.num_heads // K
+
         if self.pytorch_numerics:
             query = q.transpose(1, 2)
             key = k.transpose(1, 2).repeat_interleave(self.num_query_groups, dim=1)
@@ -358,14 +438,13 @@ class Attention(nn.Module):
                 dtype
             )
             encoded = torch.matmul(probs, value).transpose(1, 2).contiguous()
+        elif npu_fused_attention_enabled():
+            encoded = _npu_fused_attention(
+                q, k, v, attn_mask, num_heads=self.num_heads, head_dim=self.head_dim
+            )
         else:
             # GQA einsum pattern matching JAX:
             q = q * (self.head_dim**-0.5)
-
-            # q: (B, T, num_heads, H) -> rearrange to (B, T, K, G, H)
-            # k: (B, S, num_kv_heads, H) -> stays (B, S, K, H)
-            K = self.num_kv_heads
-            G = self.num_heads // K
 
             q_r = q.reshape(q.shape[0], q.shape[1], K, G, self.head_dim)
             k_r = k.reshape(k.shape[0], k.shape[1], K, self.head_dim)
@@ -374,15 +453,13 @@ class Attention(nn.Module):
             # einsum "BTKGH,BSKH->BKGTS"
             logits = torch.einsum("BTKGH,BSKH->BKGTS", q_r.float(), k_r.float())
 
-            # Align mask to logits shape: logits is (B, K, G, T, S), mask is (B, 1, T, S)
-            # We need mask to be (B, 1, 1, T, S) so it broadcasts to (B, K, G, T, S)
+            # logits is (B, K, G, T, S) and the mask is (B, 1, T, S); inserting
+            # one axis lets it broadcast, which costs nothing, where expanding
+            # it to the full logits shape makes the comparison allocate. The
+            # fill stays a Python scalar for the same reason: a per-call
+            # device tensor would be another host-to-device copy per layer.
             big_neg = -2.3819763e38
-            mask_for_logits = attn_mask[:, :, None, :, :].expand_as(logits).bool()
-            masked_logits = torch.where(
-                mask_for_logits,
-                logits,
-                torch.tensor(big_neg, dtype=logits.dtype, device=logits.device),
-            )
+            masked_logits = torch.where(attn_mask[:, :, None, :, :], logits, big_neg)
 
             probs = F.softmax(masked_logits, dim=-1).to(dtype)
 
@@ -768,9 +845,45 @@ def _apply_rope_eager(
 _apply_rope_compiled = torch.compile(_apply_rope_eager)
 
 
+def _apply_rope_npu(
+    x: torch.Tensor, *, positions: torch.Tensor, max_wavelength: float = 10000.0
+) -> torch.Tensor:
+    """Apply RoPE with the rotation in ``npu_rotary_mul``.
+
+    The kernel wants cos and sin at the input's dtype and full ``head_dim``,
+    with the two halves duplicated, and it broadcasts them over the head axis.
+    That broadcast is worth keeping: materialising the tables at the query head
+    count costs about 47 MB each over a 712-token prefix at batch 16, and
+    measured slower than letting the kernel broadcast.
+
+    Only the rotation moves. The tables are still built per call because
+    Pi0.5 derives ``positions`` from a cumulative sum over the validity mask,
+    so they depend on how much padding a batch carries rather than on the
+    sequence length alone. That is also why this helps the 712-token prefix
+    (2.7x at batch 8, 4.9x at batch 16) and not the 6-token suffix, where
+    building the tables is the whole cost.
+    """
+    import torch_npu
+
+    head_dim = x.shape[-1]
+    freq_exponents = (2.0 / head_dim) * torch.arange(
+        head_dim // 2, dtype=torch.float32, device=x.device
+    )
+    timescale = max_wavelength**freq_exponents
+    radians = positions[..., None].float() / timescale[None, None, :]
+    radians = radians[..., None, :]  # (B, T, 1, head_dim // 2)
+
+    sin, cos = torch.sin(radians), torch.cos(radians)
+    cos_full = torch.cat([cos, cos], dim=-1).to(x.dtype)
+    sin_full = torch.cat([sin, sin], dim=-1).to(x.dtype)
+    return torch_npu.npu_rotary_mul(x, cos_full, sin_full)
+
+
 def _apply_rope(
     x: torch.Tensor, *, positions: torch.Tensor, max_wavelength: float = 10000.0
 ) -> torch.Tensor:
+    if npu_fused_rope_enabled():
+        return _apply_rope_npu(x, positions=positions, max_wavelength=max_wavelength)
     fn = _apply_rope_compiled if torch_compile_enabled() else _apply_rope_eager
     return fn(x, positions=positions, max_wavelength=max_wavelength)
 

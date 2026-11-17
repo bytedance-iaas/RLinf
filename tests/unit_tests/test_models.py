@@ -3448,3 +3448,397 @@ def test_sac_temperature_keeps_the_alpha_loss_in_fp32():
     alpha_loss.backward()
     assert temp.base_alpha.grad is not None
     assert temp.base_alpha.grad.dtype is torch.float32
+
+
+def test_openpi_cann_kernels_are_npu_only_and_off_by_default(monkeypatch):
+    from rlinf.models.embodiment.openpi import (
+        resolve_npu_fused_attention,
+        resolve_npu_fused_rms_norm,
+        resolve_npu_fused_rope,
+    )
+    from rlinf.scheduler import Worker
+
+    resolvers = {
+        "npu_fused_attention": resolve_npu_fused_attention,
+        "npu_fused_rms_norm": resolve_npu_fused_rms_norm,
+        "npu_fused_rope": resolve_npu_fused_rope,
+    }
+
+    monkeypatch.setattr(Worker, "torch_device_type", "npu", raising=False)
+    for field, resolve in resolvers.items():
+        assert resolve(_openpi_cfg(**{field: True})) is True
+        # The shared pi0_5 template declares every switch as False, and a config
+        # that omits them entirely must behave the same way.
+        assert resolve(_openpi_cfg(task="rl")) is False
+
+    # None of these kernels exists off Ascend, so a config that asks for one
+    # elsewhere falls back rather than failing at the first forward.
+    monkeypatch.setattr(Worker, "torch_device_type", "cuda", raising=False)
+    for field, resolve in resolvers.items():
+        assert resolve(_openpi_cfg(**{field: True})) is False
+
+
+def test_openpi_attention_leaves_a_fully_masked_row_as_a_uniform_mixture(request):
+    """A query that may attend nowhere must still return a value average.
+
+    Gemma fills masked logits with a large finite negative number instead of
+    ``-inf``, so softmax over an entirely masked row is uniform and the output
+    is the mean of the values. Any replacement kernel has to reproduce that;
+    one that masks with ``-inf`` returns zeros and silently changes the model.
+    """
+    from rlinf.models.embodiment.openpi.modules import gemma
+    from rlinf.models.embodiment.openpi.modules.utils import (
+        set_torch_compile,
+        torch_compile_enabled,
+    )
+
+    previous_compile = torch_compile_enabled()
+    request.addfinalizer(lambda: set_torch_compile(previous_compile))
+    set_torch_compile(False)
+    torch.manual_seed(0)
+    cfg = gemma.Config(64, 1, 128, 4, 2, 16)
+    attn = gemma.Attention([cfg]).to(torch.float32)
+
+    batch, seq = 2, 5
+    x = torch.randn(batch, seq, cfg.width)
+    positions = torch.arange(seq).expand(batch, seq)
+    mask = torch.ones(batch, 1, seq, seq, dtype=torch.bool)
+    mask[0, 0, 0, :] = False  # first query of the first sample attends nowhere
+
+    (out,), _ = attn([x], positions, mask)
+
+    masked_row = out[0, 0]
+    assert torch.isfinite(masked_row).all()
+    assert masked_row.abs().max() > 0.0, "a fully masked row must not be zeroed"
+
+    # Uniform attention is the mean of v over the sequence, shared by every
+    # query head in a KV group and then projected. Comparing against that pins
+    # the behaviour instead of the implementation. RoPE rotates q and k only,
+    # so v needs no adjustment here.
+    groups = cfg.num_heads // cfg.num_kv_heads
+    v_mean = (
+        attn.v_proj[0](x[0]).reshape(seq, cfg.num_kv_heads, cfg.head_dim).mean(dim=0)
+    )
+    expected = attn.o_proj[0](
+        v_mean[:, None, :].expand(cfg.num_kv_heads, groups, cfg.head_dim).reshape(-1)
+    )
+    torch.testing.assert_close(masked_row, expected, rtol=1e-4, atol=1e-5)
+
+
+def test_openpi_npu_fused_attention_matches_the_einsum_path(request):
+    """The fused kernel must agree with the einsum path, masked rows included.
+
+    Runs both implementations over the same inputs on an Ascend NPU. The
+    tolerance is the bf16 rounding the kernel introduces; the fully masked row
+    is checked separately because that is where a kernel masking with ``-inf``
+    would diverge without affecting the rest of the output.
+    """
+    npu = getattr(torch, "npu", None)
+    if npu is None or not npu.is_available():
+        pytest.skip("npu_fusion_attention requires an Ascend NPU.")
+
+    from rlinf.models.embodiment.openpi.modules import gemma
+    from rlinf.models.embodiment.openpi.modules.utils import (
+        npu_fused_attention_enabled,
+        set_npu_fused_attention,
+        set_torch_compile,
+        torch_compile_enabled,
+    )
+
+    previous_compile = torch_compile_enabled()
+    previous_fused = npu_fused_attention_enabled()
+    request.addfinalizer(lambda: set_torch_compile(previous_compile))
+    request.addfinalizer(lambda: set_npu_fused_attention(previous_fused))
+    set_torch_compile(False)
+
+    torch.manual_seed(0)
+    cfg = gemma.Config(512, 1, 1024, 8, 1, 64)
+    attn = gemma.Attention([cfg]).to("npu").to(torch.bfloat16)
+
+    batch, seq = 2, 48
+    x = torch.randn(batch, seq, cfg.width, device="npu", dtype=torch.bfloat16)
+    positions = torch.arange(seq, device="npu").expand(batch, seq)
+    mask = torch.ones(batch, 1, seq, seq, dtype=torch.bool, device="npu")
+    mask[:, :, :, -5:] = False  # padded tail, as a shortened prompt produces
+    mask[0, 0, 0, :] = False  # and one query that may attend nowhere
+
+    def run(fused):
+        set_npu_fused_attention(fused)
+        for parameter in attn.parameters():
+            parameter.grad = None
+        inp = x.detach().clone().requires_grad_(True)
+        (out,), _ = attn([inp], positions, mask)
+        out.float().square().mean().backward()
+        grads = {
+            name: parameter.grad.detach().float().clone()
+            for name, parameter in attn.named_parameters()
+            if parameter.grad is not None
+        }
+        return out.detach(), inp.grad.detach().float(), grads
+
+    reference, reference_input_grad, reference_grads = run(False)
+    candidate, candidate_input_grad, candidate_grads = run(True)
+
+    torch.testing.assert_close(candidate, reference, rtol=2e-2, atol=2e-2)
+    masked_row = candidate[0, 0]
+    assert masked_row.abs().max() > 0.0, "the fused kernel zeroed a fully masked row"
+    torch.testing.assert_close(masked_row, reference[0, 0], rtol=2e-2, atol=2e-2)
+
+    # Training is the reason the switch exists, so the backward pass has to
+    # agree too -- including that it reaches the same set of parameters.
+    assert set(candidate_grads) == set(reference_grads)
+    torch.testing.assert_close(
+        candidate_input_grad, reference_input_grad, rtol=5e-2, atol=5e-2
+    )
+    for name, expected in reference_grads.items():
+        torch.testing.assert_close(
+            candidate_grads[name], expected, rtol=5e-2, atol=5e-2, msg=name
+        )
+
+
+def test_openpi_expert_concat_matches_cat_and_avoids_a_single_expert_copy():
+    """One active expert must be passed through, not copied.
+
+    ``torch.cat`` allocates even for a one-element list, and every Pi0.5
+    rollout pass has exactly one active expert, so the copy would be a full
+    q/k/v duplicate per layer. Passing the tensor through has to stay
+    equivalent to the concatenation for every other arity.
+    """
+    from rlinf.models.embodiment.openpi.modules.gemma import _concat_experts
+
+    torch.manual_seed(0)
+    first = torch.randn(2, 5, 4, 8)
+    second = torch.randn(2, 3, 4, 8)
+
+    only = _concat_experts([first, None])
+    assert only is first, "a single active expert should not be copied"
+
+    both = _concat_experts([first, second])
+    torch.testing.assert_close(both, torch.cat([first, second], dim=1))
+    assert _concat_experts([None, second]) is second
+
+
+def test_openpi_fused_rms_norm_keeps_the_float32_scale(request):
+    """The fused norm must not round the scale down before multiplying.
+
+    OpenPI keeps the RMSNorm scales in float32 while the Gemma weights are
+    bfloat16, and `_apply_openpi_param_dtypes` calls that deliberate: casting
+    those islands raises PPO KL. `npu_rms_norm` accepts a float32 gamma against
+    a bfloat16 input, so the agreement with the explicit path should be a
+    single bfloat16 ULP of the output rather than the scale's own rounding.
+    """
+    npu = getattr(torch, "npu", None)
+    if npu is None or not npu.is_available():
+        pytest.skip("npu_rms_norm requires an Ascend NPU.")
+
+    from rlinf.models.embodiment.openpi.modules import gemma
+    from rlinf.models.embodiment.openpi.modules.utils import (
+        npu_fused_rms_norm_enabled,
+        set_npu_fused_rms_norm,
+    )
+
+    previous = npu_fused_rms_norm_enabled()
+    request.addfinalizer(lambda: set_npu_fused_rms_norm(previous))
+
+    torch.manual_seed(0)
+    norm = gemma.RMSNorm(2048, adaptive=False).to("npu")
+    with torch.no_grad():
+        norm.scale.copy_(torch.randn(2048, device="npu") * 0.02)
+    assert norm.scale.dtype == torch.float32
+    x = torch.randn(4, 712, 2048, device="npu", dtype=torch.bfloat16)
+
+    set_npu_fused_rms_norm(False)
+    reference, _ = norm(x)
+    set_npu_fused_rms_norm(True)
+    candidate, _ = norm(x)
+
+    assert candidate.dtype == reference.dtype
+    relative_l2 = (
+        (candidate.float() - reference.float()).norm() / reference.float().norm()
+    ).item()
+    assert relative_l2 < 1e-4, (
+        f"relative L2 {relative_l2:.3e} suggests the scale was rounded to "
+        "bfloat16 before the multiply"
+    )
+
+
+def test_openpi_npu_fused_rope_matches_the_explicit_rotation(request):
+    """The fused rotation must agree with the explicit one, forward and back.
+
+    `npu_rotary_mul` broadcasts cos and sin over the head axis, which is what
+    lets the tables stay at (B, T, 1, head_dim) instead of being materialised
+    at the query head count. This checks the agreement at Pi0.5's prefix shape
+    and that the gradient still reaches the input, since RoPE sits inside the
+    actor's backward pass.
+    """
+    npu = getattr(torch, "npu", None)
+    if npu is None or not npu.is_available():
+        pytest.skip("npu_rotary_mul requires an Ascend NPU.")
+
+    from rlinf.models.embodiment.openpi.modules import gemma
+    from rlinf.models.embodiment.openpi.modules.utils import (
+        npu_fused_rope_enabled,
+        set_npu_fused_rope,
+        set_torch_compile,
+        torch_compile_enabled,
+    )
+
+    previous_compile = torch_compile_enabled()
+    previous_rope = npu_fused_rope_enabled()
+    request.addfinalizer(lambda: set_torch_compile(previous_compile))
+    request.addfinalizer(lambda: set_npu_fused_rope(previous_rope))
+    set_torch_compile(False)
+
+    torch.manual_seed(0)
+    batch, seq, heads, head_dim = 2, 712, 8, 256
+    # Positions as Pi0.5 builds them, from a cumulative sum over the validity
+    # mask, so a padded tail repeats the last position rather than counting on.
+    valid = torch.ones(batch, seq, device="npu", dtype=torch.bool)
+    valid[:, -7:] = False
+    positions = torch.cumsum(valid.int(), dim=1) - 1
+
+    def run(fused):
+        set_npu_fused_rope(fused)
+        # Reseed so both paths see the same input rather than consecutive draws.
+        torch.manual_seed(1)
+        x = torch.randn(
+            batch, seq, heads, head_dim, device="npu", dtype=torch.bfloat16
+        ).requires_grad_(True)
+        out = gemma._apply_rope(x, positions=positions)
+        out.float().square().mean().backward()
+        return out.detach(), x.grad.detach()
+
+    reference, reference_grad = run(False)
+    candidate, candidate_grad = run(True)
+
+    relative = (
+        (candidate.float() - reference.float()).norm() / reference.float().norm()
+    ).item()
+    assert relative < 1e-2, f"relative L2 {relative:.3e} is larger than rounding"
+    grad_relative = (
+        (candidate_grad.float() - reference_grad.float()).norm()
+        / reference_grad.float().norm()
+    ).item()
+    assert grad_relative < 1e-2, f"gradient relative L2 {grad_relative:.3e}"
+
+
+def test_openpi_skipping_a_masked_image_preserves_the_prefix():
+    """A slot the task does not fill must not change the prefix it produces.
+
+    Pi0.5 embeds all three IMAGE_KEYS slots, and LIBERO fills two, so the third
+    carries a padded image that the mask excludes everywhere. Emitting zeros
+    for it instead of running SigLIP has to leave the prefix tokens, the
+    validity mask and the autoregressive mask exactly as they were, and has to
+    actually call the encoder one time fewer -- the gain is the skipped call,
+    so a test that only checked the output would pass on a no-op.
+    """
+    from rlinf.models.embodiment.openpi.modules import model as openpi_model
+    from rlinf.models.embodiment.openpi.modules.utils import (
+        set_torch_compile,
+        torch_compile_enabled,
+    )
+    from rlinf.models.embodiment.openpi.pi0 import Pi0
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+
+    previous_compile = torch_compile_enabled()
+    set_torch_compile(False)
+    try:
+
+        def build(skip):
+            torch.manual_seed(0)
+            pi0 = Pi0(
+                Pi0Config(
+                    paligemma_variant="dummy",
+                    action_expert_variant="dummy",
+                    skip_masked_images=skip,
+                )
+            ).eval()
+            for parameter in pi0.img.parameters():
+                parameter.requires_grad_(False)
+            calls = []
+            original = pi0.img.forward
+
+            def counting(*args, **kwargs):
+                calls.append(1)
+                return original(*args, **kwargs)
+
+            pi0.img.forward = counting
+            return pi0, calls
+
+        batch = 2
+        names = list(openpi_model.IMAGE_KEYS)
+        images = {
+            name: torch.rand(batch, *openpi_model.IMAGE_RESOLUTION, 3) for name in names
+        }
+        masks = {name: torch.ones(batch, dtype=torch.bool) for name in names}
+        # The slot the task does not fill: present, padded, masked out.
+        masks[names[-1]] = torch.zeros(batch, dtype=torch.bool)
+        observation = openpi_model.Observation(
+            images=images,
+            image_masks=masks,
+            state=torch.zeros(batch, 32),
+            tokenized_prompt=torch.ones(batch, 48, dtype=torch.long),
+            tokenized_prompt_mask=torch.ones(batch, 48, dtype=torch.bool),
+        )
+
+        with torch.no_grad():
+            reference_model, reference_calls = build(False)
+            reference = reference_model.embed_prefix(observation)
+            candidate_model, candidate_calls = build(True)
+            candidate = candidate_model.embed_prefix(observation)
+
+        assert len(reference_calls) == len(names)
+        assert len(candidate_calls) == len(names) - 1, (
+            "the masked slot was still sent through the encoder"
+        )
+
+        for expected, actual in zip(reference, candidate, strict=True):
+            if expected is None:
+                assert actual is None
+            elif isinstance(expected, torch.Tensor):
+                torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+            else:
+                assert actual == expected
+    finally:
+        set_torch_compile(previous_compile)
+
+
+def test_openpi_max_token_len_reaches_the_tokenizer():
+    """``openpi.max_token_len`` has to set the tokenizer's padding length.
+
+    The named OpenPI TrainConfig carries its own value, so without the override
+    the model config and the tokenizer disagree: ``Pi0Config`` takes the YAML
+    value while the prompt keeps being padded to whatever the named config says.
+    Needs the real data config and its assets, so it runs where those exist.
+    """
+    model_path = os.environ.get("RLINF_TEST_PI05_MODEL_PATH")
+    if not model_path or not os.path.isdir(model_path):
+        pytest.skip("needs a Pi0.5 checkpoint; set RLINF_TEST_PI05_MODEL_PATH")
+
+    from rlinf.models.embodiment.openpi.transforms.pipeline import (
+        build_openpi_transforms,
+    )
+
+    def tokenized_length(max_token_len):
+        inputs, _ = build_openpi_transforms(
+            model_path, "pi05_libero", max_token_len=max_token_len
+        )
+        import openpi.transforms as transforms
+
+        sample = {
+            "observation/image": np.zeros((224, 224, 3), dtype=np.uint8),
+            "observation/wrist_image": np.zeros((224, 224, 3), dtype=np.uint8),
+            "observation/state": np.zeros(8, dtype=np.float32),
+            "prompt": "pick up the black bowl and place it on the plate",
+        }
+        out = transforms.compose(inputs)(sample)
+        return int(np.asarray(out["tokenized_prompt"]).shape[-1])
+
+    default_length = tokenized_length(None)
+    assert tokenized_length(96) == 96
+    assert tokenized_length(48) == 48
+    # Omitting it must keep the named config's length rather than a hard-coded one.
+    assert tokenized_length(None) == default_length
+
+    with pytest.raises(ValueError, match="must be positive"):
+        build_openpi_transforms(model_path, "pi05_libero", max_token_len=0)

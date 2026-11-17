@@ -4,8 +4,8 @@
 RLinf 提供两种互补的性能理解工具，面向不同层次：
 
 - **GPU Profiling**\ （``cluster.profiling``）：对\ *单个*\ worker 进程的低层系统级
-  profiling。它用特定后端的 profiler（``nsys``/``rocprof-sys``）包装指定的 worker
-  group，采集 CUDA kernel、显存流量、NVTX range 和 CPU 活动。用于回答“某个
+  profiling。它用特定后端的 profiler（``nsys``/``rocprof-sys``/``torch_npu.profiler``）
+  包装指定的 worker group，采集设备 kernel、显存流量、NVTX range 和 CPU 活动。用于回答“某个
   GPU/进程逐个 kernel 在做什么？”。
 - **Tracing**\ （``cluster.tracer``）：\ *跨所有 worker 和 runner*\ 的 RLinf 自身计时
   区间的高层时间线——step、阶段，以及 ``generate``、``run_training``、``interact``
@@ -19,6 +19,7 @@ RLinf 支持使用特定 profiling 工具包装指定的 worker group。通过�
 
 - ``nsight`` — NVIDIA Nsight Systems（``nsys profile``）
 - ``rocprof_sys`` — AMD ROCm Systems Profiler（``rocprof-sys-python``）
+- ``torch_npu`` — 华为昇腾，在 worker 进程内使用 ``torch_npu.profiler``
 
 所有后端共享相同的公共字段（``enabled``、``worker_groups``、``steps``、
 ``output_dir``）。后端专属选项各自独立。
@@ -55,7 +56,7 @@ RLinf 支持使用特定 profiling 工具包装指定的 worker group。通过�
      - 说明
    * - ``backend``
      - *(必填)*
-     - 后端标识：``"nsight"`` 或 ``"rocprof_sys"``。
+     - 后端标识：``"nsight"``、``"rocprof_sys"`` 或 ``"torch_npu"``。
    * - ``enabled``
      - ``true``
      - 总开关。设置为 ``false`` 可临时关闭，无需删除配置。
@@ -388,6 +389,42 @@ RLinf 会把每个匹配 worker 的 Python 解释器包装成：
 
 RLinf 会自动从 ``output_dir`` 推导 ``ROCPROFSYS_OUTPUT_PATH`` 和
 ``ROCPROFSYS_OUTPUT_PREFIX``；``env`` 中显式设置的值优先级更高。
+
+
+华为昇腾：``torch_npu.profiler``（``backend: torch_npu``）
+------------------------------------------------------------
+
+另外两个后端的做法是用 profiler 命令包装 worker 的解释器。昇腾不同：采集在 worker 进程内部进行，围绕 runner 指定的 step 开启和关闭，因此不涉及启动命令的包装，被记录的也只有所选的那些 step。
+
+.. code-block:: yaml
+
+   cluster:
+     profiling:
+       backend: torch_npu
+       enabled: true
+       worker_groups: [ActorGroup, RolloutGroup]
+       steps: [1]
+
+每个 worker 进程、每个被 profile 的 step 都在 ``output_dir`` 下写出各自的 trace 目录，目录名包含 worker 名与 pid。采集同时记录 host 侧操作与设备 kernel；CANN 在 ``kernel_details.csv`` 中用 ``Task Type=KERNEL_AICORE`` 标记真正的设备计算，逐 kernel 的耗时分布就从这里来。
+
+另有三个开关控制采集的标注内容，每一个都带额外开销，除非确实需要否则保持关闭：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - 字段
+     - 说明
+   * - ``record_shapes``
+     - 记录每个算子的输入 shape。
+   * - ``profile_memory``
+     - 跟踪张量分配。
+   * - ``with_stack``
+     - 记录每个算子的 Python 调用栈。
+
+.. warning::
+
+   trace 体积很大。Pi0.5 单个 worker 的一个 step 就能到 GB 量级，因此每个 group 只指定一个有代表性的 rank，``steps`` 也只留一个 step。开了 profiler 的运行比不开时慢，不能用它的结果作为吞吐数据。
 
 
 推荐使用方式

@@ -34,6 +34,9 @@ from rlinf.models.embodiment.openpi.modules import gemma, model, pointnet, sigli
 from rlinf.models.embodiment.openpi.modules.utils import _str_to_dtype
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
 
 
 def make_attn_mask(input_mask: torch.Tensor, mask_ar: torch.Tensor) -> torch.Tensor:
@@ -108,6 +111,7 @@ class Pi0(model.BaseModel):
         self.pcd = config.pcd
         self.embed_dtype = _str_to_dtype(config.dtype)
         self._config = config
+        self._logged_image_skips: set[str] = set()
 
         paligemma_config = gemma.get_config(config.paligemma_variant)
         action_expert_config = gemma.get_config(config.action_expert_variant)
@@ -236,6 +240,25 @@ class Pi0(model.BaseModel):
                     ]
                 ).tolist()
                 current_only_by_camera = dict(zip(history_names, current_only))
+
+        # Every IMAGE_KEYS slot is embedded, including the ones a task does not
+        # fill: LIBERO supplies a base and one wrist view, so the third slot
+        # carries a padded image whose mask excludes it at every attention
+        # layer. Running SigLIP on it is a third of the vision tower spent on
+        # tokens nothing can attend to. Skipping it needs the encoder to be
+        # frozen -- otherwise those tokens still have to carry a gradient path
+        # back into it -- and needs a slot of the same input shape to have been
+        # embedded already, so the token shape is known rather than assumed.
+        # Short-memory history frames carry their own masks and are never
+        # skipped.
+        skip_masked_images = (
+            not self._config.short_memory
+            and self._config.skip_masked_images
+            and not any(parameter.requires_grad for parameter in self.img.parameters())
+        )
+        embedded_shape: tuple | None = None
+        embedded_from: torch.Size | None = None
+
         for name in image_names:
             image_mask = obs.image_masks[name]
             if self._config.short_memory:
@@ -247,7 +270,28 @@ class Pi0(model.BaseModel):
                 )
                 image_mask = image_mask[:, -1]
             else:
-                image_tokens, _ = self.img(obs.images[name])
+                image = obs.images[name]
+                if (
+                    skip_masked_images
+                    and embedded_shape is not None
+                    and image.shape == embedded_from
+                    and not image.requires_grad
+                    and not bool(image_mask.any())
+                ):
+                    image_tokens = torch.zeros(
+                        embedded_shape, dtype=self.embed_dtype, device=image.device
+                    )
+                    if name not in self._logged_image_skips:
+                        logger.info(
+                            "openpi: skipping the frozen vision encoder for the "
+                            "fully masked image %s",
+                            name,
+                        )
+                        self._logged_image_skips.add(name)
+                else:
+                    image_tokens, _ = self.img(image)  # (B, num_patches, width)
+                    embedded_shape = tuple(image_tokens.shape)
+                    embedded_from = image.shape
             tokens.append(image_tokens)
 
             # Image tokens use bidirectional attention
