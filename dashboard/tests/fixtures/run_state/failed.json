@@ -1,0 +1,38 @@
+{
+  "schema_version": 2,
+  "run_id": "20260803-140000-reasoning_grpo",
+  "task_type": "reasoning",
+  "algorithm": {"loss_type": "grpo", "adv_type": "grpo"},
+  "state": "failed",
+  "phase": "train",
+  "phase_since": "2026-08-03T14:12:30Z",
+  "components": {},
+  "heartbeat_at": "2026-08-03T14:12:48Z",
+  "heartbeat_seq": 152,
+  "last_progress_at": "2026-08-03T14:12:30Z",
+  "last_metric_at": "2026-08-03T14:12:30Z",
+  "progress": {
+    "step": 44,
+    "max_steps": 800,
+    "epoch": null,
+    "step_semantics": "minibatch"
+  },
+  "timing": {
+    "started_at": "2026-08-03T14:00:00Z",
+    "elapsed_s": 768.0,
+    "step_time_p50": 15.2,
+    "step_time_recent": [15.0, 15.4],
+    "eta_s": null,
+    "eta_confidence": "low"
+  },
+  "latest_checkpoint": null,
+  "paths": {
+    "tensorboard": "/logs/reasoning_grpo/tensorboard",
+    "video_root": null
+  },
+  "cluster": {"num_nodes": 2, "component_placement": {}},
+  "exit": {
+    "reason": "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB",
+    "traceback_tail": "  File \"rlinf/workers/actor/fsdp_actor.py\", line 412, in training_step\n    loss.backward()\ntorch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB"
+  }
+}
