@@ -13,6 +13,10 @@
      - 在多个节点上启动训练。
    * - :doc:`异构集群 <../hetero>`
      - 配置混合硬件与节点分组。
+   * - :doc:`远程渲染 <../remote_render>`
+     - 物理仿真留在本地，把 MuJoCo 仿真器的渲染放到 GPU 机器上。
+   * - :doc:`远程仿真 <../remote_env>`
+     - 把整个仿真器放到 GPU 机器上运行，例如在昇腾 NPU 主机上训练 ManiSkill。
    * - :doc:`云边协同 <../cloud_edge>`
      - 在云端与边缘之间拆分推理与训练。
    * - :doc:`真机机器人 <../realworld_robot>`
@@ -25,6 +29,8 @@
 
    多节点训练 <../multi_node>
    异构集群 <../hetero>
+   远程渲染 <../remote_render>
+   远程仿真 <../remote_env>
    云边协同 <../cloud_edge>
    真机机器人 <../realworld_robot>
    遥操作 <../teleoperation>

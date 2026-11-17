@@ -223,6 +223,10 @@ def _worker(
             elif cmd == "set_camera_rendering":
                 _set_camera_rendering(env, data)
                 p.send(None)
+            elif cmd == "remote_render_times":
+                from heteropulse.render.robosuite import session_times
+
+                p.send(session_times())
             else:
                 p.close()
                 raise NotImplementedError
@@ -301,6 +305,13 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
             self.workers[i].parent_remote.send(["reset_memory_progress", None])
         for i in id:
             self.workers[i].parent_remote.recv()
+
+    def remote_render_times(self) -> list[tuple[float, float, float]]:
+        """Each worker's :func:`heteropulse.render.robosuite.session_times`."""
+        self._assert_is_not_closed()
+        for worker in self.workers:
+            worker.parent_remote.send(["remote_render_times", None])
+        return [worker.parent_remote.recv() for worker in self.workers]
 
     def set_camera_rendering(self, enabled: bool, id=None):
         self._assert_is_not_closed()
