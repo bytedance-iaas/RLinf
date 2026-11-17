@@ -552,8 +552,6 @@ def compute_raw_advantages(
 
     # Simple baseline subtraction (mean of valid advantages)
     if normalize_advantages:
-        valid = advantages[loss_mask.bool()]
-        if valid.numel() > 0:
-            advantages = (advantages - valid.mean()) / (valid.std() + 1e-5)
+        advantages = safe_normalize(advantages, loss_mask.bool())
 
     return advantages, None
