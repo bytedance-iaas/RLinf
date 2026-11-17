@@ -81,6 +81,15 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         )
         self.rollout_store = PriorityStore(maxsize=self.rollout_store_size)
 
+    def _rescores_prev_logprobs(self) -> bool:
+        """Whether the training forward takes and re-slices the rollout's logprobs."""
+        return SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.GR00T,
+            SupportedModel.GR00T_N1D6,
+            SupportedModel.GR00T_N1D7,
+            SupportedModel.ABOT_M0,
+        ]
+
     async def recv_rollout_trajectories(self, input_channel):
         # drain channel
         if getattr(self, "_recv_queue", None) is None:
@@ -248,10 +257,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                     self.cfg.rollout.sampling_params.temperature_train
                 )
                 model_kwargs["top_k"] = self.cfg.rollout.sampling_params.top_k
-            elif SupportedModel(self.cfg.actor.model.model_type) in [
-                SupportedModel.GR00T,
-                SupportedModel.ABOT_M0,
-            ]:
+            elif self._rescores_prev_logprobs():
                 model_kwargs["prev_logprobs"] = micro_batch["prev_logprobs"]
 
             out = self.model(
@@ -379,10 +385,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                             self.cfg.rollout.sampling_params.temperature_train
                         )
                         model_kwargs["top_k"] = self.cfg.rollout.sampling_params.top_k
-                    elif SupportedModel(self.cfg.actor.model.model_type) in [
-                        SupportedModel.GR00T,
-                        SupportedModel.ABOT_M0,
-                    ]:
+                    elif self._rescores_prev_logprobs():
                         model_kwargs["prev_logprobs"] = old_logprobs
 
                     compute_values = self.cfg.algorithm.adv_type == "gae"
@@ -397,11 +400,16 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                             **model_kwargs,
                         )
 
-                    if SupportedModel(self.cfg.actor.model.model_type) in [
-                        SupportedModel.GR00T,
-                        SupportedModel.ABOT_M0,
-                    ]:
+                    if self._rescores_prev_logprobs():
                         old_logprobs = out["prev_logprobs"]
+                        if versions is not None and versions.dim() > old_logprobs.dim():
+                            # The forward keeps one denoise step of the rollout's
+                            # logprobs; a sample's version is the same in every slot.
+                            versions = (
+                                versions.flatten(1)[:, 0]
+                                .view(-1, *([1] * (old_logprobs.dim() - 1)))
+                                .expand_as(old_logprobs)
+                            )
 
                     loss_kwargs = {
                         "loss_type": self.cfg.algorithm.loss_type,
