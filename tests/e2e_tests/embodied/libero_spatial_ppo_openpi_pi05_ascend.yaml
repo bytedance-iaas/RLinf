@@ -33,6 +33,11 @@ runner:
   val_check_interval: -1
   save_interval: -1
 
+  # Declared so a run can resume or evaluate a saved checkpoint without editing
+  # the file: runner.resume_dir=<...>/checkpoints/global_step_N, runner.ckpt_path=<...>.pt
+  resume_dir: null
+  ckpt_path: null
+
 algorithm:
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty

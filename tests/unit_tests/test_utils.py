@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import importlib.util
 import inspect
@@ -584,6 +585,24 @@ class _StubRunner:
     _is_complete_checkpoint = ReasoningRunner._is_complete_checkpoint
 
 
+class _StubReporter:
+    """The run-state surface ``_save_checkpoint`` touches, recording nothing.
+
+    The runner wraps the save in ``reporter.phase`` and appends to the
+    checkpoint index afterwards, so a stub runner needs both to get through it.
+    """
+
+    def __init__(self):
+        self.checkpoints = []
+
+    @contextlib.contextmanager
+    def phase(self, _name: str):
+        yield
+
+    def record_checkpoint(self, **kwargs):
+        self.checkpoints.append(kwargs)
+
+
 class _ImmediateHandle:
     def wait(self):
         return None
@@ -640,6 +659,7 @@ def _saving_runner(tmp_path: Path) -> _StubRunner:
     runner.global_steps = 8
     runner.actor = _Actor()
     runner.train_dataloader = _Dataloader()
+    runner.reporter = _StubReporter()
     return runner
 
 
@@ -1348,3 +1368,65 @@ def test_pinned_offload_skips_pinning_for_musa_tensors(monkeypatch):
         result = source.to("cpu")
     assert not result.is_pinned()
     torch.testing.assert_close(result.as_subclass(torch.Tensor), torch.ones(2))
+
+
+class _FakePlatform:
+    def __init__(self, available=True, device=3):
+        self._available = available
+        self._device = device
+
+    def is_available(self):
+        return self._available
+
+    def current_device(self):
+        return self._device
+
+
+def _record_barrier(monkeypatch, backend, platform):
+    """Point rlinf.utils.utils.barrier at a recording torch.distributed."""
+    from rlinf.scheduler import Worker
+
+    calls = []
+    monkeypatch.setattr(
+        "rlinf.utils.utils.torch.distributed.get_backend", lambda group=None: backend
+    )
+    monkeypatch.setattr(
+        "rlinf.utils.utils.torch.distributed.barrier",
+        lambda group=None, **kwargs: calls.append((group, kwargs)),
+    )
+    monkeypatch.setattr(Worker, "torch_platform", platform)
+    return calls
+
+
+@pytest.mark.parametrize("backend", ["hccl", "nccl", "mccl"])
+def test_barrier_names_the_device_on_accelerator_backends(monkeypatch, backend):
+    from rlinf.utils.utils import barrier
+
+    calls = _record_barrier(monkeypatch, backend, _FakePlatform(device=3))
+
+    barrier()
+
+    assert calls == [(None, {"device_ids": [3]})]
+
+
+@pytest.mark.parametrize("backend", ["gloo", "mpi"])
+def test_barrier_omits_device_ids_on_host_backends(monkeypatch, backend):
+    # A gloo group rejects device_ids outright: "No backend type associated
+    # with device type npu".
+    from rlinf.utils.utils import barrier
+
+    calls = _record_barrier(monkeypatch, backend, _FakePlatform(device=3))
+
+    barrier(group="a-gloo-group")
+
+    assert calls == [("a-gloo-group", {})]
+
+
+def test_barrier_omits_device_ids_without_an_accelerator(monkeypatch):
+    from rlinf.utils.utils import barrier
+
+    calls = _record_barrier(monkeypatch, "hccl", _FakePlatform(available=False))
+
+    barrier()
+
+    assert calls == [(None, {})]

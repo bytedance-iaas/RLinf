@@ -62,6 +62,7 @@ from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
 )
 from rlinf.utils.utils import (
+    barrier,
     clear_memory,
     compute_entropy_from_logits,
     compute_logprobs_from_logits,
@@ -257,7 +258,7 @@ class FSDPActor(FSDPModelManager, Worker):
         if self.enable_offload and not self.is_weight_offloaded:
             self.offload_param_and_grad()
 
-        torch.distributed.barrier()
+        barrier()
 
     @Worker.timer("actor/sync_model_to_rollout")
     def sync_model_to_rollout(self):

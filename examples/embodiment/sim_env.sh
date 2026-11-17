@@ -4,8 +4,16 @@
 # ROBOTWIN_PATH and DREAMZERO_PATH are added to PYTHONPATH only when set.
 
 setup_sim_env() {
-    export MUJOCO_GL="${MUJOCO_GL:-egl}"
-    export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
+    # Hosts without a display GPU have no EGL, and MuJoCo then fails at import
+    # rather than falling back. Ascend nodes are the case in the tree today, so
+    # default them to software rendering; an explicit MUJOCO_GL still wins.
+    local default_gl="egl"
+    if compgen -G "/dev/davinci[0-9]*" > /dev/null \
+        && [ ! -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json ]; then
+        default_gl="osmesa"
+    fi
+    export MUJOCO_GL="${MUJOCO_GL:-${default_gl}}"
+    export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-${default_gl}}"
 
     export OMNIGIBSON_NO_OMNI_LOGS="${OMNIGIBSON_NO_OMNI_LOGS:-1}"
     export OMNIGIBSON_DEBUG="${OMNIGIBSON_DEBUG:-0}"

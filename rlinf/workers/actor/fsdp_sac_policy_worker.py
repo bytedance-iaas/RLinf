@@ -43,7 +43,7 @@ from rlinf.utils.nested_dict_process import (
     put_tensor_device,
     split_dict_to_chunk,
 )
-from rlinf.utils.utils import clear_memory, collect_param_names_need_sync
+from rlinf.utils.utils import barrier, clear_memory, collect_param_names_need_sync
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -141,11 +141,16 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         alpha_type = self.cfg.algorithm.entropy_tuning.get(
             "alpha_type", "softplus"
         )  # supported type: ["softplus","exp","fixed_alpha"]
+        # fp32, not the model's dtype: the temperature is one scalar with its
+        # own optimizer, so keeping it in full precision costs nothing and bf16
+        # carries too few digits for an lr of 1e-4. It also keeps the backward
+        # off a bf16 softplus, which CANN has no kernel for ("Tensor gradOutput
+        # not implemented for DT_BFLOAT16" from aclnnSoftplusBackward).
         self.entropy_temp = EntropyTemperature(
             initial_alpha=self.cfg.algorithm.entropy_tuning.get("initial_alpha", 0.01),
             alpha_type=alpha_type,
             device=self.device,
-            dtype=self.torch_dtype,
+            dtype=torch.float32,
         )
         if alpha_type != "fixed_alpha":
             self.target_entropy = self.cfg.algorithm.entropy_tuning.get(
@@ -750,7 +755,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         mean_metric_dict = self.process_train_metrics(metrics)
 
         Worker.torch_platform.synchronize()
-        torch.distributed.barrier()
+        barrier()
         Worker.torch_platform.empty_cache()
         return mean_metric_dict
 
