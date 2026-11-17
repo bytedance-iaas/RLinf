@@ -7,6 +7,9 @@ kernel_meta/
 *.txt
 !requirements/**
 !docs/*
+# Helm renders templates/NOTES.txt as the post-install message, so it is chart
+# source rather than a stray text file.
+!docker/charts/**/templates/NOTES.txt
 *.DS_Store
 *.out
 build
