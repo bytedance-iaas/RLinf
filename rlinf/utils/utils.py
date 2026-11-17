@@ -232,6 +232,39 @@ def barrier(group=None) -> None:
     torch.distributed.barrier(group=group, device_ids=[platform.current_device()])
 
 
+def configure_determinism(cfg, rank: int = 0) -> int:
+    """Seed a worker, and optionally ask torch for deterministic kernels.
+
+    Without this every run draws a different RNG stream, so two runs of the
+    same config diverge and no GPU-vs-NPU comparison is possible. Ranks are
+    offset from the base seed so they keep drawing different noise while the
+    run as a whole stays reproducible.
+
+    ``runner.deterministic`` (default False) additionally selects deterministic
+    kernels where torch has them, in ``warn_only`` mode: an op without a
+    deterministic implementation warns instead of raising, so a run never dies
+    on a kernel the backend does not provide.
+
+    Args:
+        cfg: The full run config.
+        rank (int): Worker rank, added to the base seed.
+
+    Returns:
+        int: The seed applied to this worker.
+    """
+    from omegaconf import OmegaConf
+
+    base_seed = OmegaConf.select(cfg, "actor.seed", default=None)
+    if base_seed is None:
+        base_seed = OmegaConf.select(cfg, "runner.seed", default=0)
+    seed = seed_everything(int(base_seed) + int(rank))
+
+    if OmegaConf.select(cfg, "runner.deterministic", default=False):
+        torch.use_deterministic_algorithms(True, warn_only=True)
+
+    return seed
+
+
 def retrieve_model_state_dict_in_cpu(
     resident_model, offloaded_buffer=None, is_fsdp: bool = False
 ):

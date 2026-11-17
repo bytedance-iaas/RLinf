@@ -4547,6 +4547,8 @@ def test_rollout_value_only_bootstrap_checks_policy_capability_and_config(monkey
 
     def _make_worker(policy_cls):
         worker = object.__new__(MultiStepRolloutWorker)
+        # init_worker seeds the worker by its rank.
+        worker._rank = 0
         worker.model_cfg = OmegaConf.create({"model_type": "openvla"})
         worker.cfg = OmegaConf.create(
             {

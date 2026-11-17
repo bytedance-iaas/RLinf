@@ -50,6 +50,10 @@ runner:
   val_check_interval: -1
   save_interval: -1
 
+  # Declared so runner.deterministic=True can be set from the command line when
+  # comparing two runs, or a GPU run against an NPU one.
+  deterministic: False
+
 algorithm:
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
