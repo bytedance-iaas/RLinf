@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "run_id": "20260803-133000-nccl_hang",
+  "task_type": "embodied",
+  "algorithm": {"loss_type": "decoupled_actor_critic", "adv_type": "gae"},
+  "state": "running",
+  "phase": "train",
+  "phase_since": "2026-08-03T13:41:12Z",
+  "components": {},
+  "heartbeat_at": "2026-08-03T14:31:07Z",
+  "heartbeat_seq": 6012,
+  "last_progress_at": "2026-08-03T13:41:12Z",
+  "last_metric_at": "2026-08-03T13:41:12Z",
+  "progress": {
+    "step": 88,
+    "max_steps": 1000,
+    "epoch": 88,
+    "step_semantics": "rl_iteration"
+  },
+  "timing": {
+    "started_at": "2026-08-03T13:10:30Z",
+    "elapsed_s": 4837.0,
+    "step_time_p50": 34.1,
+    "step_time_recent": [33.9, 34.2, 34.1],
+    "eta_s": 31100.0,
+    "eta_confidence": "medium"
+  },
+  "latest_checkpoint": {
+    "step": 80,
+    "path": "/logs/nccl_hang/checkpoints/global_step_80",
+    "saved_at": "2026-08-03T13:38:02Z",
+    "size_bytes": 12884901888,
+    "resume_dir": "/logs/nccl_hang/checkpoints/global_step_80",
+    "entry_script": "examples/embodiment/train_embodied_agent.py",
+    "config_name": "libero_spatial_async_ppo_openpi_pi05_best_4gpu"
+  },
+  "paths": {
+    "tensorboard": "/logs/nccl_hang/tensorboard",
+    "video_root": "/logs/nccl_hang/video"
+  },
+  "cluster": {"num_nodes": 1, "component_placement": {"actor": "0-3"}},
+  "exit": null
+}
