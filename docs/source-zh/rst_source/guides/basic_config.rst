@@ -124,6 +124,8 @@ runner
      - 保存 checkpoint 的步数间隔。
    * - ``runner.seq_length``
      - 输入到模型的总序列长度（提示 + 生成）。
+   * - ``runner.deterministic``
+     - 在 torch 提供确定性实现的算子上启用它（``warn_only`` 模式，没有确定性实现的算子只告警、不报错）。默认 ``False``。无论是否开启都会按 ``actor.seed`` 播种，这一项只消除算子本身的逐次抖动。
 
 algorithm
 ~~~~~~~~~~~~~~~
@@ -262,7 +264,7 @@ actor
    * - ``actor.model.megatron_checkpoint``
      - 训练前加载的模型 Megatron checkpoint 路径。
    * - ``actor.seed``
-     - 全局随机种子，便于复现。
+     - 全局随机种子，便于复现。具身场景下每个 worker 都会用「该值 + 自身 rank」播种 Python、NumPy、torch 与加速器，使各 rank 的噪声互不相同，而整次运行仍可重复。
 
 reward
 ~~~~~~~~~~~~~~~
