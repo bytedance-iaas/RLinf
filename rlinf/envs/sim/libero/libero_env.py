@@ -195,7 +195,10 @@ class LiberoEnv(gym.Env):
         )
         self._init_history()
 
+        self._remote_render = self._remote_render_options()
         self._init_env()
+        # Per simulator process: remote render seconds already reported.
+        self._render_times_seen = np.zeros((self.num_envs, 3))
 
         self.prev_step_reward = np.zeros(self.num_envs)
         self.use_rel_reward = cfg.use_rel_reward
@@ -249,18 +252,34 @@ class LiberoEnv(gym.Env):
         env_fns = self.get_env_fns()
         self.env = ReconfigureSubprocEnv(env_fns, is_libero_mem=self.is_libero_mem)
 
+    def _remote_render_options(self) -> dict | None:
+        """Arguments for ``install_remote_render``, or None to render locally."""
+        remote_render = OmegaConf.select(self.cfg, "remote_render", default=None)
+        if remote_render is None or remote_render.get("address") is None:
+            return None
+        return {
+            "address": str(remote_render.address),
+            "connect_timeout_s": float(remote_render.get("connect_timeout_s", 30.0)),
+            "request_timeout_s": float(remote_render.get("request_timeout_s", 300.0)),
+            "quickack": bool(remote_render.get("quickack", False)),
+        }
+
     def get_env_fns(self) -> list[Callable[[], gym.Env]]:
         """Return simulator constructors for the current task assignments."""
         env_fn_params = self.get_env_fn_params()
         env_fns = []
 
         current_type_val = get_libero_type()
+        remote_render = self._remote_render
 
         for env_fn_param in env_fn_params:
-
+            # env_fn runs in a spawned simulator process. Calling a function of
+            # this module from it would make cloudpickle import the module, and
+            # with it the accelerator stack, in that process.
             def env_fn(
                 param: dict[str, Any] = env_fn_param,
                 _type_val: str = current_type_val,
+                _remote_render: dict[str, Any] | None = remote_render,
             ) -> gym.Env:
                 os.environ["LIBERO_TYPE"] = _type_val
                 seed = param.pop("seed")
@@ -303,7 +322,20 @@ class LiberoEnv(gym.Env):
                 else:
                     from libero.libero.envs import OffScreenRenderEnv as WorkerEnv
 
+                if _remote_render is not None:
+                    from heteropulse.render.robosuite import (
+                        install_remote_render,
+                        renders_remotely,
+                    )
+
+                    install_remote_render(**_remote_render)
                 env = WorkerEnv(**param)
+                if _remote_render is not None and not renders_remotely(env):
+                    raise RuntimeError(
+                        "env.remote_render is set, but this LIBERO build created "
+                        "its render context where install_remote_render() does "
+                        "not reach, so it would render locally"
+                    )
                 env.seed(seed)
                 return env
 
@@ -533,6 +565,27 @@ class LiberoEnv(gym.Env):
         self.task_descriptions = task_descriptions
         self._pert_init_folders = pert_init_folders
         return env_fn_params
+
+    def transport_times(self) -> dict[str, float]:
+        """Seconds spent in remote render requests since the last call.
+
+        Averaged over the simulator processes, which render in parallel, so the
+        values sit on the scale of ``env_interact_step``. ``remote_render_queue``
+        is the part of the server's time a frame waited for a GL thread, and
+        ``remote_render_transfer`` the network and both ends' encoding. Empty
+        when frames are rendered locally.
+        """
+        if self._remote_render is None:
+            return {}
+        totals = np.asarray(self.env.remote_render_times(), dtype=np.float64)
+        round_trip, server, render = (totals - self._render_times_seen).mean(axis=0)
+        self._render_times_seen = totals
+        return {
+            "remote_render_round_trip": float(round_trip),
+            "remote_render_server": float(server),
+            "remote_render_queue": float(server - render),
+            "remote_render_transfer": float(round_trip - server),
+        }
 
     def _compute_total_num_group_envs(self) -> None:
         self.total_num_group_envs = 0

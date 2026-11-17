@@ -14,6 +14,10 @@ connect RLinf to physical hardware.
      - Launch a run across multiple nodes.
    * - :doc:`Heterogeneous Clusters <../hetero>`
      - Configure mixed hardware and node groups.
+   * - :doc:`Remote Rendering <../remote_render>`
+     - Render a MuJoCo simulator on a GPU machine while physics stays local.
+   * - :doc:`Remote Simulators <../remote_env>`
+     - Run a whole simulator on a GPU machine, such as ManiSkill for Ascend NPU hosts.
    * - :doc:`Cloud-Edge Collaboration <../cloud_edge>`
      - Split inference and training across cloud and edge.
    * - :doc:`Real-World Robots <../realworld_robot>`
@@ -26,6 +30,8 @@ connect RLinf to physical hardware.
 
    Multi-Node Training <../multi_node>
    Heterogeneous Clusters <../hetero>
+   Remote Rendering <../remote_render>
+   Remote Simulators <../remote_env>
    Cloud-Edge Collaboration <../cloud_edge>
    Real-World Robots <../realworld_robot>
    Teleoperation <../teleoperation>

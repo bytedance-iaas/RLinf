@@ -14,6 +14,7 @@
 
 import asyncio
 import copy
+import functools
 from collections import defaultdict
 from typing import Any
 
@@ -238,7 +239,7 @@ class EnvWorker(Worker):
         self.update_env_cfg()
 
         if self.enable_train:
-            train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
+            train_env_cls = self._env_cls(self.cfg.env.train, "train")
             self.env_list = self._setup_env_and_wrappers(
                 env_cls=train_env_cls,
                 env_cfg=self.cfg.env.train,
@@ -250,7 +251,7 @@ class EnvWorker(Worker):
                 ), "train envs must have an offload method to enable offload!"
 
         if self.enable_eval:
-            eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
+            eval_env_cls = self._env_cls(self.cfg.env.eval, "eval")
             self.eval_env_list = self._setup_env_and_wrappers(
                 env_cls=eval_env_cls,
                 env_cfg=self.cfg.env.eval,
@@ -271,6 +272,35 @@ class EnvWorker(Worker):
 
         self._init_env()
         self._attach_media_index()
+
+    @staticmethod
+    def _env_cls(env_cfg: DictConfig, split: str):
+        """What this worker builds a split's envs with.
+
+        A split that names an env server gets a proxy, and the simulator never
+        loads in this process; the server spreads one split's proxies over its
+        GPUs.
+        """
+        if OmegaConf.select(env_cfg, "remote.address", default=None) is not None:
+            from rlinf.envs.remote.env_client import RemoteEnv
+
+            return functools.partial(RemoteEnv, split=split)
+        return get_env_cls(env_cfg.env_type, env_cfg)
+
+    def _record_transport_times(self, env, prefix: str = "") -> None:
+        """Add the time a remote simulator's calls took to this step's timers.
+
+        They are logged next to ``env_interact_step`` and split the env time
+        into the server's work and the round trip around it. Evaluation passes
+        ``prefix="eval_"``: an evaluation runs inside a training step, and
+        under the same keys its rollout would be counted as that step's.
+        """
+        transport_times = get_env_attr(env, "transport_times")
+        if not callable(transport_times):
+            return
+        for tag, seconds in transport_times().items():
+            key = f"env/{prefix}{tag}"
+            self._timer_metrics[key] = self._timer_metrics.get(key, 0.0) + seconds
 
     def _attach_media_index(self):
         """Give each video-recording env a shard of the control-plane media index.
@@ -1226,6 +1256,8 @@ class EnvWorker(Worker):
                         actions,
                         stage_id,
                     )
+                    self._record_transport_times(self.env_list[stage_id])
+
                     if self.enable_online_lerobot:
                         chunk_step_data["initial_observation"] = initial_observation
                     # Delay the next observation without blocking other worker tasks.
@@ -1369,6 +1401,9 @@ class EnvWorker(Worker):
                         raw_chunk_actions = np.asarray(raw_chunk_actions)
                     env_output, env_info = self.env_evaluate_step(
                         raw_chunk_actions, stage_id
+                    )
+                    self._record_transport_times(
+                        self.eval_env_list[stage_id], prefix="eval_"
                     )
 
                     for key, value in env_info.items():

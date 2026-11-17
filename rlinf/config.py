@@ -1186,6 +1186,107 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
     )
 
 
+def _check_remote_address(key: str, address) -> None:
+    """Check that ``address`` reads as ``host:port``.
+
+    Remote simulation runs through the optional heteropulse package, imported
+    only for a split that sets an address.
+    """
+    try:
+        from heteropulse.transport import parse_address
+    except ImportError as exc:
+        raise ImportError(
+            f"{key} is set, which needs the heteropulse package on every node: "
+            "pip install heteropulse"
+        ) from exc
+    parse_address(address)
+
+
+# Simulators that render through robosuite's offscreen context, which
+# ``env.<split>.remote_render`` replaces.
+REMOTE_RENDER_ENV_TYPES = frozenset({SupportedEnvType.LIBERO})
+
+
+def validate_remote_render_env_cfg(cfg: DictConfig) -> None:
+    """Check ``env.<split>.remote_render`` on the splits that set an address.
+
+    Remote rendering replaces robosuite's render context in the simulator
+    processes, so it applies only to simulators built on robosuite.
+    """
+    for split in ("train", "eval"):
+        env_cfg = cfg.env.get(split, None)
+        if env_cfg is None:
+            continue
+        remote_render = env_cfg.get("remote_render", None)
+        if remote_render is None or remote_render.get("address", None) is None:
+            continue
+        env_type = SupportedEnvType(env_cfg.env_type)
+        assert env_type in REMOTE_RENDER_ENV_TYPES, (
+            f"env.{split}.remote_render supports env_type "
+            f"{sorted(t.value for t in REMOTE_RENDER_ENV_TYPES)}, got "
+            f"{env_type.value!r}"
+        )
+        _check_remote_address(
+            f"env.{split}.remote_render.address", remote_render.address
+        )
+
+
+# Simulators an env server has run end to end.
+REMOTE_ENV_TYPES = frozenset({SupportedEnvType.LIBERO, SupportedEnvType.MANISKILL})
+
+
+def validate_remote_env_cfg(cfg: DictConfig) -> None:
+    """Check ``env.<split>.remote`` on the splits that name an env server.
+
+    A remote env returns the last step of each chunk and lives behind a proxy,
+    so features that read every step of a chunk or wrap the simulator object
+    are refused rather than left to run on partial data.
+    """
+    reward_cfg = cfg.get("reward", {}) or {}
+    external_reward_model = bool(reward_cfg.get("use_reward_model", False)) and not (
+        reward_cfg.get("standalone_realworld", False)
+    )
+    online_lerobot = bool(
+        OmegaConf.select(cfg, "algorithm.dagger.online_lerobot.enabled", default=False)
+    )
+    for split in ("train", "eval"):
+        env_cfg = cfg.env.get(split, None)
+        if env_cfg is None:
+            continue
+        address = OmegaConf.select(env_cfg, "remote.address", default=None)
+        if address is None:
+            continue
+        env_type = SupportedEnvType(env_cfg.env_type)
+        assert env_type in REMOTE_ENV_TYPES, (
+            f"env.{split}.remote supports env_type "
+            f"{sorted(t.value for t in REMOTE_ENV_TYPES)}, got {env_type.value!r}"
+        )
+        _check_remote_address(f"env.{split}.remote.address", address)
+        assert (
+            OmegaConf.select(env_cfg, "remote_render.address", default=None) is None
+        ), (
+            f"env.{split}.remote and env.{split}.remote_render are exclusive: a "
+            "remote env renders on the machine it runs on"
+        )
+        conflicts = {
+            "video_cfg.save_video": bool(
+                OmegaConf.select(env_cfg, "video_cfg.save_video", default=False)
+            ),
+            "data_collection.enabled": bool(
+                OmegaConf.select(env_cfg, "data_collection.enabled", default=False)
+            ),
+            "enable_offload": bool(env_cfg.get("enable_offload", False)),
+            "reward.use_reward_model": external_reward_model,
+            "algorithm.dagger.online_lerobot.enabled": online_lerobot
+            and split == "train",
+        }
+        enabled = sorted(name for name, on in conflicts.items() if on)
+        assert not enabled, (
+            f"env.{split}.remote cannot run with {enabled}: they need every step "
+            "of a chunk or the simulator object itself, which stay on the server"
+        )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1829,6 +1930,8 @@ def validate_embodied_cfg(cfg):
                 )
 
     validate_online_lerobot_env_cfg(cfg)
+    validate_remote_render_env_cfg(cfg)
+    validate_remote_env_cfg(cfg)
     validate_weight_sync_overlap_cfg(cfg)
     return cfg
 
