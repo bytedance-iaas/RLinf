@@ -1348,7 +1348,8 @@ def test_vla_sft_checkpoint_restores_data_order_and_rng(tmp_path, monkeypatch):
         gathered[0] = state
 
     monkeypatch.setattr(torch.distributed, "all_gather_object", gather_object)
-    monkeypatch.setattr(torch.distributed, "barrier", lambda: None)
+    monkeypatch.setattr(torch.distributed, "barrier", lambda *args, **kwargs: None)
+    monkeypatch.setattr(torch.distributed, "get_backend", lambda group=None: "gloo")
 
     def make_worker():
         dataset = torch.arange(40)

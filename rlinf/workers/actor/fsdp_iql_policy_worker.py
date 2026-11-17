@@ -28,7 +28,7 @@ from rlinf.models.embodiment.mlp_policy.iql_mlp_policy import (
     IQLTwinCritic,
 )
 from rlinf.scheduler import Worker
-from rlinf.utils.utils import collect_param_names_need_sync
+from rlinf.utils.utils import collect_param_names_need_sync, seed_everything
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -164,24 +164,24 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
                 self._save_dir = os.path.join(log_path, exp_name)
             else:
                 self._save_dir = "."
-        torch.manual_seed(self._seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(self._seed)
-        np.random.seed(self._seed)
+        seed_everything(self._seed)
+        accelerator = self.torch_platform
+        has_accelerator = accelerator is not None and accelerator.is_available()
+        device_type = self.torch_device_type if has_accelerator else "cpu"
         raw_device = self.device
         if isinstance(raw_device, torch.device):
             self.device = raw_device
         elif isinstance(raw_device, int):
             self.device = (
-                torch.device(f"cuda:{raw_device}")
-                if torch.cuda.is_available()
+                torch.device(f"{device_type}:{raw_device}")
+                if has_accelerator
                 else torch.device("cpu")
             )
         elif raw_device is None:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.device = torch.device(device_type)
         else:
             self.device = torch.device(raw_device)
-        if torch.cuda.is_available():
+        if has_accelerator:
             torch.set_float32_matmul_precision("high")
 
         self.discount = float(self.cfg.algorithm.gamma)

@@ -21,7 +21,12 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from rlinf.config import SupportedModel
 from rlinf.data.datasets.common.epoch import forward_set_epoch
 from rlinf.models.embodiment.base_policy import ForwardType
-from rlinf.utils.utils import get_rng_state, seed_everything, set_rng_state
+from rlinf.utils.utils import (
+    barrier,
+    get_rng_state,
+    seed_everything,
+    set_rng_state,
+)
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 
@@ -127,7 +132,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             if self._rank == 0:
                 torch.save(all_states, os.path.join(save_path, "data.pt"))
 
-            torch.distributed.barrier()
+            barrier()
 
             rng_state = get_rng_state()
             all_rng_states = [None] * self._world_size
@@ -135,7 +140,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             if self._rank == 0:
                 torch.save(all_rng_states, os.path.join(save_path, "rng.pt"))
 
-            torch.distributed.barrier()
+            barrier()
 
     def load_checkpoint(self, load_path: str) -> None:
         super().load_checkpoint(load_path)
@@ -158,7 +163,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 all_rng_states = torch.load(rng_path, weights_only=False)
                 set_rng_state(all_rng_states[self._rank])
 
-            torch.distributed.barrier()
+            barrier()
 
     def get_max_steps_per_epoch(self):
         if self.data_loader is None:
