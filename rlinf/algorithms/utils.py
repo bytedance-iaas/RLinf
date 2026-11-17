@@ -478,10 +478,20 @@ def expand_to_target_dim(tensor, target_shape):
 
 
 def safe_normalize(array, loss_mask):
+    """Standardize ``array`` over the entries selected by ``loss_mask``.
+
+    A single valid entry has no spread to divide by. ``Tensor.std()`` applies
+    Bessel's correction by default -- it divides by ``n - 1`` -- so for
+    ``n == 1`` it returns NaN rather than 0. The epsilon below absorbs a zero
+    std but not a NaN, so that NaN would reach the policy loss and every
+    gradient derived from it.
+    """
     valid_array = array[loss_mask]
     if len(valid_array) > 0:
         mean = valid_array.mean()
-        std = valid_array.std()
+        # ``numel``, not ``len``: with ``loss_mask=None`` the selection above is
+        # an unsqueeze, whose first dimension is 1 however many elements it holds.
+        std = valid_array.std() if valid_array.numel() > 1 else torch.zeros_like(mean)
         array = (array - mean) / (std + 1e-5)
 
     return array
