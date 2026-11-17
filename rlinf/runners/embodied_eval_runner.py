@@ -21,6 +21,7 @@ from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics, print_metrics_table
+from rlinf.utils.run_state import attach_reporter
 
 if typing.TYPE_CHECKING:
     from omegaconf.dictconfig import DictConfig
@@ -52,6 +53,15 @@ class EmbodiedEvalRunner:
         self.metric_logger = MetricLogger(cfg)
 
         self.logger = get_logger()
+
+        # An eval job is a run too. Without a reporter it appears nowhere in the
+        # dashboard, so a standalone evaluation that crashes on a bad checkpoint
+        # path looks exactly like one that was never launched.
+        #
+        # One step, declared before wiring so the reporter picks up the horizon
+        # and the progress card reads 0/1 rather than 0/unknown.
+        self.max_steps = 1
+        self.reporter = attach_reporter(self, cfg)
 
     def init_workers(self):
         rollout_handle = self.rollout.init_worker()
@@ -91,11 +101,19 @@ class EmbodiedEvalRunner:
         return eval_metrics
 
     def run(self):
+        """Evaluate once, always recording a terminal run state."""
+        with self.reporter.run_lifecycle():
+            return self._run_impl()
+
+    def _run_impl(self):
         start_time = time.time()
-        eval_metrics = self.evaluate()
+        with self.timer("eval"):
+            eval_metrics = self.evaluate()
         eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
         self.logger.info(eval_metrics)
         self.metric_logger.log(step=0, data=eval_metrics)
+        # An eval job is one step, so progress reads 0/1 until it lands.
+        self.reporter.set_progress(step=1, step_duration_s=time.time() - start_time)
         print_metrics_table(
             step=0,
             total_steps=1,
@@ -104,4 +122,5 @@ class EmbodiedEvalRunner:
             log_path=self.metric_logger.log_path,
         )
 
+        # Explicit teardown is safe because MetricLogger.finish() is idempotent.
         self.metric_logger.finish()
