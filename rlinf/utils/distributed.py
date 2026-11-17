@@ -23,6 +23,7 @@ from torch.distributed import ProcessGroup, ReduceOp
 from typing_extensions import Self
 
 from rlinf.scheduler import Tracer, Worker
+from rlinf.scheduler.hardware.accelerators.accelerator import AcceleratorUtil
 from rlinf.utils.timers import NamedTimer
 
 
@@ -76,7 +77,7 @@ def compute_rollout_metrics_dynamic(
     Returns:
         Tuple of (rollout_metrics dict, total_prompt_lengths tensor, total_decode_lengths tensor)
     """
-    device = torch.device(f"cuda:{torch.cuda.current_device()}")
+    device = Worker.torch_platform.current_device()
 
     # Extract basic tensors
     advantages = rollout_batch["advantages"].to(device=device)
@@ -302,7 +303,7 @@ def compute_rollout_metrics(
         min_value = torch.min(values).detach().item()
         reduce_value_tensor = torch.as_tensor(
             [-min_value, max_value],
-            device=torch.cuda.current_device(),
+            device=Worker.torch_platform.current_device(),
             dtype=torch.float32,
         )
         torch.distributed.all_reduce(
@@ -894,6 +895,37 @@ def normalize_tensor(tensor, mask, group=None):
 
 
 @torch.no_grad()
+def all_reduce_wide(
+    tensor: torch.Tensor,
+    op=torch.distributed.ReduceOp.SUM,
+    group: Optional[ProcessGroup] = None,
+) -> torch.Tensor:
+    """All-reduce a tensor the backend may not be able to carry at its width.
+
+    Statistics are accumulated locally in float64 so that a long sum does not
+    drift, but HCCL rejects float64 while NCCL accepts it, so the same code
+    reduces on CUDA and fails on Ascend. The platform says what the collective
+    can carry; only the cross-rank combination narrows, and the result comes
+    back at the caller's width.
+
+    Args:
+        tensor (torch.Tensor): Tensor to reduce, modified in place.
+        op: The reduction operation.
+        group (Optional[ProcessGroup]): The process group to reduce over.
+
+    Returns:
+        torch.Tensor: ``tensor``, reduced.
+    """
+    wire_dtype = AcceleratorUtil.collective_dtype(Worker.accelerator_type, tensor.dtype)
+    if wire_dtype == tensor.dtype:
+        torch.distributed.all_reduce(tensor, op=op, group=group)
+        return tensor
+    narrowed = tensor.to(dtype=wire_dtype)
+    torch.distributed.all_reduce(narrowed, op=op, group=group)
+    tensor.copy_(narrowed)
+    return tensor
+
+
 def masked_normalization(
     x: torch.Tensor,
     mask: Optional[torch.BoolTensor] = None,
@@ -924,7 +956,8 @@ def masked_normalization(
             Normalized x, with the same shape as x.
     """
     dtype = torch.float64 if high_precision else torch.float32
-    x = x.to(dtype=dtype).cuda()
+    device = Worker.torch_platform.current_device()
+    x = x.to(dtype=dtype, device=device)
     if not inplace:
         x = x.clone()
     if dim is None:
@@ -934,7 +967,7 @@ def masked_normalization(
             np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
         )
     else:
-        mask = mask.to(dtype=dtype).cuda()
+        mask = mask.to(dtype=dtype, device=device)
         assert len(mask.shape) == len(x.shape), (mask.shape, x.shape, dim)
         for i in range(len(x.shape)):
             if i in dim:
@@ -947,21 +980,9 @@ def masked_normalization(
     x_sum_sq = x.square().sum(dim=dim, keepdim=True)
 
     if torch.distributed.is_initialized() and all_reduce:
-        torch.distributed.all_reduce(
-            factor,
-            op=torch.distributed.ReduceOp.SUM,
-            group=group,
-        )
-        torch.distributed.all_reduce(
-            x_sum,
-            op=torch.distributed.ReduceOp.SUM,
-            group=group,
-        )
-        torch.distributed.all_reduce(
-            x_sum_sq,
-            op=torch.distributed.ReduceOp.SUM,
-            group=group,
-        )
+        all_reduce_wide(factor, group=group)
+        all_reduce_wide(x_sum, group=group)
+        all_reduce_wide(x_sum_sq, group=group)
     mean = x_sum / factor
     meansq = x_sum_sq / factor
     var = meansq - mean**2
@@ -1015,7 +1036,7 @@ def masked_global_mean_var(values, mask, group=None):
         dtype=torch.float64,
         device=Worker.torch_platform.current_device(),
     )
-    torch.distributed.all_reduce(sum_and_count, group=group)
+    all_reduce_wide(sum_and_count, group=group)
     global_sum, global_count = sum_and_count
     global_mean = global_sum / global_count
     variance_summed = (
@@ -1024,7 +1045,7 @@ def masked_global_mean_var(values, mask, group=None):
         .to(device=Worker.torch_platform.current_device(), dtype=torch.float64)
     )
 
-    torch.distributed.all_reduce(variance_summed, group=group)
+    all_reduce_wide(variance_summed, group=group)
 
     return global_mean, variance_summed / global_count
 
