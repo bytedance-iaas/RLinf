@@ -14,6 +14,7 @@
 
 import itertools
 import logging
+import time
 import typing
 from typing import Optional, Union
 
@@ -205,6 +206,15 @@ class AgentRunner(ReasoningRunner):
         return rollout_metrics, training_metrics, durations
 
     def run(self):
+        """Run training, always recording a terminal run state.
+
+        Overrides ``ReasoningRunner.run``, so the lifecycle shell is repeated
+        here rather than inherited.
+        """
+        with self.reporter.run_lifecycle():
+            return self._run_impl()
+
+    def _run_impl(self):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)
         if len(epoch_iter) <= 0 or self.global_steps >= self.max_steps:
             # epoch done
@@ -232,6 +242,7 @@ class AgentRunner(ReasoningRunner):
         try:
             for _ in epoch_iter:
                 for batch in self.train_dataloader:
+                    step_started = time.time()
                     with self.timer("step"):
                         with self.timer("prepare_data"):
                             self._put_batch(batch, self.batch_split_num)
@@ -260,6 +271,11 @@ class AgentRunner(ReasoningRunner):
                         ) = self._run_training(rollout_handle)
                         agent_metrics = rollout_handle.wait()[0]
                         self.global_steps += 1
+                        self.reporter.set_progress(
+                            step=self.global_steps,
+                            epoch=self.epoch,
+                            step_duration_s=time.time() - step_started,
+                        )
 
                         run_time_exceeded = self.run_timer.is_finished()
                         _, save_model, is_train_end = check_progress(
@@ -272,7 +288,11 @@ class AgentRunner(ReasoningRunner):
                         )
 
                         if save_model:
-                            self._save_checkpoint()
+                            self._save_checkpoint(
+                                metrics=actor_training_metrics[-1]
+                                if actor_training_metrics
+                                else None
+                            )
 
                     time_metrics = self.timer.consume_durations()
                     time_metrics.update(training_times)

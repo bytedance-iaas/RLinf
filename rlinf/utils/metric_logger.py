@@ -87,9 +87,6 @@ class _BaseBackend:
         pass
 
 
-class _TensorboardLogger(_BaseBackend):
-    name = "tensorboard"
-
 def _import_summary_writer():
     """Import torch SummaryWriter without dlopening TensorFlow.
 
