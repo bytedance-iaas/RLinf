@@ -39,3 +39,18 @@ openpi:
   # Fused RoPE / GELU kernels. Isaac Sim jobs set this false: their bundled
   # torch cannot compile against the venv Triton.
   torch_compile: True
+
+  # CANN fused kernels for the Gemma stack. Ascend only, ignored elsewhere,
+  # and each stays off until a workload has compared it against the portable
+  # path. npu_fused_rms_norm covers the non-adaptive norms only; the action
+  # expert's adaptive norms keep the explicit float32 affine.
+  npu_fused_attention: False
+  npu_fused_rms_norm: False
+  # npu_fused_rope covers the rotation, not the cos/sin tables: positions come
+  # from a cumulative sum over the validity mask, so the tables depend on the
+  # padding. It therefore helps the long prefix and not the short suffix.
+  npu_fused_rope: False
+
+  # Skip the vision encoder for an IMAGE_KEYS slot a task does not fill. Needs
+  # a frozen encoder, and is platform-independent rather than Ascend-only.
+  skip_masked_images: False

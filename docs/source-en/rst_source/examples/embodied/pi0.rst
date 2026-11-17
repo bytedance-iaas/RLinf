@@ -547,6 +547,68 @@ the common NPU worker and collective paths.
 
 .. include:: _ascend_torch.rst
 
+Two parts of the Gemma stack have CANN kernels that replace what the portable
+path spells out across several operators. Both switches are off by default: the
+portable path is the reference every comparison is checked against, and what a
+kernel is worth depends on the sequence length a workload runs at.
+
+``actor.model.openpi.npu_fused_attention`` routes attention through
+``npu_fusion_attention``. The portable path computes the attention logits in
+float32, compares them against the mask and softmaxes, which materialises
+several tensors shaped ``(batch, kv_heads, groups, queries, keys)``; the fused
+kernel materialises none of them, and it reads the grouped-query layout
+directly, so the KV heads are never expanded to the query head count.
+
+``actor.model.openpi.npu_fused_rms_norm`` routes the non-adaptive norms through
+``npu_rms_norm``. The action expert's adaptive norms keep the portable path:
+they apply their scale and shift in float32 after normalising, and the fused
+kernel returns the input dtype, so routing them through it would round before
+the affine.
+
+``actor.model.openpi.npu_fused_rope`` routes the RoPE rotation through
+``npu_rotary_mul``. Only the rotation moves; the cos and sin tables are still
+built per call, because Pi0.5 derives its positions from a cumulative sum over
+the validity mask and they therefore depend on how much padding a batch
+carries. That is why this one helps the long prefix and not the short suffix,
+where building the tables is the whole cost.
+
+``actor.model.openpi.skip_masked_images`` is not a kernel switch and not
+Ascend-specific. A task that fills fewer than the configured
+``num_images_in_input`` slots still runs the vision encoder over a fully masked
+one, and the encoder's output is then multiplied away. With the encoder frozen
+and a slot of the same shape already embedded, the switch emits zeros for that
+slot instead, which is bit-exact in the prefix and calls the encoder one time
+fewer. It needs a frozen encoder, so it stays off by default.
+
+All four are read from the actor's model config and reach the rollout worker
+through the same merge that carries the rest of ``actor.model``, so one
+override covers both workers:
+
+.. code-block:: bash
+
+   python examples/embodiment/train_embodied_agent.py \
+      --config-name libero_spatial_ppo_openpi_pi05 \
+      actor.model.openpi.npu_fused_attention=true \
+      actor.model.openpi.npu_fused_rms_norm=true \
+      actor.model.openpi.npu_fused_rope=true \
+      actor.model.openpi.skip_masked_images=true
+
+A query row that may attend nowhere is where the two attention paths could
+diverge. The portable path fills masked logits with a large finite negative
+number rather than ``-inf``, so such a row softmaxes to a uniform distribution
+and returns the mean of the values instead of zeros. ``npu_fusion_attention``
+reproduces that behaviour, which is why it is the fused option here;
+``F.scaled_dot_product_attention`` returns zeros for the same input.
+
+None of the three kernel switches is bit-exact, so what they agree to is worth
+knowing before flipping one. Over a fixed LIBERO observation with every random
+draw held fixed, the attention and norm kernels together move the sampled
+actions by a relative L2 of 3.5e-3, the values by 7.5e-3 and the gradients of
+every trainable parameter by 1.1e-2, while the log-probabilities stay at
+1.5e-7 -- that is, the sampled chain is unchanged and the differences are the
+kernels' own rounding. The non-adaptive norm's agreement is a single bfloat16
+ULP of its output.
+
 Moore Threads MUSA
 ~~~~~~~~~~~~~~~~~~
 

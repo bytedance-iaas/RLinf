@@ -78,6 +78,10 @@ env:
     reward_coef: ${algorithm.reward_coef}
     # OSMesa renders on the CPU; render only the frame each action chunk uses.
     skip_intermediate_renders: True
+    # auto_reset is false for train, so every rollout epoch opens with a full
+    # reset of all environments: 15 settling steps whose frames nothing reads
+    # except the last. Worth 1.044x on the iteration here.
+    skip_reset_renders: True
   eval:
     rollout_epoch: 1 # set eval.rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
     total_num_envs: 8
@@ -125,6 +129,25 @@ actor:
     openpi:
       detach_critic_input: True
       value_after_vlm: True
+      # The switches the Ascend numbers come from, measured on this scenario
+      # over three independent runs at four cards: 1.273x together. Isolated
+      # effect on the iteration, each against the same tree with every switch
+      # off, with the 95% interval on the difference:
+      #   attention      1.085x  [-8.54%, -7.10%]
+      #   RMSNorm        1.014x  [-2.08%, -0.76%]
+      #   skipped slot   1.018x  [-2.23%, -1.25%]
+      #   RoPE           1.007x  [-1.50%, +0.09%]  -- crosses zero
+      # The RoPE interval crossing zero means three runs cannot resolve its
+      # effect on the iteration; it is kept on because the stages it acts on do
+      # resolve (rollout/predict -3.5%, actor_training -1.5%) and it is 4.92x on
+      # the prefix rotation itself.
+      # max_token_len stays at the template's 200: shortening it is
+      # worth a further 1.032x but moves the sampled actions, and that needs a
+      # training-behaviour comparison rather than a single-step tolerance.
+      npu_fused_attention: True
+      npu_fused_rms_norm: True
+      npu_fused_rope: True
+      skip_masked_images: True
 
   optim:
     lr: 5.0e-6

@@ -6,7 +6,8 @@ different levels:
 
 - **GPU profiling** (``cluster.profiling``): low-level, system profiling of
   *individual* worker processes. It wraps selected worker groups with a
-  backend-specific profiler (``nsys``/``rocprof-sys``) to capture CUDA kernels,
+  backend-specific profiler (``nsys``/``rocprof-sys``/``torch_npu.profiler``)
+  to capture device kernels,
   memory traffic, NVTX ranges, and CPU activity. Use it to answer "what is one
   GPU/process doing, kernel by kernel?".
 - **Tracing** (``cluster.tracer``): a lightweight, high-level timeline of RLinf's
@@ -23,6 +24,7 @@ command. The backend is selected by the required ``backend`` field:
 
 - ``nsight`` — NVIDIA Nsight Systems (``nsys profile``)
 - ``rocprof_sys`` — AMD ROCm Systems Profiler (``rocprof-sys-python``)
+- ``torch_npu`` — Huawei Ascend, through ``torch_npu.profiler`` in-process
 
 All backends share the same common fields (``enabled``, ``worker_groups``,
 ``steps``, ``output_dir``). Backend-specific options live under their own keys.
@@ -59,7 +61,7 @@ These fields apply to every profiling backend:
      - Description
    * - ``backend``
      - *(required)*
-     - Profiling backend: ``"nsight"`` or ``"rocprof_sys"``.
+     - Profiling backend: ``"nsight"``, ``"rocprof_sys"`` or ``"torch_npu"``.
    * - ``enabled``
      - ``true``
      - Master switch. Set to ``false`` to disable without removing the config.
@@ -398,6 +400,52 @@ Use ``env`` to pass extra environment variables to profiled workers:
 RLinf automatically derives ``ROCPROFSYS_OUTPUT_PATH`` and
 ``ROCPROFSYS_OUTPUT_PREFIX`` from ``output_dir``; values provided in ``env``
 take precedence.
+
+Huawei Ascend: ``torch_npu.profiler`` (``backend: torch_npu``)
+----------------------------------------------------------------
+
+The other two backends wrap the worker's interpreter in a profiler command.
+Ascend works differently: the capture runs inside the worker process, opened
+and closed around the steps the runner was told to profile, so no launcher
+wrapping is involved and the selected steps are the only ones recorded.
+
+.. code-block:: yaml
+
+   cluster:
+     profiling:
+       backend: torch_npu
+       enabled: true
+       worker_groups: [ActorGroup, RolloutGroup]
+       steps: [1]
+
+Each worker process and each profiled step writes its own trace directory
+under ``output_dir``, named after the worker and its pid. The capture records
+host operations and device kernels together; CANN marks the real device work
+with ``Task Type=KERNEL_AICORE`` in ``kernel_details.csv``, which is where a
+kernel-by-kernel breakdown comes from.
+
+Three further switches control what the capture annotates, and each costs
+overhead, so leave them off unless the question needs them:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Field
+     - Description
+   * - ``record_shapes``
+     - Record each operator's input shapes.
+   * - ``profile_memory``
+     - Track tensor allocations.
+   * - ``with_stack``
+     - Record Python call stacks for each operator.
+
+.. warning::
+
+   Traces are large. A single step of one Pi0.5 worker runs to gigabytes, so
+   name one representative rank per group rather than every rank, and keep
+   ``steps`` to a single step. Profiled runs also run slower than unprofiled
+   ones, so do not use them for throughput numbers.
 
 Recommended Workflow
 ------------------------------
