@@ -208,6 +208,13 @@ Common options:
                            installed torch x cuda x python combo; install manually from
                            https://whl.natten.org instead.
     --install-rlinf        Install RLinf itself into the python.
+
+Environment:
+    RLINF_INSTALL_CACHE_DIR  Keep the repositories this script checks out (and the
+                           release archives download_assets.sh fetches) under this
+                           directory, and reuse a checkout while the remote branch or
+                           tag still points at its commit. The Docker build sets it
+                           inside a BuildKit cache mount.
 EOF
 }
 
@@ -2358,6 +2365,71 @@ git_clone_with_retry() {
     return 1
 }
 
+# Prints the commit that REF (a branch or tag, or the default branch when empty)
+# points at on the remote at URL, or nothing when the remote cannot be asked. A
+# branch wins over a tag of the same name, as it does for `git clone -b`.
+remote_ref_commit() {
+    local url="$1" ref="$2" refs
+    if [ -z "$ref" ]; then
+        refs=$(git ls-remote "$url" HEAD 2>/dev/null) || return 0
+        printf '%s\n' "$refs" | awk '$2 == "HEAD" {print $1; exit}'
+        return 0
+    fi
+    # The peeled line of an annotated tag is listed only when asked for.
+    refs=$(git ls-remote "$url" "$ref" "$ref^{}" 2>/dev/null) || return 0
+    printf '%s\n' "$refs" | awk -v r="$ref" '
+        $2 == "refs/heads/" r {head = $1}
+        $2 == "refs/tags/" r "^{}" {peeled = $1}
+        $2 == "refs/tags/" r {tag = $1}
+        END {print (head != "" ? head : (peeled != "" ? peeled : tag))}'
+}
+
+# `git clone` through $RLINF_INSTALL_CACHE_DIR/git. A clone made earlier with
+# the same URL and arguments is copied instead of fetched again when the remote
+# ref still points at its commit, which costs one small request; otherwise this
+# clones as usual and stores a copy. Args: [GIT_CLONE_ARGS...] GIT_URL TARGET_DIR
+git_clone_cached() {
+    local target_dir="${!#}"
+    local git_url="${*: -2:1}"
+    local clone_args=("${@:1:$#-2}")
+    local ref="" prev="" a
+    for a in "${clone_args[@]}"; do
+        case "$prev" in
+            -b|--branch) ref="$a" ;;
+        esac
+        prev="$a"
+    done
+    local cache_root="$RLINF_INSTALL_CACHE_DIR/git" key entry want
+    # The GitHub proxy only picks a route, so it is not part of the key; whether
+    # Git LFS files were fetched is.
+    key=$(printf '%s\n' "${git_url#"${GITHUB_PREFIX:-}"}" "${clone_args[@]}" \
+        "lfs-skip=${GIT_LFS_SKIP_SMUDGE:-0}" | sha256sum | cut -c1-24)
+    entry="$cache_root/$key"
+    want=$(remote_ref_commit "$git_url" "$ref") || want=""
+    if [ -n "$want" ] && [ -d "$entry/.git" ] \
+        && [ "$(git -C "$entry" rev-parse HEAD 2>/dev/null)" = "$want" ]; then
+        mkdir -p "$(dirname "$target_dir")"
+        if cp -a "$entry" "$target_dir" \
+            && [ "$(git -C "$target_dir" rev-parse HEAD 2>/dev/null)" = "$want" ]; then
+            git -C "$target_dir" remote set-url origin "$git_url"
+            echo "[install.sh] Copied the cached clone of ${git_url#"${GITHUB_PREFIX:-}"} at ${want:0:12}."
+            return 0
+        fi
+        rm -rf "$target_dir"
+    fi
+    git_clone_with_retry "$@" || return 1
+    # Replace the entry by rename: an install copying the old entry at the same
+    # time then fails its check above and clones instead of using a mixed tree.
+    local staging
+    mkdir -p "$cache_root" && staging=$(mktemp -d "$cache_root/.tmp.XXXXXX") || return 0
+    if cp -a "$target_dir/." "$staging/"; then
+        mv -T "$entry" "$staging.old" 2>/dev/null || true
+        mv -T "$staging" "$entry" 2>/dev/null || true
+    fi
+    rm -rf "$staging" "$staging.old"
+    return 0
+}
+
 git_clone_shallow() {
     # Shallow git clone. Args: [GIT_CLONE_ARGS...] GIT_URL TARGET_DIR
     #
@@ -2378,7 +2450,11 @@ git_clone_shallow() {
     if [ "$full_clone" -eq 0 ] && [[ " ${args[*]} " != *" --depth "* ]]; then
         args=(--depth 1 "${args[@]}")
     fi
-    git_clone_with_retry "${args[@]}" >&2
+    if [ -n "${RLINF_INSTALL_CACHE_DIR:-}" ]; then
+        git_clone_cached "${args[@]}" >&2
+    else
+        git_clone_with_retry "${args[@]}" >&2
+    fi
 }
 
 clone_or_reuse_repo() {

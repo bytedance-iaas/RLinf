@@ -212,6 +212,9 @@ jobs:
               - 'tests/unit_tests/**'
               - 'tests/conftest.py'
               - '.github/workflows/unit-tests.yml'
+              # test_install.py runs the build caches and the image's venv dedup.
+              - 'requirements/embodied/download_assets.sh'
+              - 'docker/dedup_venvs.py'
               - '.github/scripts/ascend_ci_workspace.sh'
               # ROCm, MUSA, and Ascend unit jobs load these checkpoints.
               - 'rlinf/models/embodiment/openvla/**'

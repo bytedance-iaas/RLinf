@@ -87,6 +87,35 @@ retry_cmd() {
 	done
 }
 
+# Downloads the zip archive at URL to DEST. With RLINF_INSTALL_CACHE_DIR set (the
+# Docker build sets it), the archive is kept under its downloads/ directory,
+# keyed by URL, and later calls copy it from there. Only an archive that passes
+# `unzip -t` is cached, so an error page saved as a zip is fetched again.
+fetch_zip() {
+	local url="$1" dest="$2"
+	if [ -z "${RLINF_INSTALL_CACHE_DIR:-}" ]; then
+		retry_cmd wget -O "$dest" "$url"
+		return
+	fi
+	local key cached partial
+	# The GitHub proxy only picks a route, so it is not part of the key.
+	key=$(printf '%s' "${url#"${GITHUB_PREFIX:-}"}" | sha256sum | cut -c1-16)
+	cached="$RLINF_INSTALL_CACHE_DIR/downloads/${key}-$(basename "$url")"
+	if ! unzip -tq "$cached" >/dev/null 2>&1; then
+		mkdir -p "$(dirname "$cached")"
+		partial=$(mktemp "${cached}.XXXXXX")
+		if ! retry_cmd wget -O "$partial" "$url" || ! unzip -tq "$partial" >/dev/null; then
+			rm -f "$partial"
+			echo "[download_assets] Could not download a valid archive from $url." >&2
+			return 1
+		fi
+		mv -f "$partial" "$cached"
+	else
+		echo "[download_assets] Using the cached copy of ${url#"${GITHUB_PREFIX:-}"}."
+	fi
+	cp "$cached" "$dest"
+}
+
 # Whether the Volcengine object store is usable for asset downloads. It only
 # exists on the internal network, so callers outside it fall back to HuggingFace.
 oniond_available() {
@@ -229,7 +258,7 @@ download_maniskill_assets() {
 		echo "[download_assets] SAPIEN PhysX assets already exist at $PHYSX_DIR, skipping download."
 	else
 		mkdir -p "$PHYSX_DIR"
-		retry_cmd wget -O "$PHYSX_DIR/linux-so.zip" "${GITHUB_PREFIX}https://github.com/sapien-sim/physx-precompiled/releases/download/${PHYSX_VERSION}/linux-so.zip"
+		fetch_zip "${GITHUB_PREFIX}https://github.com/sapien-sim/physx-precompiled/releases/download/${PHYSX_VERSION}/linux-so.zip" "$PHYSX_DIR/linux-so.zip"
 		unzip "$PHYSX_DIR/linux-so.zip" -d "$PHYSX_DIR" && rm "$PHYSX_DIR/linux-so.zip"
 	fi
 }
@@ -419,4 +448,6 @@ main() {
 	done
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi

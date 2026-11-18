@@ -38,6 +38,8 @@ import route  # noqa: E402
 
 INSTALL = "requirements/install.sh"
 DOCKERFILE = "docker/Dockerfile"
+BUILD_CACHE_MOUNT = "--mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf"
+BUILD_CACHE_ENV = "source /etc/rlinf/build-env.sh"
 
 PACKAGE_MANAGER = re.compile(r"^\s*(?:sudo\s+)?(?:apt-get|apt|dnf|yum|pacman)\s")
 RAY_PIN = re.compile(r"uv pip install[^#]*\bray==")
@@ -196,10 +198,10 @@ def check_docker_stages(
     return findings
 
 
-def check_docker_layers(added: frozenset[int] | None) -> list[route.Finding]:
-    """A stage that installs several venvs does it in one RUN, for uv hardlinks."""
+def dockerfile_instructions() -> tuple[list[tuple[int, int, str]], int]:
+    """The Dockerfile's instructions as (first line, last line, joined text), and its length."""
     lines = (route.REPO_ROOT / DOCKERFILE).read_text(encoding="utf-8").splitlines()
-    instructions: list[tuple[int, str]] = []
+    instructions: list[tuple[int, int, str]] = []
     first, text = None, ""
     for number, line in enumerate(lines, 1):
         if first is None and (not line.strip() or line.lstrip().startswith("#")):
@@ -207,16 +209,22 @@ def check_docker_layers(added: frozenset[int] | None) -> list[route.Finding]:
         first = first or number
         text += line.rstrip().removesuffix("\\") + " "
         if not line.rstrip().endswith("\\"):
-            instructions.append((first, text))
+            instructions.append((first, number, text))
             first, text = None, ""
+    return instructions, len(lines)
+
+
+def check_docker_layers(added: frozenset[int] | None) -> list[route.Finding]:
+    """A stage that installs several venvs does it in one RUN, so they can share files."""
+    instructions, length = dockerfile_instructions()
     stages: list[tuple[int, list[str]]] = []
-    for number, instruction in instructions:
+    for number, _, instruction in instructions:
         if instruction.startswith("FROM "):
             stages.append((number, []))
         elif stages and instruction.startswith("RUN "):
             stages[-1][1].append(instruction)
     findings = []
-    bounds = [n for n, _ in stages] + [len(lines) + 1]
+    bounds = [n for n, _ in stages] + [length + 1]
     for (start, runs), end in zip(stages, bounds[1:]):
         installs = sum("requirements/install.sh" in run for run in runs)
         if installs > 1 and (added is None or added & set(range(start, end))):
@@ -227,7 +235,52 @@ def check_docker_layers(added: frozenset[int] | None) -> list[route.Finding]:
                     start,
                     "install/docker-layers",
                     f"{installs} RUN instructions call install.sh in this stage; chain them "
-                    "in one RUN with && so uv can hardlink from its cache",
+                    "in one RUN with && so dedup_venvs can hardlink their shared files",
+                )
+            )
+    return findings
+
+
+def check_docker_cache(added: frozenset[int] | None) -> list[route.Finding]:
+    """A RUN that calls install.sh uses the build cache and links its venvs' files."""
+    findings = []
+    for first, last, text in dockerfile_instructions()[0]:
+        installs = text.count("requirements/install.sh")
+        if not text.startswith("RUN ") or not installs:
+            continue
+        if added is not None and not added & set(range(first, last + 1)):
+            continue
+        if BUILD_CACHE_MOUNT not in text or BUILD_CACHE_ENV not in text:
+            findings.append(
+                route.Finding(
+                    "major",
+                    DOCKERFILE,
+                    first,
+                    "install/docker-cache",
+                    f"RUN calls install.sh without the build cache; add {BUILD_CACHE_MOUNT} "
+                    f"and run `{BUILD_CACHE_ENV}` first, so downloads persist between builds",
+                )
+            )
+        if installs > 1 and text.count("dedup_venvs") < installs:
+            findings.append(
+                route.Finding(
+                    "major",
+                    DOCKERFILE,
+                    first,
+                    "install/docker-cache",
+                    f"RUN installs {installs} venvs; follow each install.sh with dedup_venvs, "
+                    "or every venv keeps its own copy of the packages they share",
+                )
+            )
+        if text.count("--no-root") < installs:
+            findings.append(
+                route.Finding(
+                    "minor",
+                    DOCKERFILE,
+                    first,
+                    "install/docker-cache",
+                    "install.sh without --no-root installs sys_deps.sh again, which the "
+                    "image already ran in its own layer",
                 )
             )
     return findings
@@ -267,6 +320,7 @@ def main() -> int:
             findings += check_docker_stages(selection, current)
         if change.path == DOCKERFILE:
             findings += check_docker_layers(selection.lines(change))
+            findings += check_docker_cache(selection.lines(change))
         if (
             (change.status == "A" or selection.all_lines)
             and change.path.startswith("tests/e2e_tests/")
