@@ -1,6 +1,7 @@
-# docker/Dockerfile copies only pyproject.toml and requirements/, so everything
-# else is context that is uploaded to the daemon and then thrown away. A local
-# .venv alone is several GB and made every build start with a long transfer.
+# docker/Dockerfile copies only pyproject.toml, requirements/ and
+# docker/dedup_venvs.py, so everything else is context that is uploaded to the
+# daemon and then thrown away. A local .venv alone is several GB and made every
+# build start with a long transfer.
 .git
 .venv
 venv

@@ -204,6 +204,38 @@ ENV UV_PYTHON_INSTALL_DIR=${UV_PATH}/.python
 
 
 ##################################################################################################
+# System packages and build caches, ahead of requirements/ so that editing it reruns neither
+##################################################################################################
+# The packages every install.sh target needs (rendering, video, build tools),
+# installed from sys_deps.sh alone. The install.sh calls below pass --no-root so
+# they do not install them again.
+COPY ./requirements/sys_deps.sh /tmp/sys_deps.sh
+RUN bash /tmp/sys_deps.sh "${RLINF_PLATFORM}" && rm /tmp/sys_deps.sh
+
+# Every RUN that calls install.sh mounts the BuildKit cache rlinf-build-cache at
+# /var/cache/rlinf and sources this file first. What the installs download
+# (wheels, uv's git checkouts, Python archives, install.sh's git clones and
+# download_assets.sh's release archives) then stays on the builder between
+# builds, failed ones included, and never enters the image. The cache is on a
+# different filesystem from the venvs, so uv copies each package, and a RUN
+# that installs several venvs calls dedup_venvs after each install.sh to
+# hardlink the files they share.
+#
+# The Git LFS files of the cloned repositories stay pointers: they are demo
+# data, test fixtures and Jetson wheels that no install or RLinf run reads,
+# about 0.8 GB per build fetched from GitHub's LFS storage, which the GitHub
+# proxy does not cover. `git lfs pull` in a checkout fetches them.
+RUN mkdir -p /etc/rlinf && cat <<'EOF' > /etc/rlinf/build-env.sh
+export UV_CACHE_DIR=/var/cache/rlinf/uv
+export UV_PYTHON_CACHE_DIR=/var/cache/rlinf/python
+export RLINF_INSTALL_CACHE_DIR=/var/cache/rlinf/install
+export UV_LINK_MODE=copy
+export GIT_LFS_SKIP_SMUDGE=1
+EOF
+COPY --chmod=755 ./docker/dedup_venvs.py /usr/local/bin/dedup_venvs
+
+
+##################################################################################################
 # Project requirements
 ##################################################################################################
 COPY ./pyproject.toml $UV_PATH/pyproject.toml
@@ -266,8 +298,10 @@ FROM base-image AS reason-image
 # other's kernels. Activate `reason-vllm` for vLLM rollout.
 ARG UNINSTALL_FA4
 ENV UNINSTALL_FA4=${UNINSTALL_FA4}
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} agentic --venv reason --engine sglang && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} agentic --venv reason-vllm --engine vllm
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root agentic --venv reason --engine sglang && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root agentic --venv reason-vllm --engine vllm && dedup_venvs
 
 # Set default env
 RUN echo "source ${UV_PATH}/reason/bin/activate" >> ~/.bashrc
@@ -312,6 +346,11 @@ RUN chmod +x /usr/local/bin/link_assets
 RUN cp $UV_PATH/requirements/embodied/download_assets.sh /usr/local/bin/download_assets
 RUN chmod +x /usr/local/bin/download_assets
 
+# Link the per-user asset directories to /opt/assets before any install, so the
+# downloads install.sh makes into them and the download_assets steps below fill
+# one copy instead of two.
+RUN mkdir -p /opt/assets/.maniskill /opt/assets/.sapien /opt/assets/.cache/openpi && link_assets
+
 
 ##################################################################################################
 # Embodied: ManiSkill / Libero
@@ -320,19 +359,21 @@ FROM embodied-common-image AS embodied-maniskill_libero-image
 
 # Install the model envs; every platform builds the same image. FastWAM supports
 # LIBERO but not ManiSkill.
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env maniskill_libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env maniskill_libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env maniskill_libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env maniskill_libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t_n1d6 --model gr00t_n1d6 --env maniskill_libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t_n1d7 --model gr00t_n1d7 --env maniskill_libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dexbotic --model dexbotic --env maniskill_libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv starvla --model starvla --env maniskill_libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv abot_m0 --model abot_m0 --env maniskill_libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dreamzero --model dreamzero --env maniskill_libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv molmoact2 --model molmoact2 --env maniskill_libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv evo1 --model evo1 --env maniskill_libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv fastwam --model fastwam --env libero
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openvla --model openvla --env maniskill_libero && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openvla-oft --model openvla-oft --env maniskill_libero && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openpi --model openpi --env maniskill_libero && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv gr00t --model gr00t --env maniskill_libero && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv gr00t_n1d6 --model gr00t_n1d6 --env maniskill_libero && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv gr00t_n1d7 --model gr00t_n1d7 --env maniskill_libero && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv dexbotic --model dexbotic --env maniskill_libero && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv starvla --model starvla --env maniskill_libero && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv abot_m0 --model abot_m0 --env maniskill_libero && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv dreamzero --model dreamzero --env maniskill_libero && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv molmoact2 --model molmoact2 --env maniskill_libero && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv evo1 --model evo1 --env maniskill_libero && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv fastwam --model fastwam --env libero && dedup_venvs
 
 RUN source switch_env openvla && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets maniskill,openpi
 RUN link_assets
@@ -343,7 +384,9 @@ RUN echo "source ${UV_PATH}/openvla/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-behavior-openvlaoft-image
 
 # Install openvla-oft env
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env behavior
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openvla-oft --model openvla-oft --env behavior
 
 # omnigibson downloads assets to /tmp during initialization
 RUN source switch_env openvla-oft && python -c "import omnigibson as og; cfg={}; og.Environment(cfg); og.shutdown()" || exit 0
@@ -354,7 +397,9 @@ RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-behavior-openpi-image
 
 # Install openpi env
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env behavior
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openpi --model openpi --env behavior
 
 # omnigibson downloads assets to /tmp during initialization
 RUN source switch_env openpi && python -c "import omnigibson as og; cfg={}; og.Environment(cfg); og.shutdown()" || exit 0
@@ -371,8 +416,10 @@ RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-metaworld-image
 
 # Install openvla-oft and openpi envs
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env metaworld && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env metaworld
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openvla-oft --model openvla-oft --env metaworld && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openpi --model openpi --env metaworld && dedup_venvs
 
 RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
 RUN link_assets
@@ -390,8 +437,10 @@ FROM embodied-common-image AS embodied-calvin-image
 ENV CALVIN_PATH=/opt/envs/calvin
 
 # Install openvla-oft and openpi envs
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env calvin && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env calvin
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openvla-oft --model openvla-oft --env calvin && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openpi --model openpi --env calvin && dedup_venvs
 
 RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
 RUN link_assets
@@ -406,7 +455,9 @@ RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-robocasa-image
 
 # Install openpi env
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robocasa
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openpi --model openpi --env robocasa
 
 RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
 RUN link_assets
@@ -420,7 +471,9 @@ RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-robocasa365-image
 
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robocasa365
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openpi --model openpi --env robocasa365
 
 RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
 RUN link_assets
@@ -438,8 +491,10 @@ FROM embodied-common-image AS embodied-isaaclab-image
 ENV ISAAC_LAB_PATH=/opt/envs/isaaclab
 
 # Install gr00t env, and openpi env
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env isaaclab && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env isaaclab
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv gr00t --model gr00t --env isaaclab && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openpi --model openpi --env isaaclab && dedup_venvs
 
 # Set default env
 RUN echo "source ${UV_PATH}/gr00t/bin/activate" >> ~/.bashrc
@@ -455,11 +510,13 @@ FROM embodied-common-image AS embodied-franka-image
 # dexterous-hand dependencies. Each model venv adds that policy to the same
 # Franky stack. The legacy ROS Noetic backend needs Ubuntu 20.04, so it is not
 # part of this image; install it natively with --env franka-ros.
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv franky --env franka && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env franka && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env franka && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env franka && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env franka
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv franky --env franka && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openvla --model openvla --env franka && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openvla-oft --model openvla-oft --env franka && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openpi --model openpi --env franka && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv gr00t --model gr00t --env franka && dedup_venvs
 
 RUN echo "source ${UV_PATH}/franky/bin/activate" >> ~/.bashrc
 
@@ -470,10 +527,12 @@ RUN echo "source ${UV_PATH}/franky/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-robotwin-image
 
 # Install openvla-oft, openpi, lingbotvla, and lingbotvlav2 envs
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env robotwin && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robotwin && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv lingbotvla --model lingbotvla --env robotwin && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv lingbotvlav2 --model lingbotvlav2 --env robotwin
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openvla-oft --model openvla-oft --env robotwin && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openpi --model openpi --env robotwin && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv lingbotvla --model lingbotvla --env robotwin && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv lingbotvlav2 --model lingbotvlav2 --env robotwin && dedup_venvs
 
 RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
 RUN link_assets
@@ -488,7 +547,9 @@ RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-opensora-image
 
 # Install openvla-oft env
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env opensora
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openvla-oft --model openvla-oft --env opensora
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
@@ -499,7 +560,9 @@ RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-wan-image
 
 # Install openvla-oft env
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env wan
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openvla-oft --model openvla-oft --env wan
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
@@ -510,7 +573,9 @@ RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-frankasim-image
 
 # Install openvla env
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env frankasim
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openvla --model openvla --env frankasim
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla/bin/activate" >> ~/.bashrc
@@ -520,7 +585,9 @@ RUN echo "source ${UV_PATH}/openvla/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-embodichain-image
 
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv embodichain --env embodichain
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv embodichain --env embodichain
 
 RUN echo "source ${UV_PATH}/embodichain/bin/activate" >> ~/.bashrc
 
@@ -530,7 +597,9 @@ RUN echo "source ${UV_PATH}/embodichain/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-liberopro-image
 
 # Install openvla-oft env for LIBERO-Pro
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env liberopro
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openvla-oft --model openvla-oft --env liberopro
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
@@ -541,8 +610,10 @@ RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-liberoplus-image
 
 # Install openvla-oft and fastwam envs for LIBERO-Plus
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env liberoplus && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv fastwam --model fastwam --env liberoplus
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openvla-oft --model openvla-oft --env liberoplus && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv fastwam --model fastwam --env liberoplus && dedup_venvs
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
@@ -553,7 +624,9 @@ RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-roboverse-image
 
 # Install openpi env for RoboVerse
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env roboverse
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openpi --model openpi --env roboverse
 
 # Set default env
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
@@ -564,7 +637,9 @@ RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-polaris-image
 
 # Install openpi env for Polaris
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env polaris
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openpi --model openpi --env polaris
 
 # Set default env
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
@@ -576,7 +651,9 @@ FROM embodied-common-image AS embodied-robolab-image
 
 ENV OMNI_KIT_ACCEPT_EULA=YES
 
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robolab
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv openpi --model openpi --env robolab
 
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
@@ -586,7 +663,9 @@ RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-simple-image
 
 ENV OMNI_KIT_ACCEPT_EULA=YES
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} \
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root \
     embodied --venv psi0 --model psi0 --env simple
 
 RUN echo "source ${UV_PATH}/psi0/bin/activate" >> ~/.bashrc
@@ -597,7 +676,9 @@ RUN echo "source ${UV_PATH}/psi0/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-genesis-image
 
 # Install genesis env (MLP/CNN policy, no VLA model)
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv genesis --env genesis
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv genesis --env genesis
 
 # Set default env
 RUN echo "source ${UV_PATH}/genesis/bin/activate" >> ~/.bashrc
@@ -607,8 +688,10 @@ RUN echo "source ${UV_PATH}/genesis/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-mujoco_warp-image
 
-RUN test "${RLINF_PLATFORM}" = nvidia && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} \
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    test "${RLINF_PLATFORM}" = nvidia && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root \
         embodied --venv mujoco_warp --env mujoco_warp
 
 RUN echo "source ${UV_PATH}/mujoco_warp/bin/activate" >> ~/.bashrc
@@ -619,9 +702,11 @@ RUN echo "source ${UV_PATH}/mujoco_warp/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-geniesim-image
 
 ENV UV_TORCH_BACKEND=cu128
-RUN test "${RLINF_PLATFORM}" = nvidia && \
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    test "${RLINF_PLATFORM}" = nvidia && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} \
-        --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi \
+        --platform ${RLINF_PLATFORM} --no-root embodied --venv openpi --model openpi \
         --env geniesim
 
 RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
@@ -639,7 +724,6 @@ FROM ${BUILD_TARGET}-image AS final-image
 ##################################################################################################
 # Cleanup & runtime defaults
 ##################################################################################################
-RUN uv cache prune
 RUN rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace

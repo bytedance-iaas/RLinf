@@ -29,7 +29,7 @@ for its build command.
 - `GITHUB_PREFIX` — proxy prefix for GitHub clones and release downloads while the mirrors are on (that is, unless `NO_MIRROR=1`). Defaults to `https://gh-proxy.com/`; set another proxy, for example `https://gh-proxy.org/`, if it is faster on your network.
 - `UNINSTALL_FA4` (default `1`) — on the `reason` target, uninstalls `flash-attn-4` during the image build and installs FA2 instead. FA2 also runs on GPUs older than sm90 (for example A100), and Docker builds cannot see the GPU, so `install.sh` cannot make this choice by itself. Set it to `0` for an image that runs only on Hopper or newer: it keeps FA4 and skips FA2, since a venv carries exactly one flash-attention variant. The published FA4 image carries a `-fa4` tag suffix.
 
-The common image setup selects `runit-systemd` or `runit-run` from the base distribution's available packages. Embodied installs use `requirements/sys_deps.sh` for rendering libraries, including OSMesa on every platform.
+The common image setup selects `runit-systemd` or `runit-run` from the base distribution's available packages, and installs the system packages from `requirements/sys_deps.sh` (rendering libraries, including OSMesa on every platform) in a layer of their own for every target.
 
 Example with non-default args:
 
@@ -41,6 +41,21 @@ docker build -f docker/Dockerfile \
     --build-arg NO_MIRROR=1 \
     -t rlinf:embodied-metaworld .
 ```
+
+### Reuse Downloads Between Builds
+
+Every `RUN` that calls `install.sh` mounts the BuildKit cache `rlinf-build-cache` at `/var/cache/rlinf`. The installs keep what they download there, so a later build on the same builder, or a retry after a build that failed or timed out, reads it from disk:
+
+- uv's cache: wheels, the git repositories of `git+` requirements, and release wheels such as flash-attn, which uv revalidates with one small request.
+- The archives of the Python interpreters that uv installs.
+- The repositories that `install.sh` clones. A cached clone is copied while its branch or tag still points at the same commit, which `install.sh` checks with one `git ls-remote`.
+- The release archives that `download_assets.sh` fetches from GitHub, such as the SAPIEN PhysX libraries.
+
+None of this enters the image. The cache sits on another filesystem than the venvs, so uv copies every package into its venv, and `dedup_venvs` then hardlinks the files that the venvs of a stage share, as uv's hardlinks did when its cache was inside the image. A rebuild logs `Copied the cached clone of ...` for each repository it did not fetch again.
+
+The installs run with `GIT_LFS_SKIP_SMUDGE=1`, so the Git LFS files of the cloned repositories stay pointers in the image. They are demo data, test fixtures, and Jetson wheels that no install or RLinf run reads, and they come from GitHub's LFS storage, which the GitHub proxy does not cover. To fetch them, run `git lfs pull` in the checkout, for example `/opt/venv/gr00t_n1d7/gr00t`.
+
+The cache lasts as long as the builder keeps it, and holds about 16 GB for the Ascend `embodied-maniskill_libero` target. A Docker host or a long-running BuildKit daemon keeps it between builds, and `docker builder prune --filter type=exec.cachemount` empties it. A CI runner that starts a fresh builder for every build begins with an empty cache each time; there, export the layers to a registry with `--cache-to type=registry,ref=<registry>/<repo>:buildcache,mode=max` and import them with `--cache-from type=registry,ref=<registry>/<repo>:buildcache`, so that a build that leaves `requirements/` and `pyproject.toml` unchanged reuses the installed venvs.
 
 ### Building for Franka
 

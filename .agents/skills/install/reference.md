@@ -48,7 +48,9 @@ The stage follows `embodied-common-image`:
 ##################################################################################################
 FROM embodied-common-image AS embodied-<target>-image
 
-RUN bash requirements/install.sh embodied --venv <venv> --model <model> --env <env>
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv <venv> --model <model> --env <env>
 
 # Optional: download or link assets
 # RUN source switch_env <venv> && download_assets --dir /opt/assets --assets ...
@@ -57,11 +59,13 @@ RUN bash requirements/install.sh embodied --venv <venv> --model <model> --env <e
 RUN echo "source ${UV_PATH}/<venv>/bin/activate" >> ~/.bashrc
 ```
 
-A stage with several venvs installs them in one `RUN`:
+A stage with several venvs installs them in one `RUN` and links their shared files after each install:
 
 ```dockerfile
-RUN bash requirements/install.sh embodied --venv <venv1> --model <model1> --env <env> && \
-    bash requirements/install.sh embodied --venv <venv2> --model <model2> --env <env>
+RUN --mount=type=cache,id=rlinf-build-cache,target=/var/cache/rlinf \
+    source /etc/rlinf/build-env.sh && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv <venv1> --model <model1> --env <env> && dedup_venvs && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --no-root embodied --venv <venv2> --model <model2> --env <env> && dedup_venvs
 ```
 
 `BUILD_TARGET` is `embodied-<env>`, or `embodied-<env>-<model>` when one image combines several models; match the existing stages. The last stage, `FROM ${BUILD_TARGET}-image AS final-image`, needs no change.
